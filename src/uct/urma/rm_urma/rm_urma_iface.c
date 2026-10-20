@@ -390,7 +390,7 @@ static ucs_status_t uct_rm_urma_create_ub_resources(uct_rm_urma_iface_t *iface, 
                 .order_type = URMA_DEF_ORDER
             }
         },
-        .trans_mode             = URMA_TM_RC,
+        .trans_mode             = URMA_TM_RM,
         .max_sge                = 1,
         .min_rnr_timer          = URMA_TYPICAL_MIN_RNR_TIMER,
         .jfc                    = iface->super.jfc[UCT_UB_DIR_RX],
@@ -660,5 +660,5 @@ static ucs_status_t uct_rm_urma_query_tl_devices(uct_md_h md,
 }
 
 UCT_TL_DEFINE(&uct_ub_component, rm_urma, uct_rm_urma_query_tl_devices, uct_rm_urma_iface_t,
-              "rm_urma_", uct_rm_urma_iface_config_table,
+              "RM_URMA_", uct_rm_urma_iface_config_table,
               uct_rm_urma_iface_config_t);

@@ -1247,7 +1247,7 @@ ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep,
     rjetty.trans_mode = ep_addr_param.trans_mode;
     rjetty.type = URMA_JETTY;
     rjetty.flag.bs.order_type = URMA_DEF_ORDER;
-    rjetty.tp_type = URMA_RTP;
+    rjetty.tp_type = URMA_CTP;
     token.token = ub_md->dev.token.token;
 
     ep->tjetty = urma_import_jetty(ub_md->dev.urma_ctx, &rjetty, &token);
@@ -1319,7 +1319,7 @@ ucs_status_t uct_rm_urma_ep_create_jetty(uct_rm_urma_iface_t *iface, uct_rm_urma
                 .order_type = URMA_DEF_ORDER
             }
         },
-        .trans_mode             = URMA_TM_RC,
+        .trans_mode             = URMA_TM_RM,
         .priority               = UB_URMA_MAX_PRIORITY, /* Highest priority */
         .max_sge                = iface->super.config.max_send_sge,
         .max_inline_data        = iface->super.config.max_inline,
