@@ -17,7 +17,7 @@
 
 #include <urma_api.h>
 
-typedef struct UCT_RM_URMA_iface    UCT_RM_URMA_iface_t;
+typedef struct uct_rm_urma_iface    uct_rm_urma_iface_t;
 
 enum {
     UCT_RM_URMA_IFACE_STAT_RX_DL_CR_ERR,
@@ -37,12 +37,12 @@ enum {
     UCT_RM_URMA_FLUSH_MODE_LAST
 };
 
-typedef struct UCT_RM_URMA_pending_req {
+typedef struct uct_rm_urma_pending_req {
     uct_pending_req_t super;
     uct_ep_t          *ep;
-} UCT_RM_URMA_pending_req_t;
+} uct_rm_urma_pending_req_t;
 
-struct UCT_RM_URMA_iface {
+struct uct_rm_urma_iface {
     uct_urma_iface_t             super;
     ucs_callback_t             progress;
     uct_ub_iface_send_desc_t   *fc_desc; /* used when max_inline is zero */
@@ -63,21 +63,21 @@ struct UCT_RM_URMA_iface {
     UCS_STATS_NODE_DECLARE(stats)
 };
 
-typedef struct UCT_RM_URMA_iface_config {
+typedef struct uct_rm_urma_iface_config {
     uct_urma_iface_config_t      super;
     unsigned                   flush_mode;
     unsigned                   tx_jfc_len;
     double                     soft_thresh;
-} UCT_RM_URMA_iface_config_t;
+} uct_rm_urma_iface_config_t;
 
 static UCS_F_ALWAYS_INLINE int
-UCT_RM_URMA_have_jfc_avail(UCT_RM_URMA_iface_t* iface)
+uct_rm_urma_have_jfc_avail(uct_rm_urma_iface_t* iface)
 {
     return iface->super.tx.jfc_available > 0;
 }
 
 static UCS_F_ALWAYS_INLINE ucs_status_t
-UCT_RM_URMA_iface_invoke_pending_cb(UCT_RM_URMA_iface_t *iface, uct_pending_req_t *req)
+uct_rm_urma_iface_invoke_pending_cb(uct_rm_urma_iface_t *iface, uct_pending_req_t *req)
 {
     ucs_status_t status;
 
@@ -98,10 +98,10 @@ UCT_RM_URMA_iface_invoke_pending_cb(UCT_RM_URMA_iface_t *iface, uct_pending_req_
 }
 
 static UCS_F_ALWAYS_INLINE void
-UCT_RM_URMA_iface_check_pending(UCT_RM_URMA_iface_t *iface, ucs_arbiter_group_t *arb_group)
+uct_rm_urma_iface_check_pending(uct_rm_urma_iface_t *iface, ucs_arbiter_group_t *arb_group)
 {
     ucs_assert(iface->tx.in_pending || ucs_arbiter_group_is_empty(arb_group));
 }
 
-void UCT_RM_URMA_available_set(UCT_RM_URMA_iface_t *iface, uint8_t jfs_idx, int16_t val);
+void uct_rm_urma_available_set(uct_rm_urma_iface_t *iface, uint8_t jfs_idx, int16_t val);
 #endif
