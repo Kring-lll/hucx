@@ -1230,7 +1230,6 @@ ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep,
     urma_rjetty_t rjetty = {0};
     urma_status_t urma_status;
     urma_token_t token = {0};
-    urma_status_t ret;
 
     uct_ub_address_unpack(ub_addr, &ubdev_addr_param);
     uct_rm_urma_ep_addr_unpack(rm_urma_ep_addr, &ep_addr_param);
@@ -1258,12 +1257,7 @@ ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep,
         goto err_import_jetty;
     }
 
-    ret = urma_bind_jetty(ep->rm_urma_jetty.jetty, ep->tjetty);
-    if (ret != URMA_SUCCESS && ret != URMA_EEXIST) {
-        ucs_error("Error bind jetty");
-        status = UCS_ERR_IO_ERROR;
-        goto err_bind_jetty;
-    }
+    
     ep->super.flags |= UCT_RM_URMA_EP_FLAG_CONNECTED;
     ep->ka_va_addr = ep_addr_param.seg_va;
 
@@ -1278,13 +1272,6 @@ ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep,
     return UCS_OK;
 
 err_import_seg:
-    if (ep->rm_urma_jetty.jetty->remote_jetty != NULL) {
-        urma_status = urma_unbind_jetty(ep->rm_urma_jetty.jetty);
-        if (urma_status != URMA_SUCCESS) {
-            ucs_warn("Failed to unbind jetty iface:%p jetty:%p", iface, ep->rm_urma_jetty.jetty);
-        }
-    }
-err_bind_jetty:
     if (ep->tjetty != NULL) {
         urma_status = urma_unimport_jetty(ep->tjetty);
         if (urma_status != URMA_SUCCESS) {
@@ -1400,12 +1387,7 @@ static UCS_CLASS_CLEANUP_FUNC(uct_rm_urma_ep_t)
 
     iface->super.tx.jfc_available += self->super.status.pi - self->super.status.ci;
 
-    if (self->rm_urma_jetty.jetty->remote_jetty != NULL) {
-        urma_status = urma_unbind_jetty(self->rm_urma_jetty.jetty);
-        if (urma_status != URMA_SUCCESS) {
-            ucs_warn("Failed to unbind jetty");
-        }
-    }
+    
 
     if (self->tjetty != NULL) {
         urma_status = urma_unimport_jetty(self->tjetty);
