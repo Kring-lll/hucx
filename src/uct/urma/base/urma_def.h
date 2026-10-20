@@ -10,5 +10,5 @@
 typedef struct uct_ub_ep         uct_ub_ep_t;
 typedef struct uct_rc_urma_ep    uct_rc_urma_ep_t; // For RC URMA
 typedef struct uct_um_urma_ep    uct_um_urma_ep_t; // For UM URMA
-
+typedef struct uct_rm_urma_ep    uct_rm_urma_ep_t; // For RM URMA
 #endif
