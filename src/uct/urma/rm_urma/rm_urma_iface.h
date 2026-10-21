@@ -19,6 +19,11 @@
 
 typedef struct uct_rm_urma_iface    uct_rm_urma_iface_t;
 
+typedef struct uct_rm_urma_jetty {
+    urma_jetty_t                    *jetty;
+    int16_t                         available;
+} uct_rm_urma_jetty_t;
+
 enum {
     UCT_RM_URMA_IFACE_STAT_RX_DL_CR_ERR,
     UCT_RM_URMA_IFACE_STAT_TX_DL_CR_ERR,

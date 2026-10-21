@@ -17,11 +17,6 @@
 
 #define RM_URMA_UNSIGNALED_INF UINT16_MAX
 
-typedef struct uct_rm_urma_jetty {
-    urma_jetty_t                    *jetty;
-    int16_t                         available;
-} uct_rm_urma_jetty_t;
-
 struct uct_rm_urma_ep {
     uct_ub_ep_t                     super;
     uct_rm_urma_jetty_t             rm_urma_jetty;
