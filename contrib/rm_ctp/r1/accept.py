@@ -15,7 +15,7 @@ import time
 
 LAB = Path('/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019')
 OLD = str(LAB / 'rm_minimal_d58a141bc_zMBCk1/install')
-PEER = 'y00993710@9.88.43.97'
+PEER = 'root@9.88.43.97'
 
 def digest(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
@@ -64,7 +64,10 @@ def saved_spec(kind, install, baseline):
 def remote(script, *args):
     # All arguments are generated paths or fixed internal node identifiers.
     cmd=['ssh',PEER,'bash','-s','--']+list(args)
-    return subprocess.check_output(cmd,input=script,text=True,stderr=subprocess.STDOUT)
+    p=subprocess.run(cmd,input=script,text=True,capture_output=True)
+    if p.returncode:
+        raise RuntimeError('SSH failed: '+p.stderr[-1200:]+p.stdout[-1200:])
+    return p.stdout
 
 def many_command(cmd, idx, wrapper, peers, size):
     result=cmd[:idx]+[str(wrapper),str(size),'2000']
@@ -104,6 +107,7 @@ def main():
     if not args.no_deploy:
         package=case/'install.tar.gz'
         target=LAB/'upload'/('r1_install_'+manifest['source_commit'][:9]+'.tar.gz')
+        remote('set -eu\nmkdir -p "$1"\n',str(target.parent))
         subprocess.run(['scp','-q',str(package),PEER+':'+str(target)],check=True)
         remote('set -eu\ntest ! -e "$1"\nmkdir "$1"\ntar -xzf "$2" -C "$1"\n',str(case),str(target))
     remote_sha=remote('set -eu\nsha256sum "$1"\nldd "$1"\n',str(module))
@@ -142,7 +146,7 @@ def main():
             cmd,env,_=specs[kind]
             r=run(cmd,env,out/('%s_%02d.log'%(kind,rep)))
             text=Path(r['log']).read_text(errors='replace')
-            matches=re.findall(r'^\s*8\s+([0-9]+(?:\.[0-9]+)?)\s*$',text,re.M)
+            matches=re.findall(r'^\s*8\s+([0-9]+(?:\.[0-9]+)?)\s+Pass\s*$',text,re.M)
             if len(matches)!=1: raise RuntimeError('cannot parse one 8B latency row: '+r['log'])
             value=float(matches[0]); samples[kind].append(value)
             r.update(kind=kind,repeat=rep,bytes=8,latency_us=value,validation_enabled=True)
@@ -155,8 +159,11 @@ def main():
             d=out/('%s_peers%d'%(kind,peers)); d.mkdir()
             remote('set -eu\nmkdir -p "$1"\n',str(d))
             env['RM_RESOURCE_OBSERVER_DIR']=str(d); env['R1_MAP_DIR']=str(d)
-            env['UCX_'+kind.upper()+'_URMA_URMA_TX_DEPTH']='8'
+            env['UCX_'+kind.upper()+'_URMA_TX_DEPTH']='8'
             cmd=many_command(cmd,idx,wrapper,peers,64 if peers<4 else 1024)
+            mp=next(i for i,x in enumerate(cmd) if Path(x).name in ('mpirun','mpiexec'))
+            for key in ('RM_RESOURCE_OBSERVER_DIR','R1_MAP_DIR','UCX_'+kind.upper()+'_URMA_TX_DEPTH'):
+                cmd[mp+1:mp+1]=['-x',key]
             r=run(cmd,env,out/('%s_peers%d.log'%(kind,peers)))
             if 'R1_MANY_PEER_PASS' not in Path(r['log']).read_text(errors='replace'):
                 raise RuntimeError('multi-peer validation marker missing')

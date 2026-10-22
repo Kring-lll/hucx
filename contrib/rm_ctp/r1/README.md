@@ -1,6 +1,11 @@
-# R1: shared local RM Jetty candidate
+# R1: shared local RM Jetty
 
 Base: `6ab11cd304690d7e40605be002e92da50b36f5a1`, branch `rm-shared-jetty-r1`.
+
+Product tested on ARM64 at `f0b5cd4ab6fdfceaf6ce0ed98e64db91db861842`.
+Basic two-node AM and multi-peer acceptance passed on 2026-10-22; see
+`acceptance_20261022.md`. Subsequent runner/documentation fixes preserve the
+four tested RM product files byte-for-byte.
 
 Goal: one local RM Jetty per iface, with independent logical endpoints and
 completion ownership, while reusing existing inline/bcopy/mpool/arbiter code.
@@ -28,7 +33,7 @@ RC and the public URMA/UCP framework are unchanged.
   Copied RMA/atomic/AM-zcopy/peer-check capabilities are temporarily masked.
   RMA and its rkey/visibility guarantees belong to later dedicated acceptance.
 
-## Validation status before hardware deployment
+## Validation
 
 - Full local x86 HUCX build passed against public SDK headers at
   `50288b2a4a62fb76e3584acd8d8ed1c1071a485d` and compile-only placeholder libs.
@@ -41,8 +46,12 @@ RC and the public URMA/UCP framework are unchanged.
   distinct non-inline FC headers, synthetic error completion handling.
 - LeakSanitizer is disabled by default because this Work runtime restricts its
   `/proc` task enumeration. It can be enabled separately with ASAN_OPTIONS.
-- Node ARM64 build, real MPI traffic, resource counts, RC comparison, CTP
-  reliability/order/buffer-reuse guarantees: PENDING until actual evidence.
+- ARM64 build, two-node 8B validation, five alternating RC/RM 8B repetitions,
+  and 1/2/4 remote-rank star traffic passed. RM target-mode Jetty peaks were
+  one per observed context; RC peaks in this workload were 2/3/5. Each rank
+  passed candidate-library maps checks and target-mode Jetty live-at-exit=0.
+- Hardware loss/retry, complete CTP semantic guarantees, RMA, large messages,
+  and ppn16 collectives remain outside this acceptance.
 
 ## Isolated node flow
 
@@ -53,7 +62,11 @@ RC and the public URMA/UCP framework are unchanged.
    a build manifest and install tar. It does not overwrite existing builds.
 3. Run `python3 SOURCE/contrib/rm_ctp/r1/accept.py CASE_DIR` on node89.
    This copies the candidate install into the same fresh path on node97 using
-   the existing user account and checks the module SHA and dependencies.
+   `root@9.88.43.97` and checks the module SHA and dependencies. Run under the
+   authorized root account with `OMPI_ALLOW_RUN_AS_ROOT=1` and
+   `OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1`. The remote upload directory is created
+   first. For the already-deployed case, pass `--no-deploy`; an existing peer
+   install is not overwritten by the default deploy path.
 4. The runner reads `osu_minimal8_ff_14ns8/{rm,rc}_run.json`, substitutes the
    explicitly known old install prefix and preserves the saved launcher setup.
    Unsupported input shapes fail with a short diagnostic rather than guessing.
@@ -65,12 +78,21 @@ RC and the public URMA/UCP framework are unchanged.
    and 1024B payloads. Multi-peer cases use TX_DEPTH=8 for both modes; observer
    records must confirm that the setting took effect. These are correctness
    and resource tests, not multi-peer performance measurements.
+   The effective settings are `UCX_RM_URMA_TX_DEPTH` and
+   `UCX_RC_URMA_TX_DEPTH`, explicitly forwarded to remote ranks with `-x`.
 7. The existing independent observer records new per-run files on both hosts.
    The helper checks actual process maps, per-context target-mode Jetty peaks,
    and zero live data-mode Jettys at exit. The expected single selected RM iface
    shares its Jetty. Multiple iface instances in one context require reviewing
    that expectation instead of interpreting context count as iface count.
 
-After all planned runs, review results, unresolved CTP contracts and limitations
-before declaring R1 accepted. Package one AtomGit delivery commit only after
-acceptance; preserve GitHub process history and do not force-push.
+`recorded_helpers_20261022/` preserves the exact scripts used in the reported
+node run. The first helper completed the five 8B repetitions but used an
+ineffective depth variable; its resource assertion stopped the first peer
+case. The second helper resumed all peer cases with the correct variable and
+passed. These case-specific historical scripts are evidence, not the entry
+point for a new run. Use the corrected `accept.py` above for new runs.
+
+Package one AtomGit delivery commit for the accepted R1 scope, preserve shared
+history and verify that the four product files match the tested commit.
+Formal AtomGit delivery is a separate workflow checkpoint.

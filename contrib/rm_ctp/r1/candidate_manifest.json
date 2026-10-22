@@ -1,8 +1,8 @@
 {
   "base_commit": "6ab11cd304690d7e40605be002e92da50b36f5a1",
-  "scope": "R1 shared local Jetty; AM short/bcopy candidate; node acceptance pending",
+  "scope": "R1 shared local Jetty; AM short/bcopy; hardware basic multi-peer acceptance recorded 2026-10-22",
   "files": {
-    "contrib/rm_ctp/r1/accept.py": "c6c4f27e7645167935b10a6924ea373a50456d5bdfbfb1f114f902ba87af8ca3",
+    "contrib/rm_ctp/r1/accept.py": "cccda176e1d2789cc1e4dc47f7e21f418cbd8f58ed3ee1b2b2f150cc37fbdbe4",
     "contrib/rm_ctp/r1/build_isolated.sh": "2076630544c870e35a2f4026ebfcb5fdf8df551a6cc2e4efba76103ec1a5217c",
     "contrib/rm_ctp/r1/inspect_run.py": "062c9c907f6f6ffe198994271e98d296401dac0fb5393014d8357fd23ef17aac",
     "contrib/rm_ctp/r1/many_peer.c": "637037154ec0323779c48fb4e577e6df80e1cca3aa6da217188db21111f49c16",
@@ -12,5 +12,7 @@
     "src/uct/urma/rm_urma/rm_urma_ep.h": "030e5698385d0bd666cdb9cf5adf8937c9605300f4d9718a7a57f2c61b2e0786",
     "src/uct/urma/rm_urma/rm_urma_iface.c": "6ebf23238c2750349f661c8bee4c35c8430debd5c82b81f815ce9cc3470d8d69",
     "src/uct/urma/rm_urma/rm_urma_iface.h": "ad3ed9234cf5fcebdd8c07aa33fe95a5f6f48d1ff258fb8b941467cf585abbd8"
-  }
+  },
+  "product_tested_commit": "f0b5cd4ab6fdfceaf6ce0ed98e64db91db861842",
+  "product_module_sha256": "0e5550b9ee63792c45b78aed2dc78c3ca2c3c454457789b433548f0386278d79"
 }

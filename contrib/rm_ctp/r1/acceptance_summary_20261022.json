@@ -1,0 +1,197 @@
+{
+  "date": "2026-10-22",
+  "evidence_origin": "Transcribed from user-pasted node output; this is not the raw node results.json.",
+  "acceptance_scope": "R1 basic AM shared local Jetty and 1/2/4 remote-rank star traffic on two nodes; not full RM+CTP acceptance",
+  "source_commit": "f0b5cd4ab6fdfceaf6ce0ed98e64db91db861842",
+  "module_sha256": "0e5550b9ee63792c45b78aed2dc78c3ca2c3c454457789b433548f0386278d79",
+  "archive_sha256": "efa2545c5af2f94212e382b660be409511c8a4454c2924b7c9be8b50ee0b9678",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_f0b5cd4ab_MEepCG",
+  "osu_log_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_f0b5cd4ab_MEepCG/accept_20261022_091204",
+  "raw_node_results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_f0b5cd4ab_MEepCG/accept_20261022_091204/many_depth8_bk16vacy/results.json",
+  "loader_check": {
+    "exit_code": 0,
+    "candidate_module_check": "PASS"
+  },
+  "osu_8B": {
+    "samples_us": {
+      "rc": [
+        2.27,
+        2.32,
+        2.24,
+        2.34,
+        2.33
+      ],
+      "rm": [
+        2.05,
+        1.97,
+        2.05,
+        2.06,
+        2.02
+      ]
+    },
+    "median_us": {
+      "rc": 2.32,
+      "rm": 2.05
+    },
+    "validation": "Pass",
+    "all_exit_codes": 0,
+    "interpretation": "Small repeated comparison; no stable performance advantage claim"
+  },
+  "many_peer": [
+    {
+      "kind": "rm",
+      "remote_ranks": 1,
+      "bytes": 64,
+      "rounds": 2000,
+      "burst": 16,
+      "tx_depth": 8,
+      "exit_code": 0,
+      "data_validation": "PASS",
+      "maps": "PASS",
+      "target_mode_jetty_live_at_exit": 0,
+      "rank0_jetty_peaks_per_context": [
+        1
+      ],
+      "remote_jetty_peaks_per_context": {
+        "1": [
+          1
+        ]
+      }
+    },
+    {
+      "kind": "rc",
+      "remote_ranks": 1,
+      "bytes": 64,
+      "rounds": 2000,
+      "burst": 16,
+      "tx_depth": 8,
+      "exit_code": 0,
+      "data_validation": "PASS",
+      "maps": "PASS",
+      "target_mode_jetty_live_at_exit": 0,
+      "rank0_jetty_peaks_per_context": [
+        2
+      ],
+      "remote_jetty_peaks_per_context": {
+        "1": [
+          2
+        ]
+      }
+    },
+    {
+      "kind": "rm",
+      "remote_ranks": 2,
+      "bytes": 64,
+      "rounds": 2000,
+      "burst": 16,
+      "tx_depth": 8,
+      "exit_code": 0,
+      "data_validation": "PASS",
+      "maps": "PASS",
+      "target_mode_jetty_live_at_exit": 0,
+      "rank0_jetty_peaks_per_context": [
+        1
+      ],
+      "remote_jetty_peaks_per_context": {
+        "1": [
+          1
+        ],
+        "2": [
+          1
+        ]
+      }
+    },
+    {
+      "kind": "rc",
+      "remote_ranks": 2,
+      "bytes": 64,
+      "rounds": 2000,
+      "burst": 16,
+      "tx_depth": 8,
+      "exit_code": 0,
+      "data_validation": "PASS",
+      "maps": "PASS",
+      "target_mode_jetty_live_at_exit": 0,
+      "rank0_jetty_peaks_per_context": [
+        3
+      ],
+      "remote_jetty_peaks_per_context": {
+        "1": [
+          3
+        ],
+        "2": [
+          3
+        ]
+      }
+    },
+    {
+      "kind": "rm",
+      "remote_ranks": 4,
+      "bytes": 1024,
+      "rounds": 2000,
+      "burst": 16,
+      "tx_depth": 8,
+      "exit_code": 0,
+      "data_validation": "PASS",
+      "maps": "PASS",
+      "target_mode_jetty_live_at_exit": 0,
+      "rank0_jetty_peaks_per_context": [
+        1
+      ],
+      "remote_jetty_peaks_per_context": {
+        "1": [
+          1
+        ],
+        "2": [
+          1
+        ],
+        "3": [
+          1
+        ],
+        "4": [
+          1
+        ]
+      }
+    },
+    {
+      "kind": "rc",
+      "remote_ranks": 4,
+      "bytes": 1024,
+      "rounds": 2000,
+      "burst": 16,
+      "tx_depth": 8,
+      "exit_code": 0,
+      "data_validation": "PASS",
+      "maps": "PASS",
+      "target_mode_jetty_live_at_exit": 0,
+      "rank0_jetty_peaks_per_context": [
+        5
+      ],
+      "remote_jetty_peaks_per_context": {
+        "1": [
+          5
+        ],
+        "2": [
+          5
+        ],
+        "3": [
+          5
+        ],
+        "4": [
+          5
+        ]
+      }
+    }
+  ],
+  "recorded_helpers_sha256": {
+    "resume_many_20261022.py": "44440d67238bbf64f244167dd1d6de63154860264bec05991289685bc871a86d",
+    "accept_root_20261022.py": "e63a45a9d5fc85a41bbf56b5c184fc31c507239c699697c28c727ca8b2ab839a"
+  },
+  "limits": [
+    "Observer Jetty peaks are grouped by URMA context; the selected single-iface setup must not be generalized to arbitrary iface counts.",
+    "RC counts include resources created by this MPI workload; no attribution of the additional Jetty is asserted.",
+    "Only target-mode Jetty live counts at exit were checked; this is not a complete heap or all-provider-resource leak test.",
+    "Explicit per-EP flush/reentrant destruction/synthetic CQE cases were CPU-mocked, not independently injected into hardware.",
+    "No hardware loss/retry, peer-failure recovery, RMA, large-message or ppn16 acceptance."
+  ]
+}
