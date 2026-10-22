@@ -9,8 +9,11 @@ Basic two-node AM and multi-peer acceptance passed on 2026-10-22; see
 `acceptance_20261022.md`. Subsequent runner/documentation fixes preserve the
 four tested RM product files byte-for-byte through GitHub commit
 `462866e2a55dc42ef69d2ad26740ff3e07c4f59f` and the formal R1 delivery.
-The current R2 correction changes the EP/iface C files and has CPU-only
-validation so far; the historical R1 hardware evidence does not cover it.
+The R2 correction at `1f81b035a4ecbdac63201c5ce460fdaa0a4a6375` changes
+the EP/iface C files. Its separate ARM64 build, normal two-node regression,
+and explicit small-window FC regression passed on 2026-10-22; see
+`acceptance_r2_20261022.md`. Terminal error cases remain CPU-mock coverage.
+The historical R1 hardware evidence is retained for its original version.
 
 Goal: one local RM Jetty per iface, with independent logical endpoints and
 completion ownership, while reusing existing inline/bcopy/mpool/arbiter code.
@@ -28,8 +31,10 @@ RC and the public URMA/UCP framework are unchanged.
   temporary post failure and retry, cancel, cross-EP shared credit, FC-window
   exhaustion and grant wakeup, allocation failure and callback destruction/purge.
   These run with ASan/UBSan; LeakSanitizer remains disabled as described below.
-- This is not CTP loss recovery, a new ACK protocol, or a hardware acceptance.
-  Build and test the new exact commit separately before accepting the correction.
+- Normal hardware regression and FC-enabled window-exhaustion progress passed
+  for the exact R2 commit; injected terminal errors were tested only with mocks.
+  This is not CTP loss recovery or a new ACK protocol. Complete R2 contract and
+  reliability acceptance remain open; see `acceptance_r2_20261022.md`.
 
 ## Product behavior
 
