@@ -14,10 +14,16 @@
 #include <uct/urma/base/urma_iface.h>
 #include <uct/base/uct_iov.inl>
 #include <ucs/datastruct/ptr_array.h>
+#include <ucs/datastruct/list.h>
 
 #include <urma_api.h>
 
 typedef struct uct_rm_urma_iface    uct_rm_urma_iface_t;
+
+typedef struct uct_rm_urma_jetty {
+    urma_jetty_t                    *jetty;
+    int16_t                         available;
+} uct_rm_urma_jetty_t;
 
 enum {
     UCT_RM_URMA_IFACE_STAT_RX_DL_CR_ERR,
@@ -44,6 +50,7 @@ typedef struct uct_rm_urma_pending_req {
 
 struct uct_rm_urma_iface {
     uct_urma_iface_t             super;
+    uct_rm_urma_jetty_t          rm_urma_jetty; /* owned once per iface */
     ucs_callback_t             progress;
     uct_ub_iface_send_desc_t   *fc_desc; /* used when max_inline is zero */
     struct {
@@ -55,6 +62,9 @@ struct uct_rm_urma_iface {
     struct {
         ucs_mpool_t            pending_mp; /* pool for FC grant and keepalive pending requests */
         ucs_arbiter_t          arbiter;
+        ucs_list_link_t        retired_eps;
+        ucs_status_t          error;
+        unsigned              progress_depth;
 #if UCS_ENABLE_ASSERT
         int                    in_pending;
 #endif
@@ -104,4 +114,6 @@ uct_rm_urma_iface_check_pending(uct_rm_urma_iface_t *iface, ucs_arbiter_group_t 
 }
 
 void uct_rm_urma_available_set(uct_rm_urma_iface_t *iface, uint8_t jfs_idx, int16_t val);
+void uct_rm_urma_iface_set_failed(uct_rm_urma_iface_t *iface, ucs_status_t status);
+void uct_rm_urma_iface_gc(uct_rm_urma_iface_t *iface);
 #endif

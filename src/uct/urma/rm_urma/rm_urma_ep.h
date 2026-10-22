@@ -17,14 +17,10 @@
 
 #define RM_URMA_UNSIGNALED_INF UINT16_MAX
 
-typedef struct uct_rm_urma_jetty {
-    urma_jetty_t                    *jetty;
-    int16_t                         available;
-} uct_rm_urma_jetty_t;
-
 struct uct_rm_urma_ep {
     uct_ub_ep_t                     super;
-    uct_rm_urma_jetty_t             rm_urma_jetty;
+    uct_rm_urma_jetty_t             *rm_urma_jetty; /* borrowed from iface */
+    ucs_list_link_t                 retired_list;
     uint64_t                        ka_va_addr;
     urma_target_seg_t               *ka_tseg;
     ucs_arbiter_group_t             arb_group;
@@ -73,6 +69,8 @@ enum {
     /* Error handler already called or flush(CANCEL) disabled it */
     UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED = UCS_BIT(3),
 
+    UCT_RM_URMA_EP_FLAG_CLOSING             = UCS_BIT(4),
+
     /* Soft Credit Request: indicates that peer needs to piggy-back credits
      * grant to counter AM (if any). Can be bundled with
      * UCT_RC_EP_FLAG_FC_GRANT  */
@@ -103,7 +101,7 @@ enum {
 
 static inline int16_t uct_rm_urma_outstanding_queue_available(uct_rm_urma_ep_t *ep)
 {
-    return ep->rm_urma_jetty.available;
+    return ep->rm_urma_jetty->available;
 }
 
 static UCS_F_ALWAYS_INLINE uint8_t
@@ -143,6 +141,15 @@ static UCS_F_ALWAYS_INLINE uint8_t uct_rm_urma_fc_get_fc_hdr(uint8_t id)
 
 #define UCT_RM_URMA_CHECK_RES(_iface, _ep) \
     { \
+        if (ucs_unlikely((_iface)->tx.error != UCS_OK)) { \
+            return (_iface)->tx.error; \
+        } \
+        if (ucs_unlikely((_ep)->super.flags & \
+                         (UCT_RM_URMA_EP_FLAG_CLOSING | \
+                          UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL | \
+                          UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED))) { \
+            return UCS_ERR_CANCELED; \
+        } \
         ucs_assert(_ep->super.flags & UCT_RM_URMA_EP_FLAG_CONNECTED); \
         UCT_RM_URMA_CHECK_JFC_RET(_iface, _ep, UCS_ERR_NO_RESOURCE) \
         UCT_RM_URMA_CHECK_TX_QUEUE_RET(_ep, UCS_ERR_NO_RESOURCE) \
@@ -265,6 +272,7 @@ ucs_arbiter_cb_result_t uct_rm_urma_ep_process_pending(ucs_arbiter_t *arbiter, u
                                                        ucs_arbiter_elem_t *elem, void *arg);
 void uct_rm_urma_ep_txqp_purge_outstanding(uct_rm_urma_iface_t *iface, uct_ub_tx_queue_t *txqp,
                                            ucs_status_t status, uint32_t sn, int warn);
+void uct_rm_urma_ep_destroy(uct_ep_h tl_ep);
 
 ucs_status_t uct_rm_urma_ep_connect_to_ep_v2(uct_ep_h tl_ep, const uct_device_addr_t *dev_addr,
                                              const uct_ep_addr_t *ep_addr,
