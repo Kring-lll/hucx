@@ -244,6 +244,24 @@ void uct_rm_urma_iface_gc(uct_rm_urma_iface_t *iface)
     --iface->tx.progress_depth;
 }
 
+static void uct_rm_urma_iface_progress_pending(uct_rm_urma_iface_t *iface)
+{
+    ucs_status_t status = UCS_OK;
+
+    if ((iface->tx.error != UCS_OK) || ucs_arbiter_is_empty(&iface->tx.arbiter)) {
+        return;
+    }
+    ++iface->tx.progress_depth;
+    ucs_arbiter_dispatch(&iface->tx.arbiter, 1,
+                         uct_rm_urma_ep_process_pending, &status);
+    if (status != UCS_OK) {
+        /* An error callback may purge pending or destroy an EP. The arbiter
+         * must have finished removing the failed grant before notifying it. */
+        uct_rm_urma_iface_set_failed(iface, status);
+    }
+    --iface->tx.progress_depth;
+}
+
 ucs_status_t uct_rm_urma_iface_fc_handler(uct_urma_iface_t *ub_iface, void *arg, urma_cr_t *cr, unsigned flags)
 {
     uct_rm_urma_iface_t *iface = ucs_derived_of(ub_iface, uct_rm_urma_iface_t);
@@ -261,13 +279,14 @@ ucs_status_t uct_rm_urma_iface_fc_handler(uct_urma_iface_t *ub_iface, void *arg,
 
     ucs_assert(iface->super.config.fc_enabled);
 
-    if (ep_id >= iface->super.eps.size) {
+    if ((iface->tx.error != UCS_OK) || (ep_id >= iface->super.eps.size)) {
         return UCS_OK;
     }
     ep = (uct_rm_urma_ep_t *)(iface->super.eps.start[ep_id]);
     if (__ucs_ptr_array_is_free(ep) ||
         (ep->super.flags & (UCT_RM_URMA_EP_FLAG_CLOSING |
-                            UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL))) {
+                            UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL |
+                            UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED))) {
         return UCS_OK;
     }
 
@@ -286,8 +305,13 @@ ucs_status_t uct_rm_urma_iface_fc_handler(uct_urma_iface_t *ub_iface, void *arg,
          * (otherwise it will be dispatched by tx progress) */
         if (cur_wnd <= 0) {
             ucs_arbiter_group_schedule(&iface->tx.arbiter, &ep->arb_group);
-            ucs_arbiter_dispatch(&iface->tx.arbiter, 1,
-                                 uct_rm_urma_ep_process_pending, NULL);
+            uct_rm_urma_iface_progress_pending(iface);
+            if ((iface->tx.error != UCS_OK) ||
+                (ep->super.flags & (UCT_RM_URMA_EP_FLAG_CLOSING |
+                                    UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL |
+                                    UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED))) {
+                return UCS_OK;
+            }
         }
         if (fc_hdr == UCT_RM_URMA_EP_FC_PURE_GRANT) {
             /* Special FC grant message can't be bundled with any other FC
@@ -310,7 +334,8 @@ ucs_status_t uct_rm_urma_iface_fc_handler(uct_urma_iface_t *ub_iface, void *arg,
         if (ucs_unlikely(fc_req == NULL)) {
             ucs_error("Failed to allocate FC request. "
                       "Grant will not be sent on ep");
-            return UCS_ERR_NO_MEMORY;
+            uct_rm_urma_iface_set_failed(iface, UCS_ERR_NO_MEMORY);
+            return UCS_OK;
         }
         fc_req->ep = &ep->super.super.super;
         fc_req->super.func = uct_rm_urma_ep_fc_grant;
@@ -323,9 +348,10 @@ ucs_status_t uct_rm_urma_iface_fc_handler(uct_urma_iface_t *ub_iface, void *arg,
              * FC deadlock */
             uct_pending_req_arb_group_push_head(&ep->arb_group, &fc_req->super);
             ucs_arbiter_group_schedule(&iface->tx.arbiter, &ep->arb_group);
-        } else {
-            ucs_assertv_always(status == UCS_OK, "Failed to send FC grant msg: %s",
-                               ucs_status_string(status));
+        } else if (status != UCS_OK) {
+            /* fc_grant returned the terminal request to its pool. */
+            uct_rm_urma_iface_set_failed(iface, status);
+            return UCS_OK;
         }
     }
 
@@ -538,10 +564,7 @@ static void uct_rm_urma_deal_with_send_cr(uct_rm_urma_iface_t *iface,
                                              ep->super.status.ci);
         }
     }
-    if (iface->tx.error == UCS_OK) {
-        ucs_arbiter_dispatch(&iface->tx.arbiter, 1,
-                             uct_rm_urma_ep_process_pending, NULL);
-    }
+    uct_rm_urma_iface_progress_pending(iface);
     --iface->tx.progress_depth;
 }
 
@@ -582,10 +605,7 @@ static unsigned uct_rm_urma_iface_progress(void *arg)
     count = uct_ub_iface_poll_rx(&iface->super, UCT_RM_URMA_EP_FC_MASK);
     /* Always give a busy shared SQ a bounded TX poll, even with continuous RX. */
     count += uct_rm_urma_iface_poll_tx(iface);
-    if (iface->tx.error == UCS_OK) {
-        ucs_arbiter_dispatch(&iface->tx.arbiter, 1,
-                             uct_rm_urma_ep_process_pending, NULL);
-    }
+    uct_rm_urma_iface_progress_pending(iface);
     uct_rm_urma_iface_gc(iface);
     --iface->tx.progress_depth;
     return count;

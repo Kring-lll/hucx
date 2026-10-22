@@ -1,15 +1,35 @@
 # R1: shared local RM Jetty
 
-Base: `6ab11cd304690d7e40605be002e92da50b36f5a1`, branch `rm-shared-jetty-r1`.
+Historical R1 implementation base: `6ab11cd304690d7e40605be002e92da50b36f5a1`.
+The R2 FC error-path correction starts at the formal R1 delivery
+`9f5f07b878e1370ca389987f79b91b44f300ea2a`, branch `rm-contract-r2`.
 
 Product tested on ARM64 at `f0b5cd4ab6fdfceaf6ce0ed98e64db91db861842`.
 Basic two-node AM and multi-peer acceptance passed on 2026-10-22; see
 `acceptance_20261022.md`. Subsequent runner/documentation fixes preserve the
-four tested RM product files byte-for-byte.
+four tested RM product files byte-for-byte through GitHub commit
+`462866e2a55dc42ef69d2ad26740ff3e07c4f59f` and the formal R1 delivery.
+The current R2 correction changes the EP/iface C files and has CPU-only
+validation so far; the historical R1 hardware evidence does not cover it.
 
 Goal: one local RM Jetty per iface, with independent logical endpoints and
 completion ownership, while reusing existing inline/bcopy/mpool/arbiter code.
 RC and the public URMA/UCP framework are unchanged.
+
+## R2 initial correction: flow-control errors
+
+- Ignore late FC messages for a failed iface or a closing/canceled/failed EP.
+- Keep a grant request pending only for `UCS_ERR_NO_RESOURCE`; release it on
+  success, cancellation or a terminal error. Cancellation does not fail peers.
+- Notify a queued grant's terminal error only after arbiter dispatch returns,
+  so an error callback may safely purge pending requests or destroy endpoints.
+- Control-request allocation failure uses the same iface error path.
+- `test_shared_tx.c` adds 11 CPU cases for late FC, immediate/queued errors,
+  temporary post failure and retry, cancel, cross-EP shared credit, FC-window
+  exhaustion and grant wakeup, allocation failure and callback destruction/purge.
+  These run with ASan/UBSan; LeakSanitizer remains disabled as described below.
+- This is not CTP loss recovery, a new ACK protocol, or a hardware acceptance.
+  Build and test the new exact commit separately before accepting the correction.
 
 ## Product behavior
 
