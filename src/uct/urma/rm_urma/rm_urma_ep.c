@@ -819,7 +819,9 @@ ucs_status_t uct_rm_urma_ep_fc_ctrl(uct_ep_t *tl_ep, unsigned op,
     if (iface->tx.error != UCS_OK) {
         return iface->tx.error;
     }
-    if (ep->super.flags & UCT_RM_URMA_EP_FLAG_CLOSING) {
+    if (ep->super.flags & (UCT_RM_URMA_EP_FLAG_CLOSING |
+                           UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL |
+                           UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED)) {
         return UCS_ERR_CANCELED;
     }
     /* A credit grant must not itself consume the peer's FC window. */
@@ -880,9 +882,12 @@ ucs_status_t uct_rm_urma_ep_fc_grant(uct_pending_req_t *self)
     status = uct_rm_urma_ep_fc_ctrl(&ep->super.super.super, UCT_RM_URMA_EP_FC_PURE_GRANT, NULL);
     if (status == UCS_OK) {
         UCS_STATS_UPDATE_COUNTER(ep->super.fc.stats, UCT_UB_FC_STAT_TX_PURE_GRANT, 1);
+    }
+    /* Only a resource shortage retains this request for another attempt. */
+    if (status != UCS_ERR_NO_RESOURCE) {
         ucs_mpool_put(freq);
     }
-    return status;
+    return (status == UCS_ERR_CANCELED) ? UCS_OK : status;
 }
 
 ucs_status_t uct_rm_urma_ep_post_flush_size_zero_bytes(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep, const void *payload,
@@ -1072,12 +1077,23 @@ ucs_arbiter_cb_result_t uct_rm_urma_ep_process_pending(ucs_arbiter_t *arbiter, u
     uct_rm_urma_ep_t *ep = ucs_container_of(group, uct_rm_urma_ep_t, arb_group);
     uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
     ucs_status_t status;
+    ucs_status_t *dispatch_status = arg;
+    int is_fc_grant = (req->func == uct_rm_urma_ep_fc_grant);
 
+    /* Stop before invoking another callback after a grant failed. Error
+     * notification must wait until the arbiter has removed the current elem. */
+    if (*dispatch_status != UCS_OK) {
+        return UCS_ARBITER_CB_RESULT_STOP;
+    }
     status = uct_rm_urma_iface_invoke_pending_cb(iface, req);
     if (status == UCS_OK) {
         return UCS_ARBITER_CB_RESULT_REMOVE_ELEM;
     } else if (status == UCS_INPROGRESS) {
         return UCS_ARBITER_CB_RESULT_NEXT_GROUP;
+    } else if (is_fc_grant && (status != UCS_ERR_NO_RESOURCE)) {
+        /* fc_grant has released req; do not dereference it again. */
+        *dispatch_status = status;
+        return UCS_ARBITER_CB_RESULT_REMOVE_ELEM;
     } else if (!(uct_ub_iface_has_tx_resources(&iface->super) &&
                  (iface->super.tx.jfc_available > 0) &&
                  (iface->rm_urma_jetty.available > 0))) {
