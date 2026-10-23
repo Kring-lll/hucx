@@ -12,7 +12,9 @@ from pathlib import Path
 symbols = set(re.findall(r'\bU\s+(urma_\w+)',
                         subprocess.check_output(['nm', '-u', sys.argv[1]], text=True)))
 mocked = {'urma_post_jetty_send_wr', 'urma_modify_jetty',
-          'urma_unimport_jetty', 'urma_unimport_seg', 'urma_init', 'urma_uninit'}
+          'urma_unimport_jetty', 'urma_unimport_seg', 'urma_init', 'urma_uninit',
+          'urma_import_jetty', 'urma_import_seg',
+          'urma_delete_jetty', 'urma_delete_jfr'}
 lines = ['#include <stdio.h>', '#include <stdlib.h>',
          'void r1_unexpected_urma_call(void) { fputs("Unexpected URMA API in CPU mock\\n", stderr); abort(); }']
 for name in sorted(symbols - mocked):

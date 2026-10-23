@@ -1171,36 +1171,54 @@ ucs_status_t uct_rm_urma_ep_check(uct_ep_h tl_ep, unsigned flags, uct_completion
     return UCS_OK;
 }
 
+/* Preserve the existing 40-byte wire format without unaligned typed loads. */
+typedef struct uct_rm_urma_ep_wire_addr {
+    uint32_t              jetty_id;
+    uint32_t              tpn;
+    uint32_t              ep_id;
+    uint64_t              seg_va;
+    uint64_t              seg_len;
+    uint32_t              seg_flag;
+    uint32_t              seg_token_id;
+    urma_transport_mode_t trans_mode;
+} UCS_S_PACKED uct_rm_urma_ep_wire_addr_t;
+
 ucs_status_t uct_rm_urma_ep_get_address(uct_ep_h tl_ep, uct_ep_addr_t *addr)
 {
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
+    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface,
+                                               uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    uct_rm_urma_ep_addr_t *ep_addr = (uct_rm_urma_ep_addr_t *)addr;
-    const void *ptr = ep_addr + 1;
+    const urma_seg_t *seg = &iface->super.ka_local_seg->tseg->seg;
+    uct_rm_urma_ep_wire_addr_t wire;
 
-    ep_addr->jetty_id = ep->rm_urma_jetty->jetty->jetty_id.id;
-    ep_addr->tpn = ep->tp.tpn;
-    *uct_ub_serialize_next(&ptr, uint32_t) = ep->super.ep_id;
-    *uct_ub_serialize_next(&ptr, uint64_t) = iface->super.ka_local_seg->tseg->seg.ubva.va;
-    *uct_ub_serialize_next(&ptr, uint64_t) = iface->super.ka_local_seg->tseg->seg.len;
-    *uct_ub_serialize_next(&ptr, uint32_t) = iface->super.ka_local_seg->tseg->seg.attr.value;
-    *uct_ub_serialize_next(&ptr, uint32_t) = iface->super.ka_local_seg->tseg->seg.token_id;
-    *uct_ub_serialize_next(&ptr, urma_transport_mode_t) = ep->rm_urma_jetty->jetty->jetty_cfg.jfs_cfg.trans_mode;
-
+    UCS_STATIC_ASSERT(sizeof(wire) == 40);
+    UCS_STATIC_ASSERT(sizeof(wire) == sizeof(uct_rm_urma_ep_addr_params_t));
+    wire.jetty_id     = ep->rm_urma_jetty->jetty->jetty_id.id;
+    wire.tpn          = ep->tp.tpn;
+    wire.ep_id        = ep->super.ep_id;
+    wire.seg_va       = seg->ubva.va;
+    wire.seg_len      = seg->len;
+    wire.seg_flag     = seg->attr.value;
+    wire.seg_token_id = seg->token_id;
+    wire.trans_mode   = ep->rm_urma_jetty->jetty->jetty_cfg.jfs_cfg.trans_mode;
+    memcpy(addr, &wire, sizeof(wire));
     return UCS_OK;
 }
 
-static void uct_rm_urma_ep_addr_unpack(uct_rm_urma_ep_addr_t *ep_addr, uct_rm_urma_ep_addr_params_t *params)
+static void
+uct_rm_urma_ep_addr_unpack(const uct_rm_urma_ep_addr_t *ep_addr,
+                           uct_rm_urma_ep_addr_params_t *params)
 {
-    const void *ptr = ep_addr + 1;
+    uct_rm_urma_ep_wire_addr_t wire;
 
-    params->jetty_id      = ep_addr->jetty_id;
-    params->ep_id        = *uct_ub_serialize_next(&ptr, uint32_t);
-    params->seg_va       = *uct_ub_serialize_next(&ptr, uint64_t);
-    params->seg_len      = *uct_ub_serialize_next(&ptr, uint64_t);
-    params->seg_flag     = *uct_ub_serialize_next(&ptr, uint32_t);
-    params->seg_token_id = *uct_ub_serialize_next(&ptr, uint32_t);
-    params->trans_mode   = *uct_ub_serialize_next(&ptr, urma_transport_mode_t);
+    memcpy(&wire, ep_addr, sizeof(wire));
+    params->jetty_id     = wire.jetty_id;
+    params->ep_id        = wire.ep_id;
+    params->seg_va       = wire.seg_va;
+    params->seg_len      = wire.seg_len;
+    params->seg_flag     = wire.seg_flag;
+    params->seg_token_id = wire.seg_token_id;
+    params->trans_mode   = wire.trans_mode;
 }
 
 void uct_rm_urma_ka_seg(uct_rm_urma_ep_addr_params_t *ep_addr,
@@ -1242,7 +1260,8 @@ ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep,
                                           const uct_ep_addr_t *ep_addr)
 {
     uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_addr_t *rm_urma_ep_addr = (uct_rm_urma_ep_addr_t *)ep_addr;
+    const uct_rm_urma_ep_addr_t *rm_urma_ep_addr =
+            (const uct_rm_urma_ep_addr_t *)ep_addr;
     const uct_ub_address_t *ub_addr = (const uct_ub_address_t *)dev_addr;
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
     uct_ub_address_pack_params_t ubdev_addr_param = {0};
@@ -1251,8 +1270,13 @@ ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep,
     urma_seg_t ka_remote_seg = {0};
     ucs_status_t status = UCS_OK;
     urma_rjetty_t rjetty = {0};
-    urma_status_t urma_status;
     urma_token_t token = {0};
+
+    if (ep->super.flags & (UCT_RM_URMA_EP_FLAG_CLOSING |
+                          UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL |
+                          UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED)) {
+        return UCS_ERR_CANCELED;
+    }
 
     uct_ub_address_unpack(ub_addr, &ubdev_addr_param);
     uct_rm_urma_ep_addr_unpack(rm_urma_ep_addr, &ep_addr_param);
@@ -1265,7 +1289,6 @@ ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep,
         ucs_error("Invalid dep_id:%u received", ep_addr_param.ep_id);
         return UCS_ERR_NO_RESOURCE;
     }
-    ep->super.dep_id = ep_addr_param.ep_id;
 
     rjetty.jetty_id.eid = ubdev_addr_param.eid;
     rjetty.jetty_id.uasid = ubdev_addr_param.uasid;
@@ -1276,16 +1299,14 @@ ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep,
     rjetty.tp_type = URMA_CTP;
     token.token = ub_md->dev.token.token;
 
-    ep->tjetty = urma_import_jetty(ub_md->dev.urma_ctx, &rjetty, &token);
-    if (ep->tjetty == NULL) {
-        ucs_error("Error import jetty, eid = "EID_FMT", uasid:%u, jetty_id:%u, trans_mode:%u",
-                  EID_ARGS(rjetty.jetty_id.eid), rjetty.jetty_id.uasid, rjetty.jetty_id.id, rjetty.trans_mode);
-        status = UCS_ERR_IO_ERROR;
+    status = uct_rm_urma_iface_target_get(iface, &rjetty, &token, &ep->target);
+    if (status != UCS_OK) {
+        ucs_error("Failed to acquire RM target: %s, eid="EID_FMT
+                  ", uasid=%u, jetty_id=%u",
+                  ucs_status_string(status), EID_ARGS(rjetty.jetty_id.eid),
+                  rjetty.jetty_id.uasid, rjetty.jetty_id.id);
         goto err_import_jetty;
     }
-
-    
-    ep->ka_va_addr = ep_addr_param.seg_va;
 
     if (ep->ka_tseg == NULL) {
         uct_rm_urma_ka_seg(&ep_addr_param, &ubdev_addr_param, &ka_remote_seg);
@@ -1295,17 +1316,15 @@ ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep,
         }
     }
 
+    ep->tjetty        = ep->target->jetty;
+    ep->ka_va_addr    = ep_addr_param.seg_va;
+    ep->super.dep_id  = ep_addr_param.ep_id;
     ep->super.flags |= UCT_RM_URMA_EP_FLAG_CONNECTED;
     return UCS_OK;
 
 err_import_seg:
-    if (ep->tjetty != NULL) {
-        urma_status = urma_unimport_jetty(ep->tjetty);
-        if (urma_status != URMA_SUCCESS) {
-            ucs_warn("Failed to unimport jetty iface:%p jetty:%p", iface, ep->rm_urma_jetty->jetty);
-        }
-        ep->tjetty = NULL;
-    }
+    uct_rm_urma_iface_target_put(iface, ep->target);
+    ep->target = NULL;
 err_import_jetty:
     return status;
 }
@@ -1342,6 +1361,7 @@ UCS_CLASS_INIT_FUNC(uct_rm_urma_ep_t, const uct_ep_params_t *params)
     self->ka_tseg = NULL;
     self->ka_va_addr = 0;
     self->tjetty = NULL;
+    self->target = NULL;
     memset(&self->tp, 0, sizeof(self->tp));
     return UCS_OK;
 }
@@ -1361,9 +1381,8 @@ static UCS_CLASS_CLEANUP_FUNC(uct_rm_urma_ep_t)
         (urma_unimport_seg(self->ka_tseg) != URMA_SUCCESS)) {
         ucs_warn("Failed to unimport RM keepalive segment");
     }
-    if ((self->tjetty != NULL) &&
-        (urma_unimport_jetty(self->tjetty) != URMA_SUCCESS)) {
-        ucs_warn("Failed to unimport RM target Jetty");
+    if (self->target != NULL) {
+        uct_rm_urma_iface_target_put(iface, self->target);
     }
 }
 

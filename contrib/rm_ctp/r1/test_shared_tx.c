@@ -3,14 +3,33 @@
 #include <assert.h>
 #include <stdio.h>
 #include <uct/base/uct_worker.h>
+#include <ucs/async/async.h>
 #include "../../../src/uct/urma/rm_urma/rm_urma_ep.c"
+
+static unsigned fail_target_alloc;
+static void *target_test_malloc(size_t size, const char *name);
+#define ucs_malloc target_test_malloc
 #include "../../../src/uct/urma/rm_urma/rm_urma_iface.c"
+#undef ucs_malloc
+
+static void *target_test_malloc(size_t size, const char *name)
+{
+    if (fail_target_alloc) {
+        --fail_target_alloc;
+        return NULL;
+    }
+    return ucs_malloc(size, name);
+}
 
 static struct {
     uint64_t ctx;
     urma_target_jetty_t *target;
     uint64_t header_addr;
     unsigned posts, fail_next, unimports, errors;
+    unsigned imports, seg_imports, seg_unimports;
+    unsigned fail_import, fail_seg_import, fail_unimport;
+    unsigned live_targets, live_segments;
+    unsigned require_quiesce, hardware_stopped;
     unsigned am_calls, destroy_on_error, purge_on_error, purged;
     urma_status_t fail_status;
 } mock;
@@ -18,10 +37,61 @@ static struct {
 urma_status_t urma_init(urma_init_attr_t *attr) { return URMA_SUCCESS; }
 urma_status_t urma_uninit(void) { return URMA_SUCCESS; }
 
+urma_status_t urma_delete_jetty(urma_jetty_t *jetty)
+{
+    assert(jetty != NULL);
+    mock.hardware_stopped = 1;
+    return URMA_SUCCESS;
+}
+
+urma_status_t urma_delete_jfr(urma_jfr_t *jfr)
+{
+    assert(jfr != NULL && mock.hardware_stopped);
+    return URMA_SUCCESS;
+}
+
+urma_target_jetty_t *urma_import_jetty(urma_context_t *ctx,
+                                      urma_rjetty_t *remote,
+                                      urma_token_t *token)
+{
+    urma_target_jetty_t *target;
+
+    ++mock.imports;
+    if (mock.fail_import) {
+        --mock.fail_import;
+        return NULL;
+    }
+    target = calloc(1, sizeof(*target));
+    assert(target != NULL);
+    ++mock.live_targets;
+    target->id         = remote->jetty_id;
+    target->trans_mode = remote->trans_mode;
+    return target;
+}
+
+urma_target_seg_t *urma_import_seg(urma_context_t *ctx, urma_seg_t *seg,
+                                  urma_token_t *token, uint64_t addr,
+                                  urma_import_seg_flag_t flag)
+{
+    urma_target_seg_t *target;
+
+    ++mock.seg_imports;
+    if (mock.fail_seg_import) {
+        --mock.fail_seg_import;
+        return NULL;
+    }
+    target = calloc(1, sizeof(*target));
+    assert(target != NULL);
+    ++mock.live_segments;
+    target->seg = *seg;
+    return target;
+}
+
 urma_status_t urma_post_jetty_send_wr(urma_jetty_t *j, urma_jfs_wr_t *wr,
                                       urma_jfs_wr_t **bad)
 {
     assert(j != NULL);
+    assert(!mock.require_quiesce || mock.hardware_stopped);
     assert(wr->flag.bs.complete_enable == URMA_COMPLETE_ENABLE);
     if (mock.fail_next) {
         mock.fail_next = 0;
@@ -43,12 +113,25 @@ urma_status_t urma_modify_jetty(urma_jetty_t *j, urma_jetty_attr_t *a)
 urma_status_t urma_unimport_jetty(urma_target_jetty_t *j)
 {
     assert(j != NULL);
+    assert(!mock.require_quiesce || mock.hardware_stopped);
     ++mock.unimports;
+    if (mock.fail_unimport) {
+        --mock.fail_unimport;
+        return URMA_FAIL;
+    }
+    free(j);
+    assert(mock.live_targets > 0);
+    --mock.live_targets;
     return URMA_SUCCESS;
 }
 urma_status_t urma_unimport_seg(urma_target_seg_t *s)
 {
     assert(s != NULL);
+    assert(!mock.require_quiesce || mock.hardware_stopped);
+    ++mock.seg_unimports;
+    free(s);
+    assert(mock.live_segments > 0);
+    --mock.live_segments;
     return URMA_SUCCESS;
 }
 
@@ -100,20 +183,37 @@ static ucs_status_t on_error(void *arg, uct_ep_h ep, ucs_status_t status)
     return UCS_OK;
 }
 
-static uct_rm_urma_ep_t *new_ep(uct_rm_urma_iface_t *iface, unsigned remote)
+static uct_rm_urma_ep_t *new_unconnected_ep(uct_rm_urma_iface_t *iface)
 {
+    static uct_ub_md_t md;
     uct_rm_urma_ep_t *ep = ucs_calloc(1, sizeof(*ep), "r1-mock-ep");
     assert(ep != NULL);
     ep->super.super.super.iface = &iface->super.super.super;
     assert(uct_ub_iface_add_ep(&iface->super, &ep->super) == UCS_OK);
     uct_ub_ep_tx_outstanding_queue_init(&ep->super.txqp);
-    ep->super.flags = UCT_RM_URMA_EP_FLAG_CONNECTED;
-    ep->super.dep_id = remote;
     ep->super.fc.fc_wnd = INT16_MAX;
     ep->rm_urma_jetty = &iface->rm_urma_jetty;
-    ep->tjetty = (urma_target_jetty_t *)(uintptr_t)(remote + 1);
+    iface->super.super.md = &md.super;
     ucs_arbiter_group_init(&ep->arb_group);
     ucs_list_head_init(&ep->retired_list);
+    return ep;
+}
+
+static uct_rm_urma_ep_t *new_ep(uct_rm_urma_iface_t *iface, unsigned remote)
+{
+    urma_rjetty_t target = {};
+    urma_token_t token = {};
+    uct_rm_urma_ep_t *ep = new_unconnected_ep(iface);
+
+    ep->super.flags       = UCT_RM_URMA_EP_FLAG_CONNECTED;
+    ep->super.dep_id      = remote;
+    target.jetty_id.id    = remote + 1;
+    target.trans_mode     = URMA_TM_RM;
+    target.type           = URMA_JETTY;
+    target.tp_type        = URMA_CTP;
+    assert(uct_rm_urma_iface_target_get(iface, &target, &token,
+                                       &ep->target) == UCS_OK);
+    ep->tjetty = ep->target->jetty;
     return ep;
 }
 
@@ -204,6 +304,7 @@ static void test_fc_errors(void)
         iface.rm_urma_jetty.available = 2;
         ucs_ptr_array_init(&iface.super.eps, "fc-error-EPs");
         ucs_list_head_init(&iface.tx.retired_eps);
+        kh_init_inplace(uct_rm_urma_targets, &iface.targets);
         ucs_arbiter_init(&iface.tx.arbiter);
         pool_init(&iface.super.tx.mp, sizeof(uct_ub_iface_send_desc_t) + 2048, 1);
         pool_init(&iface.super.tx.short_desc_mp, sizeof(uct_ub_iface_send_desc_t) + 256, 1);
@@ -306,6 +407,9 @@ static void test_fc_errors(void)
         uct_rm_urma_iface_gc(&iface);
         assert(mock.unimports == 2);
         ucs_arbiter_cleanup(&iface.tx.arbiter);
+        assert(kh_size(&iface.targets) == 0);
+        uct_rm_urma_iface_targets_cleanup(&iface);
+        assert(mock.live_targets == 0 && mock.live_segments == 0);
         ucs_ptr_array_cleanup(&iface.super.eps, 1);
         ucs_mpool_cleanup(&iface.tx.pending_mp, 1);
         ucs_mpool_cleanup(&iface.super.tx.mp, 1);
@@ -314,6 +418,271 @@ static void test_fc_errors(void)
         ucs_callbackq_cleanup(&worker.super.progress_q);
     }
     puts("PASS late FC, immediate/queued errors, retry, cancel, grant wakeup, OOM and callback destruction/purge (11 CPU cases)");
+}
+
+static ucs_status_t connect_remote(uct_rm_urma_ep_t *ep, unsigned remote_ep)
+{
+    uint8_t device[32] = {};
+    urma_eid_t eid = {};
+    uint32_t uasid = 17;
+    uct_rm_urma_ep_wire_addr_t wire = {
+        .jetty_id = 771,
+        .ep_id = remote_ep,
+        .seg_va = 0x1000,
+        .seg_len = 4096,
+        .seg_token_id = 123,
+        .trans_mode = URMA_TM_RM
+    };
+
+    eid.raw[0] = 0x45;
+    eid.raw[15] = 0x97;
+    memcpy(device + 1, &eid, sizeof(eid));
+    memcpy(device + 1 + sizeof(eid), &uasid, sizeof(uasid));
+    uint8_t packed[sizeof(wire) + 1];
+
+    memcpy(packed + 1, &wire, sizeof(wire));
+    return uct_ep_connect_to_ep(&ep->super.super.super,
+                                (const uct_device_addr_t *)device,
+                                (const uct_ep_addr_t *)(packed + 1));
+}
+
+static void test_ep_wire_address(uct_rm_urma_iface_t *iface,
+                                  uct_rm_urma_ep_t *ep)
+{
+    urma_target_seg_t segment = {};
+    uct_ub_iface_ka_desc_t mem = { .tseg = &segment };
+    uct_rm_urma_ep_wire_addr_t expected = {
+        .jetty_id = 100,
+        .tpn = 17,
+        .ep_id = ep->super.ep_id,
+        .seg_va = 0x123456789abULL,
+        .seg_len = 4096,
+        .seg_flag = 0x123,
+        .seg_token_id = 321,
+        .trans_mode = URMA_TM_RM
+    };
+    uct_rm_urma_ep_addr_params_t decoded = {};
+    uint8_t packed[sizeof(expected) + 2];
+
+    segment.seg.ubva.va = expected.seg_va;
+    segment.seg.len = expected.seg_len;
+    segment.seg.attr.value = expected.seg_flag;
+    segment.seg.token_id = expected.seg_token_id;
+    iface->super.ka_local_seg = &mem;
+    iface->rm_urma_jetty.jetty->jetty_id.id = expected.jetty_id;
+    iface->rm_urma_jetty.jetty->jetty_cfg.jfs_cfg.trans_mode = URMA_TM_RM;
+    ep->tp.tpn = expected.tpn;
+    memset(packed, 0xa5, sizeof(packed));
+    assert(uct_ep_get_address(&ep->super.super.super,
+                              (uct_ep_addr_t *)(packed + 1)) == UCS_OK);
+    assert(packed[0] == 0xa5 && packed[sizeof(packed) - 1] == 0xa5);
+    assert(!memcmp(packed + 1, &expected, sizeof(expected)));
+    uct_rm_urma_ep_addr_unpack((const uct_rm_urma_ep_addr_t *)(packed + 1),
+                               &decoded);
+    assert(decoded.jetty_id == expected.jetty_id);
+    assert(decoded.ep_id == expected.ep_id && decoded.seg_va == expected.seg_va);
+    assert(decoded.seg_len == expected.seg_len);
+    assert(decoded.seg_flag == expected.seg_flag);
+    assert(decoded.seg_token_id == expected.seg_token_id);
+    assert(decoded.trans_mode == expected.trans_mode);
+    iface->super.ka_local_seg = NULL;
+    puts("PASS unchanged 40-byte EP wire address with unaligned export/import and canaries");
+}
+
+static void test_target_reuse(void)
+{
+    uct_rm_urma_iface_t iface = {};
+    uct_priv_worker_t worker = {};
+    urma_jetty_t local = {};
+    uct_rm_urma_ep_t *a, *b, *c;
+    urma_jfr_t jfr = {};
+    ucs_async_context_t async;
+    uct_rm_urma_target_t *target, *again, *targets[128];
+    uct_rm_urma_target_key_t key = {}, changed;
+    uint64_t a_ctx, b_ctx;
+    unsigned before, i;
+
+    memset(&mock, 0, sizeof(mock));
+    assert(ucs_async_context_init(&async, UCS_ASYNC_MODE_POLL) == UCS_OK);
+    assert(ucs_callbackq_init(&worker.super.progress_q) == UCS_OK);
+    iface.super.super.worker = &worker;
+    worker.async = &async;
+    iface.super.super.err_handler = on_error;
+    iface.super.super.super.ops = uct_rm_urma_iface_tl_ops;
+    iface.super.config.max_inline = 128;
+    iface.super.config.seg_size = 2048;
+    iface.super.config.tx_max_wr = 3;
+    iface.super.tx.jfc_available = 64;
+    iface.super.tx.reads_available = 1048576;
+    iface.rm_urma_jetty.jetty = &local;
+    iface.rm_urma_jetty.available = 2;
+    ucs_ptr_array_init(&iface.super.eps, "target-EPs");
+    ucs_list_head_init(&iface.tx.retired_eps);
+    kh_init_inplace(uct_rm_urma_targets, &iface.targets);
+    ucs_arbiter_init(&iface.tx.arbiter);
+    pool_init(&iface.super.tx.mp, sizeof(uct_ub_iface_send_desc_t) + 2048, 1);
+    pool_init(&iface.super.tx.short_desc_mp,
+              sizeof(uct_ub_iface_send_desc_t) + 256, 1);
+    pool_init(&iface.super.tx.send_op_mp, sizeof(uct_urma_iface_send_op_t), 0);
+    a = new_unconnected_ep(&iface);
+    b = new_unconnected_ep(&iface);
+    c = new_unconnected_ep(&iface);
+
+    test_ep_wire_address(&iface, a);
+
+    assert(connect_remote(a, 101) == UCS_OK);
+    assert(connect_remote(b, 102) == UCS_OK);
+    target = a->target;
+    assert(a->target == b->target && target->references == 2);
+    assert(a->tjetty == b->tjetty && a->ka_tseg != b->ka_tseg);
+    assert(a->super.dep_id == 101 && b->super.dep_id == 102);
+    assert(mock.imports == 1 && mock.seg_imports == 2);
+
+    /* Failure on a second EP must not unimport the first EP's target. */
+    mock.fail_seg_import = 1;
+    assert(connect_remote(c, 103) == UCS_ERR_IO_ERROR);
+    assert(c->target == NULL && c->tjetty == NULL && c->ka_tseg == NULL);
+    assert(!(c->super.flags & UCT_RM_URMA_EP_FLAG_CONNECTED));
+    assert(target->references == 2 && mock.unimports == 0);
+    assert(connect_remote(c, 103) == UCS_OK);
+    assert(target->references == 3 && mock.imports == 1);
+    assert(connect_remote(c, 103) == UCS_ERR_INVALID_PARAM);
+    assert(target->references == 3);
+    uct_rm_urma_ep_destroy(&c->super.super.super);
+    assert(target->references == 2);
+
+    assert(send_short(a) == UCS_OK);
+    a_ctx = mock.ctx;
+    assert(send_short(b) == UCS_OK);
+    b_ctx = mock.ctx;
+    uct_rm_urma_ep_destroy(&a->super.super.super);
+    complete(&iface, b_ctx);
+    uct_rm_urma_iface_gc(&iface);
+    assert(target->references == 2 && mock.unimports == 0);
+    complete(&iface, a_ctx);
+    uct_rm_urma_iface_gc(&iface);
+    assert(target->references == 1 && mock.unimports == 0);
+    assert(send_short(b) == UCS_OK && mock.target == target->jetty);
+    complete(&iface, mock.ctx);
+    uct_rm_urma_ep_destroy(&b->super.super.super);
+    assert(mock.unimports == 1 && kh_size(&iface.targets) == 0);
+    puts("PASS actual connect: one target import, independent EP/segment ownership, CQE-delayed last release");
+
+    c = new_unconnected_ep(&iface);
+    before = mock.imports;
+    fail_target_alloc = 1;
+    assert(connect_remote(c, 201) == UCS_ERR_NO_MEMORY);
+    assert(c->target == NULL && kh_size(&iface.targets) == 0);
+    assert(mock.imports == before);
+    mock.fail_import = 1;
+    assert(connect_remote(c, 201) == UCS_ERR_IO_ERROR);
+    assert(c->target == NULL && c->tjetty == NULL);
+    assert(kh_size(&iface.targets) == 0);
+    mock.fail_seg_import = 1;
+    assert(connect_remote(c, 201) == UCS_ERR_IO_ERROR);
+    assert(c->target == NULL && c->ka_tseg == NULL);
+    assert(kh_size(&iface.targets) == 0);
+    before = mock.imports;
+    assert(connect_remote(c, 201) == UCS_OK);
+    assert(mock.imports == before + 1);
+    uct_rm_urma_ep_destroy(&c->super.super.super);
+    puts("PASS target/segment import failure rollback and retry without a stale cache entry");
+
+    key.remote.jetty_id.id = 515;
+    key.remote.trans_mode = URMA_TM_RM;
+    key.remote.type = URMA_JETTY;
+    key.remote.tp_type = URMA_CTP;
+    assert(uct_rm_urma_iface_target_get(&iface, &key.remote, &key.token,
+                                       &target) == UCS_OK);
+    for (i = 0; i < 9; ++i) {
+        changed = key;
+        switch (i) {
+        case 0: changed.remote.jetty_id.eid.raw[0] = 1; break;
+        case 1: changed.remote.jetty_id.uasid = 1; break;
+        case 2: changed.remote.jetty_id.id = 516; break;
+        case 3: changed.remote.trans_mode = URMA_TM_RC; break;
+        case 4: changed.remote.policy = 1; break;
+        case 5: changed.remote.type = URMA_JETTY_GROUP; break;
+        case 6: changed.remote.flag.value = 1; break;
+        case 7: changed.remote.tp_type = URMA_UTP; break;
+        case 8: changed.token.token = 1; break;
+        }
+        assert(!uct_rm_urma_target_equal(&key, &changed));
+        assert(uct_rm_urma_iface_target_get(&iface, &changed.remote,
+                                           &changed.token, &again) == UCS_OK);
+        assert(again != target);
+        uct_rm_urma_iface_target_put(&iface, again);
+    }
+    before = mock.imports;
+    for (i = 0; i < 128; ++i) {
+        changed = key;
+        changed.remote.jetty_id.id = 1000 + i;
+        assert(uct_rm_urma_iface_target_get(&iface, &changed.remote,
+                                           &changed.token,
+                                           &targets[i]) == UCS_OK);
+    }
+    assert(uct_rm_urma_iface_target_get(&iface, &key.remote, &key.token,
+                                       &again) == UCS_OK);
+    assert(again == target && target->references == 2);
+    assert(mock.imports == before + 128);
+    uct_rm_urma_iface_target_put(&iface, again);
+    for (i = 0; i < 128; ++i) {
+        uct_rm_urma_iface_target_put(&iface, targets[i]);
+    }
+    target->references = UINT_MAX;
+    assert(uct_rm_urma_iface_target_get(&iface, &key.remote, &key.token,
+                                       &again) == UCS_ERR_NO_RESOURCE);
+    assert(again == NULL);
+    target->references = 1;
+    uct_rm_urma_iface_target_put(&iface, target);
+    assert(kh_size(&iface.targets) == 0);
+    puts("PASS full 128-bit EID/import identity, stable targets across rehash and reference overflow guard");
+
+    assert(uct_rm_urma_iface_target_get(&iface, &key.remote, &key.token,
+                                       &target) == UCS_OK);
+    before = mock.imports;
+    iface.tx.error = UCS_ERR_IO_ERROR;
+    assert(uct_rm_urma_iface_target_get(&iface, &key.remote, &key.token,
+                                       &again) == UCS_ERR_IO_ERROR);
+    assert(mock.imports == before && again == NULL);
+    iface.tx.error = UCS_OK;
+    mock.fail_unimport = 1;
+    uct_rm_urma_iface_target_put(&iface, target);
+    assert(target->references == 0 && kh_size(&iface.targets) == 1);
+    assert(uct_rm_urma_iface_target_get(&iface, &key.remote, &key.token,
+                                       &again) == UCS_ERR_IO_ERROR);
+    assert(mock.imports == before && again == NULL);
+    uct_rm_urma_iface_targets_cleanup(&iface);
+    puts("PASS failed iface rejection and failed-unimport quarantine/close retry (CPU injection only)");
+
+    assert(mock.seg_unimports == 4);
+    assert(mock.live_targets == 0 && mock.live_segments == 0);
+
+    kh_init_inplace(uct_rm_urma_targets, &iface.targets);
+    pool_init(&iface.tx.pending_mp, sizeof(uct_rm_urma_pending_req_t), 0);
+    iface.super.rx.jfr = &jfr;
+    a = new_unconnected_ep(&iface);
+    b = new_unconnected_ep(&iface);
+    assert(connect_remote(a, 301) == UCS_OK);
+    assert(connect_remote(b, 302) == UCS_OK);
+    target = b->target;
+    assert(send_short(b) == UCS_OK);
+    uct_rm_urma_ep_destroy(&a->super.super.super);
+    uct_rm_urma_ep_destroy(&b->super.super.super);
+    assert(target->references == 1 && mock.live_targets == 1);
+    mock.require_quiesce = 1;
+    _UCS_CLASS_CLEANUP_NAME(uct_rm_urma_iface_t)(&iface);
+    assert(mock.hardware_stopped && iface.rm_urma_jetty.jetty == NULL);
+    assert(ucs_list_is_empty(&iface.tx.retired_eps));
+    assert(mock.live_targets == 0 && mock.live_segments == 0);
+    puts("PASS actual iface cleanup: stop shared Jetty before releasing retired EP target/segment");
+
+    ucs_ptr_array_cleanup(&iface.super.eps, 1);
+    ucs_mpool_cleanup(&iface.super.tx.mp, 1);
+    ucs_mpool_cleanup(&iface.super.tx.short_desc_mp, 1);
+    ucs_mpool_cleanup(&iface.super.tx.send_op_mp, 1);
+    ucs_callbackq_cleanup(&worker.super.progress_q);
+    ucs_async_context_cleanup(&async);
 }
 
 int main(void)
@@ -341,6 +710,7 @@ int main(void)
     iface.rm_urma_jetty.available = 2;
     ucs_ptr_array_init(&iface.super.eps, "r1-EPs");
     ucs_list_head_init(&iface.tx.retired_eps);
+    kh_init_inplace(uct_rm_urma_targets, &iface.targets);
     ucs_arbiter_init(&iface.tx.arbiter);
     pool_init(&iface.super.tx.mp, sizeof(uct_ub_iface_send_desc_t) + 2048, 1);
     pool_init(&iface.super.tx.short_desc_mp, sizeof(uct_ub_iface_send_desc_t) + 256, 1);
@@ -425,6 +795,9 @@ int main(void)
     uct_rm_urma_ep_destroy(&b->super.super.super);
     assert(mock.unimports == 4);
     ucs_arbiter_cleanup(&iface.tx.arbiter);
+    assert(kh_size(&iface.targets) == 0);
+    uct_rm_urma_iface_targets_cleanup(&iface);
+    assert(mock.live_targets == 0 && mock.live_segments == 0);
     ucs_ptr_array_cleanup(&iface.super.eps, 1);
     ucs_mpool_cleanup(&iface.super.tx.mp, 1);
     ucs_mpool_cleanup(&iface.super.tx.short_desc_mp, 1);
@@ -432,5 +805,6 @@ int main(void)
     ucs_callbackq_cleanup(&worker.super.progress_q);
     puts("PASS synthetic CQE isolation and cleanup; MOCK ONLY, no hardware validation");
     test_fc_errors();
+    test_target_reuse();
     return 0;
 }
