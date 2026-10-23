@@ -1,6 +1,6 @@
 # R1: shared local RM Jetty
 
-## Current candidate: A4 target reuse, step 1 (not complete A4/A6)
+## Validated substep: A4 target reuse, step 1 (not complete A4/A6)
 
 Base: `524abdbbbdcdbf05278325de0d0f44f5532d7cc2`.
 This candidate includes the A4 implementation choices/model and the first
@@ -29,7 +29,13 @@ ASan/UBSan mocks (shared target, allocation/import rollback, identity/rehash,
 CQE retirement, quarantine and actual iface cleanup); the unchanged 10-case
 Python design model; and the new two-process UCP probe over local TCP.
 The local TCP probe checks the harness only, not RM/CTP/provider behavior.
-No current candidate ARM64/node acceptance or performance result exists.
+The exact product at `4b77878ce65994387a1bf9e9a1c283e676c7f786` subsequently
+passed ARM64 isolated build, both-node module/loading checks, the actual UCP
+four-EP target-reuse diagnostic, normal MPI 8B/multi-peer regressions and the
+explicit FC-window regressions on 2026-10-23. See
+[the acceptance record](acceptance_a4_target_20261023.md). The recorded
+`22.54 us` RC sample is retained; stable performance/non-regression and total
+resource benefits remain unaccepted. Only this functional substep is closed.
 
 The existing `accept.py` gains optional `--target-reuse`. After its loader
 check it compiles/deploys `target_reuse.c` and runs RM and RC separately.
@@ -47,7 +53,10 @@ The ordinary MPI star test does not necessarily exercise duplicate targets.
 
 On the nodes, after a fixed-commit isolated build, use the existing invocation
 with `--repeats 3 --target-reuse`; keep diagnostics out of performance claims.
-A separate FC-window regression still uses its previously recorded helper.
+The FC-window regression uses the exact executed helper archived under
+`recorded_helpers_20261023/a4_fc_window_20261023.py`; it is pinned to the
+recorded node case, module and runner. It is historical test evidence, not
+product runtime or a portable tool that guesses a different installation.
 
 
 Historical R1 implementation base: `6ab11cd304690d7e40605be002e92da50b36f5a1`.
