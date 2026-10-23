@@ -15,6 +15,7 @@
 #include <uct/base/uct_iov.inl>
 #include <ucs/datastruct/ptr_array.h>
 #include <ucs/datastruct/list.h>
+#include <ucs/datastruct/khash.h>
 
 #include <urma_api.h>
 
@@ -24,6 +25,52 @@ typedef struct uct_rm_urma_jetty {
     urma_jetty_t                    *jetty;
     int16_t                         available;
 } uct_rm_urma_jetty_t;
+
+/* A target is reusable only when every URMA import parameter matches. */
+typedef struct uct_rm_urma_target_key {
+    urma_rjetty_t remote;
+    urma_token_t  token;
+} uct_rm_urma_target_key_t;
+
+typedef struct uct_rm_urma_target {
+    uct_rm_urma_target_key_t key;
+    urma_target_jetty_t      *jetty;
+    unsigned                references;
+} uct_rm_urma_target_t;
+
+static UCS_F_ALWAYS_INLINE khint32_t
+uct_rm_urma_target_hash(const uct_rm_urma_target_key_t *key)
+{
+    khint32_t hash = kh_int_hash_func(key->remote.jetty_id.id ^
+                                    key->remote.jetty_id.uasid);
+    unsigned i;
+
+    for (i = 0; i < sizeof(key->remote.jetty_id.eid.raw); ++i) {
+        hash = hash * 31 + key->remote.jetty_id.eid.raw[i];
+    }
+    return hash;
+}
+
+static UCS_F_ALWAYS_INLINE int
+uct_rm_urma_target_equal(const uct_rm_urma_target_key_t *a,
+                         const uct_rm_urma_target_key_t *b)
+{
+    /* Compare fields, not structure padding or only the low EID bits. */
+    return !memcmp(a->remote.jetty_id.eid.raw, b->remote.jetty_id.eid.raw,
+                   sizeof(a->remote.jetty_id.eid.raw)) &&
+           (a->remote.jetty_id.uasid == b->remote.jetty_id.uasid) &&
+           (a->remote.jetty_id.id == b->remote.jetty_id.id) &&
+           (a->remote.trans_mode == b->remote.trans_mode) &&
+           (a->remote.policy == b->remote.policy) &&
+           (a->remote.type == b->remote.type) &&
+           (a->remote.flag.value == b->remote.flag.value) &&
+           (a->remote.tp_type == b->remote.tp_type) &&
+           (a->token.token == b->token.token);
+}
+
+KHASH_INIT(uct_rm_urma_targets, const uct_rm_urma_target_key_t *,
+           uct_rm_urma_target_t *, 1, uct_rm_urma_target_hash,
+           uct_rm_urma_target_equal)
 
 enum {
     UCT_RM_URMA_IFACE_STAT_RX_DL_CR_ERR,
@@ -51,6 +98,7 @@ typedef struct uct_rm_urma_pending_req {
 struct uct_rm_urma_iface {
     uct_urma_iface_t             super;
     uct_rm_urma_jetty_t          rm_urma_jetty; /* owned once per iface */
+    khash_t(uct_rm_urma_targets) targets;
     ucs_callback_t             progress;
     uct_ub_iface_send_desc_t   *fc_desc; /* used when max_inline is zero */
     struct {
@@ -116,4 +164,10 @@ uct_rm_urma_iface_check_pending(uct_rm_urma_iface_t *iface, ucs_arbiter_group_t 
 void uct_rm_urma_available_set(uct_rm_urma_iface_t *iface, uint8_t jfs_idx, int16_t val);
 void uct_rm_urma_iface_set_failed(uct_rm_urma_iface_t *iface, ucs_status_t status);
 void uct_rm_urma_iface_gc(uct_rm_urma_iface_t *iface);
+ucs_status_t uct_rm_urma_iface_target_get(uct_rm_urma_iface_t *iface,
+                                         const urma_rjetty_t *remote,
+                                         const urma_token_t *token,
+                                         uct_rm_urma_target_t **target_p);
+void uct_rm_urma_iface_target_put(uct_rm_urma_iface_t *iface,
+                                 uct_rm_urma_target_t *target);
 #endif

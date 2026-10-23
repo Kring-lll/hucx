@@ -1,5 +1,55 @@
 # R1: shared local RM Jetty
 
+## Current candidate: A4 target reuse, step 1 (not complete A4/A6)
+
+Base: `524abdbbbdcdbf05278325de0d0f44f5532d7cc2`.
+This candidate includes the A4 implementation choices/model and the first
+actual C target-management change. Apply its integrated patch to that base;
+do not stack the earlier A4 choices or A5 32-byte iface-address patches.
+
+- An iface hash table owns imported RM target Jettys. Matching uses the full
+  128-bit EID, uasid, Jetty ID, mode, policy, type, flags, transport and token.
+- Concurrent logical EPs for the same target hold references to one import.
+  Each retains its own remote EP ID, KA segment, pending, completion and flush.
+  The send fast path continues to use the existing cached `ep->tjetty` pointer.
+- Failed construction returns its target reference. The last reference is
+  released only through the existing CQE-delayed EP cleanup. No zero-reference
+  target is reused: the legacy address has no remote instance identifier.
+- A failed unimport quarantines the entry until iface close, where it is
+  retried after stopping the local Jetty. Repeated provider cleanup failure is
+  logged as in the existing backend; recovery/leak freedom under that hardware
+  failure is not claimed.
+- The existing 40-byte EP address layout is preserved, with safe unaligned
+  access. CONNECT_TO_EP, logical identity and current FC messages are retained.
+  Stable iface publication, independent FC return and shared RX budgeting
+  remain later work. There is no new software data ACK or retransmission.
+
+Validation available before deployment: isolated x86 build; actual RM C with
+ASan/UBSan mocks (shared target, allocation/import rollback, identity/rehash,
+CQE retirement, quarantine and actual iface cleanup); the unchanged 10-case
+Python design model; and the new two-process UCP probe over local TCP.
+The local TCP probe checks the harness only, not RM/CTP/provider behavior.
+No current candidate ARM64/node acceptance or performance result exists.
+
+The existing `accept.py` gains optional `--target-reuse`. After its loader
+check it compiles/deploys `target_reuse.c` and runs RM and RC separately.
+One UCP worker creates four logical EPs to one peer worker; four distinct
+64-byte tags/payloads are checked, then EPs/workers close. TCP carries only
+worker addresses and completion control, as in the UCX hello-world example;
+this is test bootstrap, not a product handshake or an MPI benchmark.
+Each process has an external timeout; the receiver progresses UCP during close.
+The diagnostic binds node97 TCP port 19943 for this case only.
+For RM the debug trace must show one successful target import, at least three
+reuse hits and one successful release per node/iface. These count wrapper/API
+operations, not network packets or hardware TP objects. RC must pass the same
+payload probe; no RC import-count or performance advantage is inferred.
+The ordinary MPI star test does not necessarily exercise duplicate targets.
+
+On the nodes, after a fixed-commit isolated build, use the existing invocation
+with `--repeats 3 --target-reuse`; keep diagnostics out of performance claims.
+A separate FC-window regression still uses its previously recorded helper.
+
+
 Historical R1 implementation base: `6ab11cd304690d7e40605be002e92da50b36f5a1`.
 The R2 FC error-path correction starts at the formal R1 delivery
 `9f5f07b878e1370ca389987f79b91b44f300ea2a`, branch `rm-contract-r2`.
@@ -39,7 +89,7 @@ RC and the public URMA/UCP framework are unchanged.
 ## Product behavior
 
 - The iface creates/deletes its shared Jetty. EPs borrow it and keep their own
-  target reference, EP ID, submitted/completed sequence and outstanding queue.
+  shared-target reference, EP ID, submitted/completed sequence and outstanding queue.
 - R1 requests one local CQE per WR, with out-of-order completion disabled.
   Per-EP moderation is not safe to retain unchanged on a shared send queue.
   This choice must be included in latency/throughput interpretation.

@@ -88,12 +88,100 @@ def many_command(cmd, idx, wrapper, peers, size):
         result[mp+1:mp+1]=['-np',str(peers+1)]
     return result
 
+def target_events(text):
+    """Count successful wrapper operations, never physical transport packets."""
+    rows = {}
+    active = set()
+    for action, iface, target in re.findall(
+            r'RM target (import|reuse|release) iface=(\S+) target=(\S+)', text):
+        row = rows.setdefault(iface, {'import': 0, 'reuse': 0, 'release': 0})
+        identity = (iface, target)
+        if action == 'import':
+            if identity in active:
+                raise RuntimeError('duplicate live target import')
+            active.add(identity)
+        else:
+            if identity not in active:
+                raise RuntimeError('target reuse/release without a live import')
+            if action == 'release':
+                active.remove(identity)
+        row[action] += 1
+    if active or len(rows) != 1:
+        raise RuntimeError('expected one RM iface with no live target imports')
+    row = next(iter(rows.values()))
+    if row['import'] != 1 or row['release'] != 1 or row['reuse'] < 3:
+        raise RuntimeError('four logical EPs did not reuse one target: ' + str(rows))
+    return rows
+
+
+def target_probe(case, install, out, kind):
+    """One-way four-EP UCP probe; TCP bootstrap is outside product code."""
+    binary = case / 'r1_target_reuse'
+    module_dir = install / 'lib/ucx'
+    log = out / ('target_' + kind + '_client.log')
+    server_log = out / ('target_' + kind + '_server.log')
+    diagnostic = {
+        'UCX_TLS': kind + '_urma,um_urma:aux,self',
+        'UCX_NET_DEVICES': 'udmac0d1e2:1',
+        'UCX_PROTO_ENABLE': 'n',
+        'UCX_LOG_LEVEL': 'debug',
+        'UCX_MODULE_DIR': str(module_dir),
+        'LD_LIBRARY_PATH': str(install / 'lib'),
+        'LD_PRELOAD': ':'.join(str(install / 'lib' / ('lib' + lib + '.so.0'))
+                               for lib in ('ucp', 'uct', 'ucs', 'ucm'))
+    }
+    server_cmd = ['timeout', '85s', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin']
+    server_cmd += [key + '=' + value for key, value in diagnostic.items()]
+    server_cmd += [str(binary), 'listen', '9.88.43.97', '19943']
+    script = ('set -eu\nmkdir -p ' + shlex.quote(str(out)) + '\nexec ' +
+              shlex.join(server_cmd) + ' >' + shlex.quote(str(server_log)) + ' 2>&1\n')
+    (out / ('target_' + kind + '_server.sh')).write_text(script)
+    server = subprocess.Popen(['ssh', PEER, 'bash', '-s'], text=True,
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, start_new_session=True)
+    server.stdin.write(script)
+    server.stdin.close()
+    server.stdin = None
+    env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin')}
+    env.update(diagnostic)
+    try:
+        result = run([str(binary), 'connect', '9.88.43.97', '19943'],
+                     env, log, timeout=80)
+    finally:
+        try:
+            stdout, stderr = server.communicate(timeout=90)
+        except subprocess.TimeoutExpired:
+            os.killpg(server.pid, signal.SIGTERM)
+            stdout, stderr = server.communicate(timeout=10)
+            raise RuntimeError('target probe SSH timed out; remote test has its own timeout')
+        (out / ('target_' + kind + '_ssh.log')).write_text(stdout + stderr)
+    remote_text = remote('set -eu\ncat "$1"\n', str(server_log))
+    (out / ('target_' + kind + '_server_copy.log')).write_text(remote_text)
+    if server.returncode != 0:
+        raise RuntimeError('target probe server failed: ' + str(server_log))
+    local_text = log.read_text(errors='replace')
+    if ('TARGET_REUSE_PAYLOAD_PASS ROLE=sender EPS=4 BYTES=64' not in local_text or
+            'TARGET_REUSE_PAYLOAD_PASS ROLE=receiver EPS=4 BYTES=64' not in remote_text):
+        raise RuntimeError('target probe payload validation marker missing')
+    result.update(kind=kind, logical_eps=4, bytes_per_ep=64,
+                  scope='UCP one-way correctness/target reuse; not MPI or performance')
+    if kind == 'rm':
+        result['target_events'] = {'node89': target_events(local_text),
+                                   'node97': target_events(remote_text)}
+    print('TARGET %s EPS=4 BOTH_PAYLOAD_PASS=YES%s' %
+          (kind.upper(), ' IMPORT=1 REUSE>=3 RELEASE=1 PER_NODE=YES' if kind == 'rm' else ''),
+          flush=True)
+    return result
+
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('case',type=Path)
     ap.add_argument('--baseline',type=Path,default=LAB/'osu_minimal8_ff_14ns8')
     ap.add_argument('--no-deploy',action='store_true')
     ap.add_argument('--repeats',type=int,default=5)
+    ap.add_argument('--target-reuse', action='store_true',
+                    help='also run the diagnostic four-EP UCP target reuse probe')
     args=ap.parse_args()
     case=args.case.resolve(); install=case/'install'
     if case.parent!=LAB: raise RuntimeError('case must be an isolated direct child of experiment root')
@@ -141,6 +229,20 @@ def main():
     if str(module) not in loader and str(install/'lib/ucx/libuct_ub.so') not in loader:
         raise RuntimeError('loader trace does not show candidate URMA module')
     print('LOADER_CHECK=PASS VALIDATION_ENABLED=YES EXIT=0',flush=True)
+    if args.target_reuse:
+        target_binary = case / 'r1_target_reuse'
+        subprocess.run(['gcc', '-std=gnu99', '-O2', '-Wall', '-Wextra', '-Werror',
+                        '-I' + str(install / 'include'),
+                        str(Path(__file__).with_name('target_reuse.c')),
+                        '-L' + str(install / 'lib'),
+                        '-Wl,-rpath,' + str(install / 'lib'),
+                        '-lucp', '-lucs', '-o', str(target_binary)], check=True)
+        subprocess.run(['scp', '-q', str(target_binary), PEER + ':' + str(case) + '/'],
+                       check=True)
+        results['target_reuse'] = []
+        for kind in ('rm', 'rc'):
+            results['target_reuse'].append(target_probe(case, install, out, kind))
+            (out / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     for rep in range(args.repeats):
         for kind in (('rc','rm') if rep%2==0 else ('rm','rc')):
             cmd,env,_=specs[kind]

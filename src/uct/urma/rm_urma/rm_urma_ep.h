@@ -25,6 +25,7 @@ struct uct_rm_urma_ep {
     urma_target_seg_t               *ka_tseg;
     ucs_arbiter_group_t             arb_group;
     urma_target_jetty_t             *tjetty;
+    uct_rm_urma_target_t            *target; /* iface-owned; held through CQEs */
     urma_tp_t                       tp;
 };
 

@@ -229,6 +229,109 @@ static void uct_rm_urma_handle_failure(uct_urma_iface_t *ub_iface, urma_cr_t *cr
     uct_rm_urma_iface_set_failed(iface, status);
 }
 
+ucs_status_t uct_rm_urma_iface_target_get(uct_rm_urma_iface_t *iface,
+                                         const urma_rjetty_t *remote,
+                                         const urma_token_t *token,
+                                         uct_rm_urma_target_t **target_p)
+{
+    uct_rm_urma_target_key_t key = {*remote, *token};
+    uct_rm_urma_target_t *target;
+    uct_ub_md_t *md = uct_ub_iface_md(&iface->super);
+    khiter_t iter;
+    int inserted;
+
+    *target_p = NULL;
+    if (iface->tx.error != UCS_OK) {
+        return iface->tx.error;
+    }
+
+    iter = kh_get(uct_rm_urma_targets, &iface->targets, &key);
+    if (iter != kh_end(&iface->targets)) {
+        target = kh_value(&iface->targets, iter);
+        /* A failed unimport is quarantined, never handed to a new EP. */
+        if (target->references == 0) {
+            return UCS_ERR_IO_ERROR;
+        }
+        if (target->references == UINT_MAX) {
+            return UCS_ERR_NO_RESOURCE;
+        }
+        ++target->references;
+        ucs_debug("RM target reuse iface=%p target=%p refs=%u", iface,
+                  target, target->references);
+        *target_p = target;
+        return UCS_OK;
+    }
+
+    target = ucs_malloc(sizeof(*target), "rm_target");
+    if (target == NULL) {
+        return UCS_ERR_NO_MEMORY;
+    }
+    target->key        = key;
+    target->references = 0;
+    target->jetty      = NULL;
+
+    /* Reserve the slot before import, but never publish an incomplete value.
+     * UCT iface access is serialized by the existing worker contract. */
+    iter = kh_put(uct_rm_urma_targets, &iface->targets, &target->key, &inserted);
+    if (inserted < 0) {
+        ucs_free(target);
+        return UCS_ERR_NO_MEMORY;
+    }
+    ucs_assert(inserted != 0);
+    target->jetty = urma_import_jetty(md->dev.urma_ctx, &key.remote,
+                                     &key.token);
+    if (target->jetty == NULL) {
+        kh_del(uct_rm_urma_targets, &iface->targets, iter);
+        ucs_free(target);
+        return UCS_ERR_IO_ERROR;
+    }
+
+    target->references             = 1;
+    kh_value(&iface->targets, iter) = target;
+    *target_p                      = target;
+    ucs_debug("RM target import iface=%p target=%p jetty_id=%u", iface,
+              target, remote->jetty_id.id);
+    return UCS_OK;
+}
+
+void uct_rm_urma_iface_target_put(uct_rm_urma_iface_t *iface,
+                                 uct_rm_urma_target_t *target)
+{
+    khiter_t iter;
+
+    ucs_assert(target->references > 0);
+    if (--target->references != 0) {
+        return;
+    }
+    if (urma_unimport_jetty(target->jetty) != URMA_SUCCESS) {
+        ucs_warn("Failed to unimport RM target; quarantining until iface close");
+        return;
+    }
+
+    iter = kh_get(uct_rm_urma_targets, &iface->targets, &target->key);
+    ucs_assert(iter != kh_end(&iface->targets));
+    ucs_assert(kh_value(&iface->targets, iter) == target);
+    kh_del(uct_rm_urma_targets, &iface->targets, iter);
+    ucs_debug("RM target release iface=%p target=%p", iface, target);
+    ucs_free(target);
+}
+
+static void uct_rm_urma_iface_targets_cleanup(uct_rm_urma_iface_t *iface)
+{
+    uct_rm_urma_target_t *target;
+
+    /* UCT requires all EPs to be destroyed before closing their iface. The
+     * shared Jetty is already stopped; retry only quarantined imports. */
+    kh_foreach_value(&iface->targets, target, {
+        ucs_assert_always(target->references == 0);
+        if (urma_unimport_jetty(target->jetty) != URMA_SUCCESS) {
+            ucs_warn("RM target unimport still failed at iface close");
+        }
+        ucs_free(target);
+    });
+    kh_destroy_inplace(uct_rm_urma_targets, &iface->targets);
+}
+
 void uct_rm_urma_iface_gc(uct_rm_urma_iface_t *iface)
 {
     uct_rm_urma_ep_t *ep, *tmp;
@@ -653,6 +756,7 @@ static UCS_F_ALWAYS_INLINE ucs_status_t uct_rm_urma_init_iface_attr(uct_rm_urma_
     iface->fc_desc = NULL;
     iface->super.config.tx_jfc_moderation = 0;
     ucs_list_head_init(&iface->tx.retired_eps);
+    kh_init_inplace(uct_rm_urma_targets, &iface->targets);
     ucs_arbiter_init(&iface->tx.arbiter);
 
     /* Flush mode */
@@ -773,6 +877,7 @@ err_destroy_jetty:
 err_destroy_mempool:
     uct_ub_destroy_jfr(self->super.rx.jfr);
 err_destroy_attr:
+    kh_destroy_inplace(uct_rm_urma_targets, &self->targets);
     if (self->fc_desc != NULL) {
         ucs_mpool_put(self->fc_desc);
     }
@@ -799,6 +904,7 @@ static UCS_CLASS_CLEANUP_FUNC(uct_rm_urma_iface_t)
         ep->super.status.ci = ep->super.status.pi;
     }
     uct_rm_urma_iface_gc(self);
+    uct_rm_urma_iface_targets_cleanup(self);
     --self->tx.progress_depth;
     uct_ub_destroy_jfr(self->super.rx.jfr);
     ucs_arbiter_cleanup(&self->tx.arbiter);
