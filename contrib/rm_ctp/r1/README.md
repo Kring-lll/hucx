@@ -1,11 +1,11 @@
 # R1: shared local RM Jetty
 
-## Current candidate: iface-owned control sender (CPU validated; node pending)
+## Current candidate: iface-owned control sender (RM checks passed; RC open)
 
-Base: `5d61752d792fa5b85a28531173425f5d19cb7868`. Apply only the new
-control-sender patch to that exact base; the target-reuse change is already
-included. The validated target-reuse section below describes the historical
-`4b77878ce` product, not hardware acceptance of this candidate.
+Tested product: `6386751d32c66fe22a75efe596dfcecff6adf911`, developed from
+`5d61752d792fa5b85a28531173425f5d19cb7868`. The target-reuse change is already
+included. This record-only update preserves the tested product C/H files.
+The historical `4b77878ce` results below are not substituted for current checks.
 
 - Hard FC grants use one lazily created internal software EP per RM iface.
   It borrows the existing shared Jetty, creates no Jetty/KA import, and is never
@@ -27,7 +27,12 @@ included. The validated target-reuse section below describes the historical
 Local validation: isolated x86 make using public headers/compile-only SDK
 libraries; actual RM source under ASan/UBSan, the original regressions plus
 30 new inline/non-inline control cases; unchanged 10-test Python design model.
-No new ARM64/provider or two-node result exists yet. See LINK_DESIGN.md §12.
+ARM64 build, both-node module/loading checks, RM four-EP target reuse, three
+normal RM8B runs and RM-only FC-window 1/2/4-peer checks passed. RC remains
+open: an uninstrumented old/new/old RC8B comparison passed/passed/failed.
+Full regression, formal product delivery and A4 completion remain pending.
+See [the current validation record](validation_a4_control_20261025.md) and
+LINK_DESIGN.md §12-13; no stable performance or total-memory benefit is claimed.
 
 After isolated node build, the combined node command is:
 

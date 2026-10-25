@@ -1,6 +1,6 @@
 {
   "base_commit": "5d61752d792fa5b85a28531173425f5d19cb7868",
-  "scope": "A4 control-sender ownership substep: isolated x86/CPU candidate only; operator application, ARM64 and real-node acceptance pending; legacy FC receive addressing and CONNECT_TO_EP retained",
+  "scope": "A4 control-sender ownership substep: pinned 638 product has partial ARM64/two-node RM passes; RC regression OPEN and full acceptance INCOMPLETE; legacy FC addressing and CONNECT_TO_EP retained",
   "files": {
     "contrib/rm_ctp/r1/accept.py": "a3989bc93fd703536a0fb5f7ff4e265352e5c54363e81b88457209dedeeaccf2",
     "contrib/rm_ctp/r1/build_isolated.sh": "2076630544c870e35a2f4026ebfcb5fdf8df551a6cc2e4efba76103ec1a5217c",
@@ -13,14 +13,16 @@
     "src/uct/urma/rm_urma/rm_urma_iface.c": "a2935259a983d87c6b1ec1fb2a919ae5fe06017d735928c7a4c7843dab332c97",
     "src/uct/urma/rm_urma/rm_urma_iface.h": "72327ec06553ba7a252d20f6652e413ca1cd7c618c369698abfe867e1c117b93",
     "contrib/rm_ctp/r1/acceptance_r2_20261022.md": "e4198610736dd96f026af79bbf73b58fc5baef88c0a42511281c16d25d6f4f36",
-    "contrib/rm_ctp/r1/README.md": "e700bc7b06c59f3ddf84f22cc9005bfb7469672c7b440ccd4ef398e907935167",
-    "contrib/rm_ctp/LINK_DESIGN.md": "b53d3898826df4112a4953f503e3f24a7c911b353c8534eb5d7fb13419b2ddf2",
-    "contrib/rm_ctp/REQUIREMENTS.md": "653e1a935aee080b0e7092b2e5d7cdad04d04736c3d3ac6a7eaf10bc16a0ca71",
+    "contrib/rm_ctp/r1/README.md": "596e5bad94569deec0bcf94681fbe4a4ed5d965fce8852b10c3ba9aee1651e96",
+    "contrib/rm_ctp/LINK_DESIGN.md": "41f4200c3cd54558c475c7b4ce2be17efd92acbd5560e74874a53a7ae41ee1fd",
+    "contrib/rm_ctp/REQUIREMENTS.md": "a50fa3849e6272673129fbe269537d82914853c56b6c1ec4c1bd923f624ff0f1",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/target_reuse.c": "6eceeebc8a3333d36c60eb799dd3fb038dfb02f46670eb4b684f67345206f78e",
     "contrib/rm_ctp/r1/acceptance_a4_target_20261023.md": "4c03091efafb7a92f7446ca48a542c3a2dae58d3e7175cc9077fbe9162330450",
     "contrib/rm_ctp/r1/recorded_helpers_20261023/a4_fc_window_20261023.py": "3d63cfac452e0f1c5e767a2197eaa8a4888ee172b01d48bdf252fe65d3fa7499",
-    "contrib/rm_ctp/r1/fc_window.py": "8ac817be615a876d3967e084084e055efa319b57bc479d51e5f60cfa3bbb5187"
+    "contrib/rm_ctp/r1/fc_window.py": "8ac817be615a876d3967e084084e055efa319b57bc479d51e5f60cfa3bbb5187",
+    "contrib/rm_ctp/r1/validation_a4_control_20261025.md": "1f0d8b1bb229dc703649d6e7f48f864fe1aae976a7daf6e6a1b0b6408d4ec7e7",
+    "contrib/rm_ctp/r1/recorded_helpers_20261025/rm_only_fc_diagnostic_6386751_20261025.py": "298c8779e0a3b52fde38fce5e4433bd7ee4967b32c42f22b6bfb81a8bf723e4d"
   },
   "historical_r1_hardware": {
     "product_commit": "f0b5cd4ab6fdfceaf6ce0ed98e64db91db861842",
@@ -41,22 +43,26 @@
       "full_r2_accepted": false
     }
   },
-  "product_tested_commit": null,
-  "product_module_sha256": null,
+  "product_tested_commit": "6386751d32c66fe22a75efe596dfcecff6adf911",
+  "product_module_sha256": "fb06f57ac44689b238da64590cfdf5883a106347aac2491493dff935fa8c3def",
   "current_validation": {
     "local_build": "isolated x86 make PASS using public SDK50288 headers, compile-only placeholder libraries and existing local verbs headers; generated configure/Makefile.in/config.h.in/auxiliary files reused; build-system inputs unchanged",
     "cpu_actual_rm": "ASan/UBSan PASS, UBSAN_OPTIONS=halt_on_error=1, LSan disabled as existing runner; existing shared SQ/70000 completion/target/11 FC error regressions plus 30 control-owner cases; mock target/segment live counts zero",
     "cpu_design_model": "unchanged 10 tests PASS; model only, not actual new C FC wire protocol",
     "fc_harness": "recorded C burst unchanged SHA256 502048a73533151fccba7cde6b77c24a84ae26e7e1c6ec7b6f9a6291d44d3b59; syntax/help and log gate 2 valid/4 invalid fixtures PASS; control-owner count allows sender absence due to piggybacked soft grants",
-    "operator_applied": false,
-    "hardware": "NOT RUN for this candidate; 4b hardware evidence is historical only",
+    "operator_applied": true,
+    "hardware": "PARTIAL PASS for pinned 638/fb: ARM64, peer module/loading, RM target probe, RM 3x8B and RM-only FC1/2/4; RC OPEN and full acceptance INCOMPLETE",
     "functional_substep_accepted": false,
     "a4_complete": false,
     "a5_implemented": false,
     "a6_complete": false,
     "performance_accepted": false,
     "node_acceptance_command": "accept.py CASE_DIR --repeats 3 --target-reuse --fc-window",
-    "legacy_cancellation": "unposted old-format replies are removed only for their original business EP on cancel/destroy/purge; posted replies retain independent target/descriptor ownership"
+    "legacy_cancellation": "unposted old-format replies are removed only for their original business EP on cancel/destroy/purge; posted replies retain independent target/descriptor ownership",
+    "normal_rm_8b": "PASS: 1.96/2.04/2.04 us; validation and exit0 each; not paired RC performance evidence",
+    "rc_regression": "OPEN: old/new/old RC8B PASS/PASS/FAIL; prior candidate RC8B and both-library four-EP Local length failures retained; cause unconfirmed",
+    "full_acceptance_complete": false,
+    "formal_delivery": "PENDING; latest formal product remains 990398f43e7b589b4030e45d69b48c1766f5eac3"
   },
   "historical_a4_target_reuse": {
     "product_commit": "4b77878ce65994387a1bf9e9a1c283e676c7f786",
@@ -137,6 +143,84 @@
       "complete_a6": false,
       "performance_accepted": false,
       "hardware_fault_injection": false
+    }
+  },
+  "record_base_commit": "6386751d32c66fe22a75efe596dfcecff6adf911",
+  "hardware_validation": {
+    "date": "2026-10-25",
+    "record": "contrib/rm_ctp/r1/validation_a4_control_20261025.md",
+    "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_6386751d3_NnF7hE",
+    "source_archive_sha256": "a3db8e14223e9b4f504fe3517af76ba7ad119a0d2cd5065969d4b0241ec3a3e8",
+    "evidence_source": "operator terminal summaries and pinned runner checks; raw node JSON/logs not downloaded",
+    "target_results": "accept_20261025_155105/results.json",
+    "rm_target": {
+      "payload_both_nodes": "PASS",
+      "logical_eps": 4,
+      "imports_per_node": 1,
+      "reuse_per_node_min": 3,
+      "releases_per_node": 1
+    },
+    "rm_normal_results": "rm8_normal_1uzctp_5/results.json",
+    "rm_normal_8b_us": [
+      1.96,
+      2.04,
+      2.04
+    ],
+    "rm_normal_8b_median_us": 2.04,
+    "rm_fc_results": "rm_only_fc_window8_uznhq632/results.json",
+    "rm_fc": {
+      "mode": "rm",
+      "enabled": true,
+      "window": 8,
+      "tx_depth": 8,
+      "rx_depth": 64,
+      "peers": [
+        1,
+        2,
+        4
+      ],
+      "data_maps_live0": "PASS",
+      "control_sender_counts": [
+        1,
+        2,
+        4
+      ],
+      "max_one_per_appearing_process": "PASS"
+    },
+    "rm_fc_helper_record": "contrib/rm_ctp/r1/recorded_helpers_20261025/rm_only_fc_diagnostic_6386751_20261025.py",
+    "rm_fc_helper_sha256": "298c8779e0a3b52fde38fce5e4433bd7ee4967b32c42f22b6bfb81a8bf723e4d",
+    "rc_aba_results": "rc8_aba_8q3n5oil/comparison.json",
+    "rc_aba": [
+      {
+        "label": "OLD_BEFORE",
+        "exit": 0,
+        "us": 2.49,
+        "validation": "PASS"
+      },
+      {
+        "label": "NEW",
+        "exit": 0,
+        "us": 2.24,
+        "validation": "PASS"
+      },
+      {
+        "label": "OLD_AFTER",
+        "exit": 134,
+        "send_cr_status": 2,
+        "result": "FAIL"
+      }
+    ],
+    "rc_regression": "OPEN",
+    "full_acceptance_complete": false,
+    "a4_complete": false,
+    "performance_accepted": false,
+    "wr_tracer": {
+      "results": "old_rc_wr_metadata__2zi8v81/results.json",
+      "exit": 127,
+      "cause": "tracer RTLD_NEXT resolution failure before real API forwarding",
+      "wr_rows": 0,
+      "counted_as_transport_failure": false,
+      "use": "STOPPED"
     }
   }
 }
