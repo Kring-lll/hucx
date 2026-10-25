@@ -84,6 +84,11 @@ ucs_status_t uct_rm_urma_iface_flush(uct_iface_h tl_iface, unsigned flags, uct_c
         return UCS_ERR_UNSUPPORTED;
     }
 
+    if ((iface->tx.ctrl_ep != NULL) &&
+        !ucs_arbiter_group_is_empty(&iface->tx.ctrl_ep->arb_group)) {
+        ++count;
+    }
+
     for (i = 0; i < iface->super.eps.size; i++) {
         if (__ucs_ptr_array_is_free(iface->super.eps.start[i])) {
             continue;
@@ -208,6 +213,11 @@ void uct_rm_urma_iface_set_failed(uct_rm_urma_iface_t *iface, ucs_status_t statu
             continue;
         }
         ep = (uct_rm_urma_ep_t *)iface->super.eps.start[i];
+        if (ep == iface->tx.ctrl_ep) {
+            /* This EP is owned by the iface, never by an upper-layer user. */
+            ucs_arbiter_group_desched(&iface->tx.arbiter, &ep->arb_group);
+            continue;
+        }
         if (ep->super.flags & (UCT_RM_URMA_EP_FLAG_CLOSING |
                               UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED)) {
             continue;
@@ -316,6 +326,86 @@ void uct_rm_urma_iface_target_put(uct_rm_urma_iface_t *iface,
     ucs_free(target);
 }
 
+static ucs_status_t
+uct_rm_urma_iface_send_fc_grant_owned(uct_rm_urma_iface_t *iface,
+                                     const urma_rjetty_t *remote,
+                                     const urma_token_t *token,
+                                     uint32_t remote_ep_id,
+                                     uct_rm_urma_ep_t *legacy_ep)
+{
+    uct_ep_params_t params = {
+        .field_mask = UCT_EP_PARAM_FIELD_IFACE,
+        .iface      = &iface->super.super.super
+    };
+    uct_rm_urma_fc_pending_req_t *req;
+    uct_ep_t *tl_ep;
+    ucs_status_t status;
+
+    if (iface->tx.error != UCS_OK) {
+        return iface->tx.error;
+    }
+    if (!iface->super.config.fc_enabled ||
+        (remote_ep_id >= UCT_UB_IFACE_MAX_EPS) ||
+        (remote->trans_mode != URMA_TM_RM) || (remote->type != URMA_JETTY) ||
+        (remote->tp_type != URMA_CTP)) {
+        return UCS_ERR_INVALID_PARAM;
+    }
+
+    req = ucs_mpool_get(&iface->tx.pending_mp);
+    if (req == NULL) {
+        return UCS_ERR_NO_MEMORY;
+    }
+    status = uct_rm_urma_iface_target_get(iface, remote, token, &req->target);
+    if (status != UCS_OK) {
+        ucs_mpool_put(req);
+        return status;
+    }
+    req->desc         = NULL;
+    req->remote_ep_id = remote_ep_id;
+    req->legacy_ep    = legacy_ep;
+
+    if (iface->tx.ctrl_ep == NULL) {
+        /* Reuse the ordinary software EP constructor and CQE routing. It
+         * borrows the existing Jetty and has no connected business peer. */
+        status = UCS_CLASS_NEW(uct_rm_urma_ep_t, &tl_ep, &params);
+        if (status != UCS_OK) {
+            uct_rm_urma_iface_target_put(iface, req->target);
+            ucs_mpool_put(req);
+            return status;
+        }
+        iface->tx.ctrl_ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
+        iface->tx.ctrl_ep->super.fc.fc_wnd = INT16_MAX;
+        ucs_debug("RM control sender created iface=%p ep=%p", iface,
+                  iface->tx.ctrl_ep);
+    }
+
+    req->super.ep         = &iface->tx.ctrl_ep->super.super.super;
+    req->super.super.func = uct_rm_urma_ep_fc_grant;
+    if (ucs_arbiter_group_is_empty(&iface->tx.ctrl_ep->arb_group)) {
+        status = uct_rm_urma_ep_fc_grant(&req->super.super);
+        if (status != UCS_ERR_NO_RESOURCE) {
+            return status;
+        }
+    }
+
+    /* A shortage retains the same target and request. Append to preserve
+     * control order, even when a later request could be posted immediately. */
+    uct_pending_req_arb_group_push(&iface->tx.ctrl_ep->arb_group,
+                                   &req->super.super);
+    ucs_arbiter_group_schedule(&iface->tx.arbiter,
+                               &iface->tx.ctrl_ep->arb_group);
+    return UCS_OK;
+}
+
+ucs_status_t uct_rm_urma_iface_send_fc_grant(uct_rm_urma_iface_t *iface,
+                                           const urma_rjetty_t *remote,
+                                           const urma_token_t *token,
+                                           uint32_t remote_ep_id)
+{
+    return uct_rm_urma_iface_send_fc_grant_owned(iface, remote, token,
+                                                remote_ep_id, NULL);
+}
+
 static void uct_rm_urma_iface_targets_cleanup(uct_rm_urma_iface_t *iface)
 {
     uct_rm_urma_target_t *target;
@@ -368,7 +458,6 @@ static void uct_rm_urma_iface_progress_pending(uct_rm_urma_iface_t *iface)
 ucs_status_t uct_rm_urma_iface_fc_handler(uct_urma_iface_t *ub_iface, void *arg, urma_cr_t *cr, unsigned flags)
 {
     uct_rm_urma_iface_t *iface = ucs_derived_of(ub_iface, uct_rm_urma_iface_t);
-    uct_rm_urma_pending_req_t *fc_req = NULL;
     uct_ub_hdr_t *hdr = (uct_ub_hdr_t *)arg;
     uct_rm_urma_ep_t *ep = NULL;
     uint32_t ep_id = hdr->ep_id;
@@ -386,7 +475,7 @@ ucs_status_t uct_rm_urma_iface_fc_handler(uct_urma_iface_t *ub_iface, void *arg,
         return UCS_OK;
     }
     ep = (uct_rm_urma_ep_t *)(iface->super.eps.start[ep_id]);
-    if (__ucs_ptr_array_is_free(ep) ||
+    if (__ucs_ptr_array_is_free(ep) || (ep == iface->tx.ctrl_ep) ||
         (ep->super.flags & (UCT_RM_URMA_EP_FLAG_CLOSING |
                             UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL |
                             UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED))) {
@@ -433,26 +522,13 @@ ucs_status_t uct_rm_urma_iface_fc_handler(uct_urma_iface_t *ub_iface, void *arg,
 
     } else if (fc_hdr & UCT_RM_URMA_EP_FLAG_FC_HARD_REQ) {
         UCS_STATS_UPDATE_COUNTER(ep->super.fc.stats, UCT_UB_FC_STAT_RX_HARD_REQ, 1);
-        fc_req = ucs_mpool_get(&iface->tx.pending_mp);
-        if (ucs_unlikely(fc_req == NULL)) {
-            ucs_error("Failed to allocate FC request. "
-                      "Grant will not be sent on ep");
-            uct_rm_urma_iface_set_failed(iface, UCS_ERR_NO_MEMORY);
-            return UCS_OK;
-        }
-        fc_req->ep = &ep->super.super.super;
-        fc_req->super.func = uct_rm_urma_ep_fc_grant;
-
-        /* Got hard credit request. Send grant to the peer immediately */
-        status = uct_rm_urma_ep_fc_grant(&fc_req->super);
-
-        if (status == UCS_ERR_NO_RESOURCE){
-            /* force add request to group & schedule group to eliminate
-             * FC deadlock */
-            uct_pending_req_arb_group_push_head(&ep->arb_group, &fc_req->super);
-            ucs_arbiter_group_schedule(&iface->tx.arbiter, &ep->arb_group);
-        } else if (status != UCS_OK) {
-            /* fc_grant returned the terminal request to its pool. */
+        /* Until instance/request identity is carried on the wire, preserve
+         * cancellation of this old connection's unposted replies. */
+        status = uct_rm_urma_iface_send_fc_grant_owned(iface,
+                                                      &ep->target->key.remote,
+                                                      &ep->target->key.token,
+                                                      ep->super.dep_id, ep);
+        if (status != UCS_OK) {
             uct_rm_urma_iface_set_failed(iface, status);
             return UCS_OK;
         }
@@ -752,6 +828,7 @@ static UCS_F_ALWAYS_INLINE ucs_status_t uct_rm_urma_init_iface_attr(uct_rm_urma_
     iface->progress = uct_rm_urma_iface_progress;
     iface->tx.error = UCS_OK;
     iface->tx.progress_depth = 0;
+    iface->tx.ctrl_ep = NULL;
     iface->rm_urma_jetty.jetty = NULL;
     iface->fc_desc = NULL;
     iface->super.config.tx_jfc_moderation = 0;
@@ -803,7 +880,7 @@ static ucs_status_t uct_rm_urma_iface_pending_mpool_init(uct_rm_urma_iface_t *if
      * size buffer, because number of simultaneous flushes is not limited by
      * CQ or QP resources. */
     ucs_mpool_params_reset(&mp_params);
-    mp_params.elem_size = sizeof(uct_rm_urma_pending_req_t);
+    mp_params.elem_size = sizeof(uct_rm_urma_fc_pending_req_t);
     mp_params.elems_per_chunk = 128;
     mp_params.alignment = 1;
     mp_params.ops = &uct_rm_urma_pending_mpool_ops;
@@ -900,10 +977,14 @@ static UCS_CLASS_CLEANUP_FUNC(uct_rm_urma_iface_t)
         ucs_fatal("Cannot safely destroy RM shared Jetty");
     }
     self->rm_urma_jetty.jetty = NULL;
+    if (self->tx.ctrl_ep != NULL) {
+        uct_rm_urma_ep_destroy(&self->tx.ctrl_ep->super.super.super);
+    }
     ucs_list_for_each(ep, &self->tx.retired_eps, retired_list) {
         ep->super.status.ci = ep->super.status.pi;
     }
     uct_rm_urma_iface_gc(self);
+    self->tx.ctrl_ep = NULL;
     uct_rm_urma_iface_targets_cleanup(self);
     --self->tx.progress_depth;
     uct_ub_destroy_jfr(self->super.rx.jfr);

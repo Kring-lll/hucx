@@ -1,11 +1,57 @@
 # R1: shared local RM Jetty
 
+## Current candidate: iface-owned control sender (CPU validated; node pending)
+
+Base: `5d61752d792fa5b85a28531173425f5d19cb7868`. Apply only the new
+control-sender patch to that exact base; the target-reuse change is already
+included. The validated target-reuse section below describes the historical
+`4b77878ce` product, not hardware acceptance of this candidate.
+
+- Hard FC grants use one lazily created internal software EP per RM iface.
+  It borrows the existing shared Jetty, creates no Jetty/KA import, and is never
+  exposed to UCP. The existing EP constructor, arbiter, registered pools and
+  completion routing are reused; data AM short/bcopy are unchanged.
+- Each posted reply owns its imported target until local completion or safe
+  shutdown. The legacy adapter still cancels that connection's unposted
+  replies on cancel/destroy/purge; other destinations stay queued.
+  Non-inline headers also remain owned until CQE. Error callbacks target only
+  business EPs; a late message addressed to the internal EP is ignored.
+- This changes **reply ownership**, not the wire protocol. Legacy incoming FC
+  still looks up the business EP for the return address. Request IDs, remote
+  instance validation, peer credits, shared RX budget, stable iface publication
+  and CONNECT_TO_IFACE remain open. No control-slot reservation or network
+  retry guarantee is added in this substep.
+- The software owner and larger pending-pool elements have a memory cost;
+  this change is not a total-memory or performance-benefit claim.
+
+Local validation: isolated x86 make using public headers/compile-only SDK
+libraries; actual RM source under ASan/UBSan, the original regressions plus
+30 new inline/non-inline control cases; unchanged 10-test Python design model.
+No new ARM64/provider or two-node result exists yet. See LINK_DESIGN.md §12.
+
+After isolated node build, the combined node command is:
+
+```bash
+OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 \
+python3 CASE/source/contrib/rm_ctp/r1/accept.py CASE \
+  --repeats 3 --target-reuse --fc-window
+```
+
+`--fc-window` reuses the exact recorded 16-message burst source via
+`fc_window.py`, verifies the current manifest/module, and checks explicit
+FC=y/W8/TX8/RX64 for RM/RC. Only the RM FC diagnostics enable debug logging;
+normal 8B samples keep their normal configuration. Each RM diagnostic process
+may create at most one software control owner. The total must be between the
+receiver count and the whole job size: the sender can answer soft requests by
+piggybacking and may never need a standalone control owner. This object count is separate
+from the observer's hardware Jetty counts and from network packet counts.
+
 ## Validated substep: A4 target reuse, step 1 (not complete A4/A6)
 
-Base: `524abdbbbdcdbf05278325de0d0f44f5532d7cc2`.
-This candidate includes the A4 implementation choices/model and the first
-actual C target-management change. Apply its integrated patch to that base;
-do not stack the earlier A4 choices or A5 32-byte iface-address patches.
+Historical product `4b77878ce` started at
+`524abdbbbdcdbf05278325de0d0f44f5532d7cc2` and included the A4 design/model
+and target-management change. The following evidence applies to that product.
+Do not apply its old patch to the current 5d-based control-sender candidate.
 
 - An iface hash table owns imported RM target Jettys. Matching uses the full
   128-bit EID, uasid, Jetty ID, mode, policy, type, flags, transport and token.

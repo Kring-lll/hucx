@@ -182,6 +182,8 @@ def main():
     ap.add_argument('--repeats',type=int,default=5)
     ap.add_argument('--target-reuse', action='store_true',
                     help='also run the diagnostic four-EP UCP target reuse probe')
+    ap.add_argument('--fc-window', action='store_true',
+                    help='also run explicit FC-window and control-sender diagnostics')
     args=ap.parse_args()
     case=args.case.resolve(); install=case/'install'
     if case.parent!=LAB: raise RuntimeError('case must be an isolated direct child of experiment root')
@@ -284,6 +286,11 @@ def main():
     (out/'results.json').write_text(json.dumps(results,indent=2)+'\n')
     print('MEDIAN_8B_US='+json.dumps(results['median_8B_us']),flush=True)
     print('RESULTS_JSON='+str(out/'results.json'),flush=True)
+    if args.fc_window:
+        subprocess.run([sys.executable, str(Path(__file__).with_name('fc_window.py')),
+                        str(case), '--commit', manifest['source_commit'],
+                        '--module', manifest['module_sha256'],
+                        '--normal-results', str(out/'results.json')], check=True)
 
 if __name__=='__main__':
     try: main()

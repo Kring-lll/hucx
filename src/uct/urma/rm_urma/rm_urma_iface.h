@@ -95,6 +95,17 @@ typedef struct uct_rm_urma_pending_req {
     uct_ep_t          *ep;
 } uct_rm_urma_pending_req_t;
 
+/* A grant owns its destination independently of any business EP. The same
+ * object stays in pending, then in the control sender's outstanding queue. */
+typedef struct uct_rm_urma_fc_pending_req {
+    uct_rm_urma_pending_req_t super;
+    uct_urma_iface_send_op_t  send_op;
+    uct_rm_urma_target_t     *target;
+    uct_ub_iface_send_desc_t *desc;
+    uct_rm_urma_ep_t         *legacy_ep; /* only while an old-format reply waits */
+    uint16_t                 remote_ep_id;
+} uct_rm_urma_fc_pending_req_t;
+
 struct uct_rm_urma_iface {
     uct_urma_iface_t             super;
     uct_rm_urma_jetty_t          rm_urma_jetty; /* owned once per iface */
@@ -110,6 +121,7 @@ struct uct_rm_urma_iface {
     struct {
         ucs_mpool_t            pending_mp; /* pool for FC grant and keepalive pending requests */
         ucs_arbiter_t          arbiter;
+        uct_rm_urma_ep_t      *ctrl_ep; /* software completion owner, no Jetty */
         ucs_list_link_t        retired_eps;
         ucs_status_t          error;
         unsigned              progress_depth;
@@ -170,4 +182,8 @@ ucs_status_t uct_rm_urma_iface_target_get(uct_rm_urma_iface_t *iface,
                                          uct_rm_urma_target_t **target_p);
 void uct_rm_urma_iface_target_put(uct_rm_urma_iface_t *iface,
                                  uct_rm_urma_target_t *target);
+ucs_status_t uct_rm_urma_iface_send_fc_grant(uct_rm_urma_iface_t *iface,
+                                           const urma_rjetty_t *remote,
+                                           const urma_token_t *token,
+                                           uint32_t remote_ep_id);
 #endif

@@ -5,7 +5,9 @@
 第10节作为后续实现基线，实际CTP必要保证和验收仍按依赖闭合，A4、C1继续保持□。
 完整 C1 不作为所有建链工作的统一前置；各项保证按实际依赖在第 7 节分级。
 
-## 1. 本轮边界与固定版本
+## 1. 初稿边界与固定参考版本（历史）
+
+本节保留上午的核验基线与环境记录；随后恢复及4b实际验收见第11节，当前5d起点控制发送候选见第12节。
 
 | 代码 | 固定版本 | 证据边界 |
 | --- | --- | --- |
@@ -383,3 +385,84 @@ accept_20261023_172443中两端RM四EP各成功import=1/reuse>=3/release=1，RC�
 RX64及六个单向突发回归通过。8B样本RC22.54/2.29/2.40us、RM2.14/2.10/2.07us，
 高样本保留，性能目标尚未验收。原始大日志留节点，本记录依据用户摘要及固定runner解释。
 此结果证明同目标多EP的句柄复用及限定功能回归，不把它写成完整建链优化或硬件故障恢复。
+
+
+## 12. A4实际C候选：iface独立控制发送状态
+
+起点为GitHub记录5d61752d（产品等于已测4b），不是重新应用旧设计或地址补丁。
+本轮只关闭“控制回复由谁持有、谁等完成”的实现小点，完整A4/A5/A6仍未完成。
+当前CPU/隔离x86构建已通过，用户应用、ARM64和真实节点验证均待执行。
+
+### 12.1 实际路径与复用
+
+旧路径：hard request → 查业务EP → grant挂该EP pending/完成队列。
+新路径：hard request → 沿旧格式查业务EP取得回信身份 → iface_send_fc_grant
+复制目标身份并取得引用 → 一个iface内部软件EP发送/排队 → CQE释放该回复引用。
+业务EP不承担grant完成归属；旧格式未投递回复仍保存一个仅用于取消匹配的关联，
+在原EP取消/销毁/purge时只撤销它的未投递回复，成功post后立即清除此关联。
+
+iface_send_fc_grant的参数为完整urma_rjetty/token/远端业务EP编号，不要求本地业务EP。
+CPU实际C测试直接在没有任何业务EP的iface上调用该入口并验证两个不同目的地。
+但旧报文只带目的EP编号，旧fc_handler仍需要业务EP取得回信地址；所以本轮不能宣称
+“首次单向通信完全无需反向业务EP”，后续报文携带稳定回信身份后才能贯通此路径。
+
+内部状态按需由既有RM EP构造函数创建，仅包含软件完成/arbiter/统计状态，借用原共享
+Jetty；没有新Jetty、JFR、KA段或另一个UCP连接。它不持有固定目标，每个WR明确指定
+本次target。成功post的grant连同目标引用留在内部EP的outstanding队列；非inline
+内容来自既有short_desc_mp，直到完成或停硬件后的清理才回池。post临时失败只回滚
+本次描述符，保留请求与引用等待pending；终态错误沿原共享iface故障路径上报。
+
+复用已有ptr_array/CQE路由、arbiter、pending_mp、short_desc_mp和目标表；不另建发送
+资源池。pending_mp元素扩大以容纳回复和完成信息，内部软件EP也占少量内存；本轮
+不宣称总内存下降。数据AM short/bcopy函数、RC/UM及公共URMA源码没有修改。
+
+借鉴现有DC的iface内部FC发送者及不向上层报告内部EP错误的规则（固定基线5d中
+src/uct/ib/dc/dc_mlx5.c的init_fc_ep/cleanup_fc_ep和FC错误处理）。不复制DC的DCI
+管理、硬件协议或其报文格式。RC原有FC继续用于旧格式的请求/grant语义；UM的稳定
+iface地址仍是下一阶段参考，而不是本轮已接入的能力。
+
+### 12.2 清理与隔离
+
+- 旧格式未带实例/请求身份，业务EP取消/销毁/purge必须同步撤销其尚未post的grant，
+  防止在旧连接关闭后新发回复；只按关联匹配移除，不能清掉其他目的地。已post的grant
+  只持目标引用直到CQE，不再依赖业务EP存续。独立发送API可不关联本地业务EP。
+- 内部EP不向上层暴露，iface失败时跳过其用户错误回调；迟到旧报文如果恰好命中它
+  复用的EP索引，也不会进入FC处理或AM分派。其他业务EP之间的索引复用仍需后续实例/请求身份解决。
+- iface flush还需等待尚未post的内部pending；业务EP的本地flush只等待该业务EP的WR。
+- iface关闭先删除共享Jetty以停止DMA，再purge控制pending/在途完成并释放目标和描述符。
+  common URMA purge不认识RM新handler，故在RM自己的purge入口明确释放，未改公共代码。
+- 继续使用原Jetty的outorder_comp=0和每WR一个CQE，控制序号也有32位回绕回归；没有
+  新增任意完成乱序支持。底层违约/未知CQE仍保守进入共享iface失败，不伪造额度。
+- 仍采用原arbiter调度，没有新增共享RX总账、控制槽保留或严格控制优先级保证，也没有
+  请求去重/实例核验。第10节完整peer窗口和接收总预算仍须另外实现，不能由此越过C1。
+
+### 12.3 验证与后续节点门禁
+
+CPU执行实际RM C而非重写的控制模型：原共享SQ/pending/flush/70000完成、目标复用和
+11项FC错误回归继续通过；另有15场景×inline/非inline共30例，包括没有业务EP直接
+发送、两个目的地共用同一owner、业务EP销毁/编号复用后的pending和在途引用、池耗尽
+重试/iface flush、错误CQE不通知内部EP、分配/导入回滚、32条排队grant引用与释放、
+32位完成回绕、失败unimport隔离重试、迟到请求命中内部索引、旧连接销毁/purge只取消
+其未post回复且保留其他目的地，以及实际iface关闭清理。
+ASan/UBSan开启且UBSan遇错即停；LSan延用已有环境设置关闭，并核对mock活目标/段归零。
+
+完整隔离x86 make通过；仅使用公开50288头文件、编译占位库和已有本地verbs头文件，
+不代表实际provider。构建输入未改，复用既有生成的configure/Makefile.in/config.h.in及
+辅助文件；首次缺本地verbs头文件的构建、测试fixture误写worker.async路径均已修正后重验。
+Python十项模型保持不变，模型测试通过不扩展为本轮新增C控制协议已完成。
+
+accept.py新增可选--fc-window：正常3轮8B、目标复用和1/2/4回归后，调用通用化的
+fc_window.py运行已留档的相同16消息单向突发。C用例字节未变（SHA256
+502048a73533151fccba7cde6b77c24a84ae26e7e1c6ec7b6f9a6291d44d3b59），不再手改旧helper
+的固定提交/模块/路径。新runner校验source manifest、build_manifest和两端模块，结果
+另建独立目录；RM诊断开启debug并核对每个测试进程仅一个control sender。该日志门禁
+本地有有效/无记录/缺进程/重复owner等fixture；正式节点结果仍待用户回贴。
+
+节点验收须满足正常及显式FC收发校验、候选加载、W8/TX8/RX64、RM每context一个
+硬件Jetty和退出live0、RM每测试进程至多一个软件控制owner且创建总数在peers至peers+1之间。诊断与性能样本分轮；不得
+从control owner数或API调用数推断网络握手减少，也不能挪用4b通过状态或性能样本。
+
+
+旧格式尚无实例/请求号，因此保留旧连接取消未投递回复的行为，并用定向过滤回归验证
+不会误删其他目的地。目标/描述符及已post WR的完成归属可以独立出来；完整“无反向
+业务EP”的新协议仍需后续身份与地址工作，不能跳过。

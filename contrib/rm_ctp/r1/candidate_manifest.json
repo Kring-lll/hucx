@@ -1,25 +1,26 @@
 {
-  "base_commit": "524abdbbbdcdbf05278325de0d0f44f5532d7cc2",
-  "scope": "A4 target reuse substep: functional ARM64/two-node normal, target-reuse and FC regressions passed for 4b77878ce; full A4/A5/A6/CTP semantics and performance acceptance remain open",
+  "base_commit": "5d61752d792fa5b85a28531173425f5d19cb7868",
+  "scope": "A4 control-sender ownership substep: isolated x86/CPU candidate only; operator application, ARM64 and real-node acceptance pending; legacy FC receive addressing and CONNECT_TO_EP retained",
   "files": {
-    "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
+    "contrib/rm_ctp/r1/accept.py": "a3989bc93fd703536a0fb5f7ff4e265352e5c54363e81b88457209dedeeaccf2",
     "contrib/rm_ctp/r1/build_isolated.sh": "2076630544c870e35a2f4026ebfcb5fdf8df551a6cc2e4efba76103ec1a5217c",
     "contrib/rm_ctp/r1/inspect_run.py": "062c9c907f6f6ffe198994271e98d296401dac0fb5393014d8357fd23ef17aac",
     "contrib/rm_ctp/r1/many_peer.c": "637037154ec0323779c48fb4e577e6df80e1cca3aa6da217188db21111f49c16",
     "contrib/rm_ctp/r1/run_mock.sh": "2a2a8e5f50452b23b2c87b80885ae1f60d90369528172daca0b25070d5595567",
-    "contrib/rm_ctp/r1/test_shared_tx.c": "3e241388638d0dd7434cc91b8cc6ffb56c183592dc6cc54df28e07dac0993e5f",
-    "src/uct/urma/rm_urma/rm_urma_ep.c": "6cbc1a7374708347589980c6826b03e07d3d8a16d76a4c12ae96ec60b1f95a8c",
+    "contrib/rm_ctp/r1/test_shared_tx.c": "5991afde7d0682ae94693fd359d9d8e963aebc1eb7b6d4d7d65c2d514722414a",
+    "src/uct/urma/rm_urma/rm_urma_ep.c": "00a8acfa03a4d74d64719eec94b125b489c80279153deb41060aaf3b198064b0",
     "src/uct/urma/rm_urma/rm_urma_ep.h": "2f9a076d02d6846e7da0538ff2d894c59f9bd35d770e11dae893ea191aa021ef",
-    "src/uct/urma/rm_urma/rm_urma_iface.c": "ae3015ef4d9ff270f22e2af29cdcf480beb89be13f7f87a0240f6815892225ef",
-    "src/uct/urma/rm_urma/rm_urma_iface.h": "947200e80e8b8c50247ebe69ad89da62e16b3e2329192aa61ffb5538726559df",
+    "src/uct/urma/rm_urma/rm_urma_iface.c": "a2935259a983d87c6b1ec1fb2a919ae5fe06017d735928c7a4c7843dab332c97",
+    "src/uct/urma/rm_urma/rm_urma_iface.h": "72327ec06553ba7a252d20f6652e413ca1cd7c618c369698abfe867e1c117b93",
     "contrib/rm_ctp/r1/acceptance_r2_20261022.md": "e4198610736dd96f026af79bbf73b58fc5baef88c0a42511281c16d25d6f4f36",
-    "contrib/rm_ctp/r1/README.md": "876e794fc1559c7e6e7694c2c0ff6b04ec1aa66ca8ebd98e212c4cab027bf884",
-    "contrib/rm_ctp/LINK_DESIGN.md": "d20564f0f6d58d6b7a348b1830ec6fd5bbd0dac918cc25066ed2f87981f9b5d5",
-    "contrib/rm_ctp/REQUIREMENTS.md": "4c23fcc81289093d22e4bef34ca26385b2a100e2deb97745ea26a8e69b130333",
+    "contrib/rm_ctp/r1/README.md": "e700bc7b06c59f3ddf84f22cc9005bfb7469672c7b440ccd4ef398e907935167",
+    "contrib/rm_ctp/LINK_DESIGN.md": "b53d3898826df4112a4953f503e3f24a7c911b353c8534eb5d7fb13419b2ddf2",
+    "contrib/rm_ctp/REQUIREMENTS.md": "653e1a935aee080b0e7092b2e5d7cdad04d04736c3d3ac6a7eaf10bc16a0ca71",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/target_reuse.c": "6eceeebc8a3333d36c60eb799dd3fb038dfb02f46670eb4b684f67345206f78e",
     "contrib/rm_ctp/r1/acceptance_a4_target_20261023.md": "4c03091efafb7a92f7446ca48a542c3a2dae58d3e7175cc9077fbe9162330450",
-    "contrib/rm_ctp/r1/recorded_helpers_20261023/a4_fc_window_20261023.py": "3d63cfac452e0f1c5e767a2197eaa8a4888ee172b01d48bdf252fe65d3fa7499"
+    "contrib/rm_ctp/r1/recorded_helpers_20261023/a4_fc_window_20261023.py": "3d63cfac452e0f1c5e767a2197eaa8a4888ee172b01d48bdf252fe65d3fa7499",
+    "contrib/rm_ctp/r1/fc_window.py": "8ac817be615a876d3967e084084e055efa319b57bc479d51e5f60cfa3bbb5187"
   },
   "historical_r1_hardware": {
     "product_commit": "f0b5cd4ab6fdfceaf6ce0ed98e64db91db861842",
@@ -40,81 +41,102 @@
       "full_r2_accepted": false
     }
   },
-  "product_tested_commit": "4b77878ce65994387a1bf9e9a1c283e676c7f786",
-  "product_module_sha256": "ed196bd68a22353067c73fc5f1a7a2e177123f9139beebc532ce767aebc4591c",
+  "product_tested_commit": null,
+  "product_module_sha256": null,
   "current_validation": {
-    "local_build": "x86 isolated make PASS with public UMDK50288 headers and compile-only placeholder libraries; previous generated configure/Makefile.in/config.h.in reused; build system inputs unchanged",
-    "cpu_actual_rm": "ASan/UBSan PASS, including existing 70000 completions and 11 FC errors; actual connect/get-address/iface cleanup; allocation/import rollback, full key, 128-target rehash, delayed final release, unimport quarantine",
-    "cpu_design_model": "10 tests PASS; model only, not actual C FC/control implementation",
-    "test_harness": "target_reuse.c compiles with -Wall -Wextra -Werror; two real local processes over TCP pass 4-EP/64-byte payload and close; trace gate valid fixture and 5 invalid fixtures checked",
-    "hardware": "PASS for pinned 4b product: ARM64 build, module equality, loader, four-EP target reuse, 3x8B, 1/2/4 peers and explicit FC-window regressions; report transcribed from operator output",
+    "local_build": "isolated x86 make PASS using public SDK50288 headers, compile-only placeholder libraries and existing local verbs headers; generated configure/Makefile.in/config.h.in/auxiliary files reused; build-system inputs unchanged",
+    "cpu_actual_rm": "ASan/UBSan PASS, UBSAN_OPTIONS=halt_on_error=1, LSan disabled as existing runner; existing shared SQ/70000 completion/target/11 FC error regressions plus 30 control-owner cases; mock target/segment live counts zero",
+    "cpu_design_model": "unchanged 10 tests PASS; model only, not actual new C FC wire protocol",
+    "fc_harness": "recorded C burst unchanged SHA256 502048a73533151fccba7cde6b77c24a84ae26e7e1c6ec7b6f9a6291d44d3b59; syntax/help and log gate 2 valid/4 invalid fixtures PASS; control-owner count allows sender absence due to piggybacked soft grants",
+    "operator_applied": false,
+    "hardware": "NOT RUN for this candidate; 4b hardware evidence is historical only",
+    "functional_substep_accepted": false,
     "a4_complete": false,
     "a5_implemented": false,
     "a6_complete": false,
-    "node_acceptance_command": "accept.py CASE_DIR --repeats 3 --target-reuse",
-    "performance_accepted": false
-  },
-  "hardware_validation": {
-    "date": "2026-10-23",
-    "record": "contrib/rm_ctp/r1/acceptance_a4_target_20261023.md",
-    "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_4b77878ce_DbsqE3",
-    "archive_sha256": "c0790fb3507e8a5cfa407530bc294dc65d62c7883ef3155ec2693e608f0fa1a1",
-    "normal_and_target_results": "accept_20261023_172443/results.json",
-    "fc_results": "a4_fc_window8_7s8b80yt/results.json",
-    "fc_helper_record": "contrib/rm_ctp/r1/recorded_helpers_20261023/a4_fc_window_20261023.py",
-    "fc_helper_sha256": "3d63cfac452e0f1c5e767a2197eaa8a4888ee172b01d48bdf252fe65d3fa7499",
-    "fc_test_source_sha256": "502048a73533151fccba7cde6b77c24a84ae26e7e1c6ec7b6f9a6291d44d3b59",
-    "runner_sha256": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
-    "evidence_source": "operator terminal summaries and pinned runner checks; raw node JSON/logs not downloaded",
-    "target_probe": {
-      "layer": "UCP, not MPI",
-      "logical_eps": 4,
-      "bytes_per_ep": 64,
-      "both_payloads": "PASS",
-      "rm_imports_per_node": 1,
-      "rm_reuse_per_node_min": 3,
-      "rm_releases_per_node": 1,
-      "rc_import_count": "NOT MEASURED"
-    },
-    "osu_8b_us": {
-      "rc": [
-        22.54,
-        2.29,
-        2.4
-      ],
-      "rm": [
-        2.14,
-        2.1,
-        2.07
-      ]
-    },
-    "osu_8b_median_us": {
-      "rc": 2.4,
-      "rm": 2.1
-    },
-    "high_sample_policy": "retain RC 22.54us; cause unknown; no stable performance claim",
-    "many_peer_cases": "RM/RC x 1/2/4 remote ranks PASS, TX depth8/maps/live0",
-    "explicit_fc": {
-      "enabled": true,
-      "window": 8,
-      "tx_depth": 8,
-      "rx_depth": 64,
-      "remote_peers": [
-        1,
-        2,
-        4
-      ],
-      "modes": [
-        "rm",
-        "rc"
-      ],
-      "result": "PASS"
-    },
-    "functional_substep_accepted": true,
-    "complete_a4": false,
-    "complete_a5": false,
-    "complete_a6": false,
     "performance_accepted": false,
-    "hardware_fault_injection": false
+    "node_acceptance_command": "accept.py CASE_DIR --repeats 3 --target-reuse --fc-window",
+    "legacy_cancellation": "unposted old-format replies are removed only for their original business EP on cancel/destroy/purge; posted replies retain independent target/descriptor ownership"
+  },
+  "historical_a4_target_reuse": {
+    "product_commit": "4b77878ce65994387a1bf9e9a1c283e676c7f786",
+    "module_sha256": "ed196bd68a22353067c73fc5f1a7a2e177123f9139beebc532ce767aebc4591c",
+    "record_commit": "5d61752d792fa5b85a28531173425f5d19cb7868",
+    "delivery_commit": "990398f43e7b589b4030e45d69b48c1766f5eac3",
+    "validation": {
+      "local_build": "x86 isolated make PASS with public UMDK50288 headers and compile-only placeholder libraries; previous generated configure/Makefile.in/config.h.in reused; build system inputs unchanged",
+      "cpu_actual_rm": "ASan/UBSan PASS, including existing 70000 completions and 11 FC errors; actual connect/get-address/iface cleanup; allocation/import rollback, full key, 128-target rehash, delayed final release, unimport quarantine",
+      "cpu_design_model": "10 tests PASS; model only, not actual C FC/control implementation",
+      "test_harness": "target_reuse.c compiles with -Wall -Wextra -Werror; two real local processes over TCP pass 4-EP/64-byte payload and close; trace gate valid fixture and 5 invalid fixtures checked",
+      "hardware": "PASS for pinned 4b product: ARM64 build, module equality, loader, four-EP target reuse, 3x8B, 1/2/4 peers and explicit FC-window regressions; report transcribed from operator output",
+      "a4_complete": false,
+      "a5_implemented": false,
+      "a6_complete": false,
+      "node_acceptance_command": "accept.py CASE_DIR --repeats 3 --target-reuse",
+      "performance_accepted": false
+    },
+    "hardware_validation": {
+      "date": "2026-10-23",
+      "record": "contrib/rm_ctp/r1/acceptance_a4_target_20261023.md",
+      "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_4b77878ce_DbsqE3",
+      "archive_sha256": "c0790fb3507e8a5cfa407530bc294dc65d62c7883ef3155ec2693e608f0fa1a1",
+      "normal_and_target_results": "accept_20261023_172443/results.json",
+      "fc_results": "a4_fc_window8_7s8b80yt/results.json",
+      "fc_helper_record": "contrib/rm_ctp/r1/recorded_helpers_20261023/a4_fc_window_20261023.py",
+      "fc_helper_sha256": "3d63cfac452e0f1c5e767a2197eaa8a4888ee172b01d48bdf252fe65d3fa7499",
+      "fc_test_source_sha256": "502048a73533151fccba7cde6b77c24a84ae26e7e1c6ec7b6f9a6291d44d3b59",
+      "runner_sha256": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
+      "evidence_source": "operator terminal summaries and pinned runner checks; raw node JSON/logs not downloaded",
+      "target_probe": {
+        "layer": "UCP, not MPI",
+        "logical_eps": 4,
+        "bytes_per_ep": 64,
+        "both_payloads": "PASS",
+        "rm_imports_per_node": 1,
+        "rm_reuse_per_node_min": 3,
+        "rm_releases_per_node": 1,
+        "rc_import_count": "NOT MEASURED"
+      },
+      "osu_8b_us": {
+        "rc": [
+          22.54,
+          2.29,
+          2.4
+        ],
+        "rm": [
+          2.14,
+          2.1,
+          2.07
+        ]
+      },
+      "osu_8b_median_us": {
+        "rc": 2.4,
+        "rm": 2.1
+      },
+      "high_sample_policy": "retain RC 22.54us; cause unknown; no stable performance claim",
+      "many_peer_cases": "RM/RC x 1/2/4 remote ranks PASS, TX depth8/maps/live0",
+      "explicit_fc": {
+        "enabled": true,
+        "window": 8,
+        "tx_depth": 8,
+        "rx_depth": 64,
+        "remote_peers": [
+          1,
+          2,
+          4
+        ],
+        "modes": [
+          "rm",
+          "rc"
+        ],
+        "result": "PASS"
+      },
+      "functional_substep_accepted": true,
+      "complete_a4": false,
+      "complete_a5": false,
+      "complete_a6": false,
+      "performance_accepted": false,
+      "hardware_fault_injection": false
+    }
   }
 }
