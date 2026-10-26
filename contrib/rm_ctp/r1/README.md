@@ -180,3 +180,19 @@ point for a new run. Use the corrected `accept.py` above for new runs.
 Package one AtomGit delivery commit for the accepted R1 scope, preserve shared
 history and verify that the four product files match the tested commit.
 Formal AtomGit delivery is a separate workflow checkpoint.
+
+
+## 2026-10-25 iface_v2候选（未作节点验收）
+
+基线：AtomGit rm-a-connection/990398f；完整设计/源码责任表见../LINK_DESIGN.md第12节。
+默认legacy_ep不切换。新模式的变量为UCX_RM_URMA_LINK_MODE=iface_v2、
+UCX_RM_URMA_MAX_PEERS=K，并显式启用FC和满足预算的RX深度/窗口。
+节点脚本为accept_iface.py CASE --repeats 3；重跑已部署的CASE时加--no-deploy，
+不得覆盖可用安装。脚本自带W8/TX8/RX64/K5矩阵，K包括可能使用RM的self关系。
+先看新模式加载门禁，再看全部legacy/new/RC结果；任何失败都会保留且退出非0。
+终端可显示8B样本和每context Jetty峰值，但存在失败时不形成优势结论。
+
+新代码复用tx.mp、pending_mp、arbiter、outstanding和CQE，无新注册池/Jetty/重传定时器。
+fc_burst.c从已验证FC helper提取，内容SHA256仍502048a73533151fccba7cde6b77c24a84ae26e7e1c6ec7b6f9a6291d44d3b59。
+run_mock.sh执行实际C路径；test_link_addr.c为独立编解码边界测试，不是Python设计模型。
+当前没有ARM64、新MPI、性能无回退或故障恢复结果；历史4b/638结果不能归给本候选。

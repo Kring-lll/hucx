@@ -25,7 +25,9 @@ noinst_HEADERS = \
 	rc_urma/rc_urma_ep.h \
 	rc_urma/rc_urma_iface.h \
 	rm_urma/rm_urma_ep.h \
-	rm_urma/rm_urma_iface.h
+	rm_urma/rm_urma_iface.h \
+	rm_urma/rm_urma_addr.h \
+	rm_urma/rm_urma_link.h
 
 libuct_ub_la_SOURCES = \
 	base/urma_device.c \
@@ -37,7 +39,9 @@ libuct_ub_la_SOURCES = \
 	rc_urma/rc_urma_ep.c \
 	rc_urma/rc_urma_iface.c \
 	rm_urma/rm_urma_ep.c \
-	rm_urma/rm_urma_iface.c
+	rm_urma/rm_urma_iface.c \
+	rm_urma/rm_urma_addr.c \
+	rm_urma/rm_urma_link.c
 
 include $(top_srcdir)/config/module.am
 

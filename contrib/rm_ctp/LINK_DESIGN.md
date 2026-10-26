@@ -383,3 +383,112 @@ accept_20261023_172443中两端RM四EP各成功import=1/reuse>=3/release=1，RC�
 RX64及六个单向突发回归通过。8B样本RC22.54/2.29/2.40us、RM2.14/2.10/2.07us，
 高样本保留，性能目标尚未验收。原始大日志留节点，本记录依据用户摘要及固定runner解释。
 此结果证明同目标多EP的句柄复用及限定功能回归，不把它写成完整建链优化或硬件故障恢复。
+
+
+## 历史：2026-10-25编解码起步检查点（已由第12节候选取代）
+
+用户确认按依赖推进的开发顺序（见REQUIREMENTS文首），以AtomGit rm-a-connection/990398f为基线。
+当前新增rm_urma_addr.h/c，固定48字节iface地址、32字节控制头、100字节请求体；
+整数小端、EID原字节序，使用memcpy读写非对齐字段，输出只在全体验证成功后发布。
+校验版本/模式/长度/实例/请求号及K*W+2K+2<=R，预算计算使用64位中间值。
+
+该模块已列入URMA构建清单。现有RM EP/iface、公共层及RC/UM运行路径没有改动，
+尚未连接此模块。后续必须接入地址发布、peer账户、活动请求匹配、独立控制及实际RX补充，
+不得只启用CONNECT_TO_IFACE就交付。编解码正确不代表已拒绝所有迟到grant：仍需活动请求表。
+
+验证为x86局部编译及ASan/UBSan的5组实际C测试；原共享发送/目标CPU回归通过。
+测试目录复用既有生成头及源码核对相同的公共对象，RM三对象重新编译；不是全量configure/make、
+ARM64构建或真实CTP交付证明。节点版本和已交付A基线保持不变。
+
+## 12. 2026-10-25定案：有界iface建链候选与源码责任表
+
+本节优先于第10节初稿和末尾旧检查点。实现基线为个人AtomGit
+`rm-a-connection/990398f43e7b589b4030e45d69b48c1766f5eac3`，整树与历史GitHub5d相同。
+当前为**完整软件候选，等待ARM64和节点验证**；不挪用4b/638的结果，不宣称C1故障契约已闭合。
+A4的软件选择至此定案；相关平台契约未知项仍明示保留，清单不据本地测试提前打勾。
+
+### 12.1 第1步收口：哪些直接复用，哪些是新设计
+
+| 问题 | 源码依据及决定 | 不据此宣称 |
+| --- | --- | --- |
+| 发送完成与本地缓冲 | RC `update_tx_res_by_cr`→公共`txqp_completion_desc`；RM保留相同outstanding/CQE归属。新非inline控制用已有tx.mp描述符，直到CQE或停止Jetty后回收 | 成功CQE意味着MPI接收方已经消费数据 |
+| 接收缓冲 | 公共`handle_am`允许上层以INPROGRESS持有描述符；补回只有post成功才扣available。新总账观察实际补回数，不把收到/释放/尝试投递当信用 | pool中有对象就意味着硬件接收位置已补充 |
+| RC/UM可靠性 | RC主要交给下层；UM有PSN、ACK、发送窗口、超时重发与顺序管理。新RM继续使用RM+CTP SEND服务，不复制UM或brpc的整个协议 | 当前provider已被本轮证明覆盖所有丢失、重复、RNR恢复情况 |
+| RM顺序配置 | 匹配公开UMDK50288核心将默认RM转为OI、RC转OL、UM转NO；SDK注释分别是initiator/low-layer/unreliable non-ordering | 仅凭枚举名证明设备故障或所有跨目标可见性 |
+| 建链信息发布 | 固定HMPI52d943的init发布worker地址，add_procs/get_ep从modex获取并create；HUCX已有iface打包和connect-to-iface入口；UM可参考但仍有CREQ/CREP | 所有MPI EP都在首次Send才创建，或UCP不再需要wireup |
+| 共享额度 | 当前每EP窗口不能作为多个发送方共享JFR的总预算；新模式每peer一个账户，所有本地EP共用；控制收发不查业务EP编号 | 任意规模/动态成员都能不经信用注册直接使用 |
+
+本轮不新增软件数据ACK或网络重发定时器。FC grant表示可用接收位置，而非业务交付确认。
+请求号/实例隔离防止软件信用重复使用，不能替代整个数据服务的可靠性与顺序保证。
+控制post临时资源不足保留同一对象；未知终态失败保留可能DMA-owned的缓冲，停止新发送/授信。
+底层成功完成/停止DMA边界沿既有公共API和已测AM完成路径使用，不另造一套缓冲生命周期。
+
+C1未核实的当前SDK/固件故障语义继续归C1：尤其静默丢失、底层去重/重试范围和终态通知。
+它们没有被本轮正常测试证实；若需要软件补偿，按已确认执行顺序在依赖该保证的验收前补齐。
+本候选不声称故障恢复和动态重启支持，也不以公开头文件匹配代替provider二进制身份。
+本轮没有需用户立即转问的泛化问题；后续只提出经RC/UM/公共层对照仍影响实现选择的差异。
+
+### 12.2 确定的地址、身份、目标与时序
+
+- `legacy_ep`默认保留40字节EP格式和CONNECT_TO_EP，用于回归和回滚。
+- 显式`iface_v2`只上报CONNECT_TO_IFACE：iface地址48字节、EP地址长度0；不同时启用两种建链能力，也不静默回退。
+- 新地址为小端固定布局：segment VA/len(各8)、Jetty/segment flags/token(各4)、version=2(1)、RM=1(1)、flags=1(2)、实际RX深度(4)、K/W(各2)、instance(8)。Device地址沿用公共EID/uasid格式。
+- 控制体头32字节：version/type/length(1/1/2)、credits(4)、requester/responder/request ID(各8)。请求附EID[16]/uasid(4)/完整iface地址(48)，体共100字节；回复体32字节。含原3字节UB头为103/35字节。
+- 普通AM不再带旧FC位；纯控制标记只解析新控制体，UB EP字段不参与回信路由。先检查长度/版本/实例，再检查活动请求及数量，失败不发布半初始化输出。
+- peer归iface，持有完整远端地址、目标/segment pin、共享额度、活动请求和去重水位，保留至iface关闭。每EP只持本地完成/pending/flush及自己的target引用。
+- peer按完整EID/uasid/Jetty/instance复用既有khash查找；链表只用于清理。相同物理目标尚被旧实例pin住时拒绝新实例，不能把动态重启当作新窗口悄悄接入。
+- 一个iface使用一个内部软件控制EP完成归属，共用已有Jetty；不新增本地Jetty、注册池或每对端控制EP。非inline控制复用已注册tx.mp。
+- UUID采用UCX既有生成器；64位请求号在本iface内单调递增，0不用，溢出报错。它们是防意外旧消息混淆，不是鉴权/数学不碰撞保证。
+
+初始化：创建Jetty/JFR及接收准备→计算实际R与预算→生成稳定地址→既有UCP worker打包/HMPI modex。
+创建：UCP已有device/iface地址→校验→peer/target/segment导入或复用→创建本地逻辑EP；不交换RM EP地址。
+通信：普通AM按既有上层AM ID分派；低额度时发请求→接收端按真实补回/预算发grant→活动请求验证后恢复peer额度并唤醒其EP。
+关闭：停止进展与Jetty→回收posted控制及退役EP→释放pending控制→peer的segment/target pin→JFR/池。
+单EP销毁不重置peer额度；已经post的请求不因EP销毁而重新赠送窗口。
+
+### 12.3 有界预算与推进
+
+要求显式FC=y、已知静态通信集合上界K、W>0；K计入整个iface生命期的不同通信iface实例，
+包括进出方向和可能选中RM的self连接。不是直接用“远端rank数”代替；未知/动态成员不属首版。
+例如只有rm/um:aux、两节点共5rank时取K=5；40rank若每rank一个选定RM iface并含self，取K=40。
+
+设C=2K+2，要求K*W+C<=R。R是构造后实际已post的接收数，不能用配置深度冒充。
+K=5/W=8/R=64满足；40rank、W8/R512满足预算但尚未测试；384rank、W8/R4096也只是设计配置。
+每peer每方向最多一个活动请求，不做软件控制重发。初始保留KW责任，其余可用数据预算为R-C-KW。
+数据post成功才扣额度；request记录本次新消耗n；grant只加n，不重置为满窗。
+低额度触发点复用配置中的FC hard-threshold比例，按远端W计算，最小为1；不新设独立阈值参数。
+收到数据不释放预算；实际补回先结清控制欠账，再结清数据欠账，才可授予新额度。
+只在真正未post的临时失败时回滚grant暂占；未知终态失败不能假定远端没有收到。
+
+每次数据发送预留至少一个SQ和JFC位置供控制；控制工作在普通pending前有界处理。
+额度耗尽的peer反调度，不能挡住另一个peer。控制队列或控制RX欠账未处理时event_arm返回BUSY。
+保留正常数据批量RX补充；控制到达/等待或idle重试时才允许短批量。上层未释放全部缓冲时正确背压，不伪造信用。
+公共层新增可选accounted poll，原RC/UM入口保留原批量/错误行为。部分/不明post失败不回收可能DMA-owned描述符，等待硬件停止。
+另修复公共device地址中EID/u32/u16的非对齐解引用，保持原字节布局及数值转换。
+
+### 12.4 实现位置与本地证据
+
+| 文件/入口 | 职责 |
+| --- | --- |
+| rm_urma_addr.h/c | 48字节地址及控制体编解码、输入/预算校验 |
+| rm_urma_link.h/c：ready/get_address/connect | 地址准备和发布、peer缓存/segment pin、基于iface创建EP |
+| link：sent/receive/progress/account_rx/cleanup | 共享额度、活动请求、独立回信、实际RX账本及关闭 |
+| ep：构造/AM/pending/ep_link_post/完成清理 | 接入新模式并复用原发送队列、池和CQE；保留旧模式 |
+| iface：query/FC接收/progress/event_arm/flush/cleanup | 准确能力、控制进展、错误传播及资源顺序 |
+| base：poll_rx_accounted及地址pack/unpack | 可选实际RX补回结果；必要的非对齐修复 |
+
+从638参考子步逐段复用内部控制owner及其30项CPU测试，未把638的未验收树整体作为基线。
+完整本地autogen/configure/make/install及实际C ASan/UBSan回归；新模式19项集成场景、
+独立codec5组、原11FC异常和70000完成，以及控制owner30项均通过。
+公开50288头文件及compile-only占位库只支持本地链接，不是provider/硬件验证。
+
+### 12.5 节点验收与完成门槛
+
+新脚本`r1/accept_iface.py`复用固定MPI launcher、既有maps/observer检查及原星形/单向burst源码。
+隔离构建部署后检查两端模块、加载、新模式8B、同条件legacy/new/RC三轮8B、1/2/4 peers的双向和单向burst。
+新模式诊断记录实际R/K/W、iface地址导出/创建、旧EP地址/连接调用为0、FC请求/回复post成功数。
+这些是**传输API计数，不是网络报文数**；UCP wireup独立保留，不能据此宣称MPI首次零握手。
+资源观察器必须确认目标模式TX8、maps正确和Jetty退出live=0。普通功能、CPU异常、真实网络故障证据分开。
+
+所有失败保存，RC OPEN不能隐藏，少量时延样本不代替性能无回退验收；未测PPN20、扩展、分片、RMA和故障恢复。
+第2步为完整软件候选，不是已完成真实节点验收；A4/A5/A6的最终勾选及正式AtomGit交付以明示门槛闭合为准。

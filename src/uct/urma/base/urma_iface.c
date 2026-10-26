@@ -210,14 +210,17 @@ static void uct_ub_address_pack(const uct_ub_address_pack_params_t *params, uct_
 {
     void *ptr = ub_addr + 1;
 
-    *uct_ub_serialize_next(&ptr, urma_eid_t) = params->eid;
-    *uct_ub_serialize_next(&ptr, uint32_t)   = params->uasid;
-    *uct_ub_serialize_next(&ptr, uint8_t)    = params->urma_mode;
-    *uct_ub_serialize_next(&ptr, uint8_t)    = params->path_mtu;
-    *uct_ub_serialize_next(&ptr, uint16_t)   = params->oor_cnt;
-    *uct_ub_serialize_next(&ptr, uint8_t)    = params->mn;
-    *uct_ub_serialize_next(&ptr, uint8_t)    = params->cc_alg;
-    *uct_ub_serialize_next(&ptr, uint8_t)    = params->rx_psn;
+    memcpy(uct_ub_serialize_next(&ptr, urma_eid_t), &params->eid,
+           sizeof(urma_eid_t));
+    memcpy(uct_ub_serialize_next(&ptr, uint32_t), &params->uasid,
+           sizeof(uint32_t));
+    *uct_ub_serialize_next(&ptr, uint8_t) = params->urma_mode;
+    *uct_ub_serialize_next(&ptr, uint8_t) = params->path_mtu;
+    memcpy(uct_ub_serialize_next(&ptr, uint16_t), &params->oor_cnt,
+           sizeof(uint16_t));
+    *uct_ub_serialize_next(&ptr, uint8_t) = params->mn;
+    *uct_ub_serialize_next(&ptr, uint8_t) = params->cc_alg;
+    *uct_ub_serialize_next(&ptr, uint8_t) = params->rx_psn;
     /* If there are parameters to be selectively packed, set this flags based on params->flags. */
     ub_addr->flags = 0;
 }
@@ -284,11 +287,14 @@ void uct_ub_address_unpack(const uct_ub_address_t *ub_addr, uct_ub_address_pack_
     uct_ub_address_pack_params_t params = {0};
     const void *ptr = ub_addr + 1;
 
-    params.eid = *uct_ub_serialize_next(&ptr, urma_eid_t);
-    params.uasid = *uct_ub_serialize_next(&ptr, uint32_t);
+    memcpy(&params.eid, uct_ub_serialize_next(&ptr, urma_eid_t),
+           sizeof(urma_eid_t));
+    memcpy(&params.uasid, uct_ub_serialize_next(&ptr, uint32_t),
+           sizeof(uint32_t));
     params.urma_mode = *uct_ub_serialize_next(&ptr, uint8_t);
     params.path_mtu = *uct_ub_serialize_next(&ptr, uint8_t);
-    params.oor_cnt = *uct_ub_serialize_next(&ptr, uint16_t);
+    memcpy(&params.oor_cnt, uct_ub_serialize_next(&ptr, uint16_t),
+           sizeof(uint16_t));
     params.mn = *uct_ub_serialize_next(&ptr, uint8_t);
     params.cc_alg = *uct_ub_serialize_next(&ptr, uint8_t);
     params.rx_psn = *uct_ub_serialize_next(&ptr, uint8_t);
@@ -1283,7 +1289,9 @@ void uct_ub_iface_atomic_handler_init(uct_urma_iface_t *iface, uct_ub_device_t *
     iface->config.atomic32_handler = uct_ub_common_atomic32_le_handler;
 }
 
-static UCS_F_ALWAYS_INLINE void uct_ub_iface_recv(uct_urma_iface_t *iface, unsigned count)
+static UCS_F_ALWAYS_INLINE void uct_ub_iface_recv(uct_urma_iface_t *iface,
+                                                  unsigned count,
+                                                  uct_ub_iface_rx_result_t *result)
 {
     uct_ub_iface_recv_desc_t *desc[count];
     urma_jfr_wr_t *bad_wr = NULL;
@@ -1311,12 +1319,22 @@ static UCS_F_ALWAYS_INLINE void uct_ub_iface_recv(uct_urma_iface_t *iface, unsig
 
     status = urma_post_jfr_wr(iface->rx.jfr, g_wrs, &bad_wr);
     if (ucs_unlikely(status != URMA_SUCCESS)) {
+        if (result != NULL) {
+            /* A chained post may have accepted a prefix. Keep all descriptors
+             * in the registered pool until hardware shutdown; do not account
+             * attempted WRs as successfully restored receive credit. */
+            result->status = UCS_ERR_IO_ERROR;
+            return;
+        }
         for (int err_count = 0; err_count < tmp_count; err_count++) {
             UCT_TL_IFACE_PUT_DESC(desc[err_count]);
         }
         ucs_fatal("Urma post jfr wr failed status:%u, %m.", status);
     }
 
+    if (result != NULL) {
+        result->posted += tmp_count;
+    }
     iface->rx.jfr_que_available -= tmp_count;
     UCS_STATS_SET_COUNTER(iface->stats, UCT_UB_IFACE_STAT_RX_JFR_AVAILABLE, iface->rx.jfr_que_available);
 
@@ -1326,10 +1344,10 @@ static UCS_F_ALWAYS_INLINE void uct_ub_iface_recv(uct_urma_iface_t *iface, unsig
 static UCS_F_ALWAYS_INLINE void uct_ub_iface_recv_common(uct_urma_iface_t *iface, unsigned count)
 {
     while (count > UCT_IBP_MAX_RECV_WRS) {
-        uct_ub_iface_recv(iface, UCT_IBP_MAX_RECV_WRS);
+        uct_ub_iface_recv(iface, UCT_IBP_MAX_RECV_WRS, NULL);
         count -= UCT_IBP_MAX_RECV_WRS;
     }
-    uct_ub_iface_recv(iface, count);
+    uct_ub_iface_recv(iface, count, NULL);
 }
 
 void uct_ub_iface_init_recv_queue(uct_urma_iface_t *iface, unsigned init_count)
@@ -1350,7 +1368,7 @@ static UCS_F_ALWAYS_INLINE void uct_ub_iface_recv_check(uct_urma_iface_t *iface)
     return;
 }
 
-static UCS_F_ALWAYS_INLINE void uct_ub_iface_handle_am(uct_urma_iface_t *iface, uct_ub_hdr_t *hdr,
+static UCS_F_ALWAYS_INLINE ucs_status_t uct_ub_iface_handle_am(uct_urma_iface_t *iface, uct_ub_hdr_t *hdr,
                                                        uct_ub_iface_recv_desc_t *desc, urma_cr_t *cr,
                                                        uint32_t fc_mask)
 {
@@ -1370,49 +1388,101 @@ static UCS_F_ALWAYS_INLINE void uct_ub_iface_handle_am(uct_urma_iface_t *iface, 
     } else {
         ucs_mpool_put_inline(desc);
     }
+    return status;
 }
 
 static UCS_F_ALWAYS_INLINE void uct_ub_iface_deal_with_recv_cr(uct_urma_iface_t *iface, urma_cr_t *cr,
-                                                              int count, uint32_t fc_mask)
+                                                              int count, uint32_t fc_mask,
+                                                              uct_ub_iface_rx_result_t *result)
 {
     uct_ub_iface_recv_desc_t *desc = NULL;
     uct_ub_hdr_t *hdr = NULL;
     int i;
+    ucs_status_t status;
 
     for (i = 0; i < count; i++) {
         if (ucs_unlikely(cr[i].status != URMA_CR_SUCCESS)) {
             UCS_STATS_UPDATE_COUNTER(iface->stats, UCT_UB_IFACE_STAT_RX_DL_CR_ERR, 1);
             ucs_error("The cr status is err: %m; status:%u.", cr[i].status);
+            if (result != NULL) {
+                result->status = UCS_ERR_IO_ERROR;
+                break;
+            }
             continue;
         }
 
         desc = (uct_ub_iface_recv_desc_t *)cr[i].user_ctx;
         hdr = (uct_ub_hdr_t *)uct_ub_iface_recv_desc_hdr(iface, desc);
-        uct_ub_iface_handle_am(iface, hdr, desc, &cr[i], fc_mask);
+        if (result != NULL) {
+            if ((cr[i].completion_len < sizeof(*hdr)) ||
+                (cr[i].completion_len > iface->config.rx_payload_offset -
+                 iface->config.rx_hdr_offset + iface->config.seg_size)) {
+                result->status = UCS_ERR_IO_ERROR;
+                ucs_mpool_put_inline(desc);
+                break;
+            }
+            if (hdr->am_id & fc_mask) {
+                ++result->control;
+            } else {
+                ++result->data;
+            }
+        }
+        status = uct_ub_iface_handle_am(iface, hdr, desc, &cr[i], fc_mask);
+        if ((result != NULL) && (status != UCS_OK) &&
+            (status != UCS_INPROGRESS)) {
+            result->status = status;
+            break;
+        }
     }
 
     iface->rx.jfr_que_available += count;
     UCS_STATS_SET_COUNTER(iface->stats, UCT_UB_IFACE_STAT_RX_JFR_AVAILABLE, iface->rx.jfr_que_available);
 }
 
-unsigned uct_ub_iface_poll_rx(uct_urma_iface_t *iface, uint32_t fc_mask)
+unsigned uct_ub_iface_poll_rx_accounted(uct_urma_iface_t *iface,
+                                        uint32_t fc_mask, int force_repost,
+                                        uct_ub_iface_rx_result_t *result)
 {
     int cr_cnt = iface->config.rx_max_poll;
     urma_cr_t cr[cr_cnt];
     int count;
+    unsigned repost;
 
-    count = urma_poll_jfc(iface->jfc[UCT_UB_DIR_RX], cr_cnt, cr);
-    if (ucs_unlikely(count <= 0)) {
-        count = 0;
-        goto out;
+    if (result != NULL) {
+        memset(result, 0, sizeof(*result));
+        result->status = UCS_OK;
     }
-    UCS_STATS_UPDATE_COUNTER(iface->stats, UCT_UB_IFACE_STAT_RX_COMPLETION, count);
-    uct_ub_iface_deal_with_recv_cr(iface, cr, count, fc_mask);
-
-    uct_ub_iface_recv_check(iface);
-
-out:
+    count = urma_poll_jfc(iface->jfc[UCT_UB_DIR_RX], cr_cnt, cr);
+    if (count < 0) {
+        if (result != NULL) {
+            result->status = UCS_ERR_IO_ERROR;
+        }
+        return 0;
+    }
+    if (count > 0) {
+        UCS_STATS_UPDATE_COUNTER(iface->stats, UCT_UB_IFACE_STAT_RX_COMPLETION, count);
+        uct_ub_iface_deal_with_recv_cr(iface, cr, count, fc_mask, result);
+    }
+    if (result == NULL) {
+        if (count > 0) {
+            uct_ub_iface_recv_check(iface);
+        }
+    } else if (result->status == UCS_OK) {
+        repost = ucs_min(iface->rx.jfr_que_available,
+                         iface->config.rx_max_batch);
+        /* A new control completion can queue a reply in this poll. Other
+         * traffic retains batching until a control waiter needs progress. */
+        if (repost && (force_repost || result->control ||
+                        repost == iface->config.rx_max_batch)) {
+            uct_ub_iface_recv(iface, repost, result);
+        }
+    }
     return count;
+}
+
+unsigned uct_ub_iface_poll_rx(uct_urma_iface_t *iface, uint32_t fc_mask)
+{
+    return uct_ub_iface_poll_rx_accounted(iface, fc_mask, 0, NULL);
 }
 
 ucs_status_t uct_ub_iface_completion_err_proc(uct_urma_iface_t *iface, urma_cr_t *cr, void *jetty,
