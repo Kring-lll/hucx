@@ -1,5 +1,7 @@
 # R1: shared local RM Jetty
 
+最新补充：2a8e直接UCT四EP/零反向业务EP/跨窗FC节点专项通过，见[验收记录](acceptance_direct_20261026.md)。复现工具a7_iface_four_ep_20261026.py只编译测试程序，不替换产品；不是完整A7或性能验收。
+
 ## Validated substep: A4 target reuse, step 1 (not complete A4/A6)
 
 Base: `524abdbbbdcdbf05278325de0d0f44f5532d7cc2`.
