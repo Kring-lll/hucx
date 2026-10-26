@@ -1512,6 +1512,157 @@ static void test_legacy_iface_address(void)
     puts("PASS legacy zero-length iface address through public UCT API: no writes; invalid mode rejected");
 }
 
+/* New-path lifecycle/failure tests execute real RM code, not a model. */
+static void test_iface_v2_lifecycle_failures(void)
+{
+    control_fixture_t a, b, c;
+    uct_rm_urma_ep_t *ep, *replacement;
+    uct_rm_urma_peer_t *peer;
+    uct_rm_urma_ctrl_v2_t control;
+    unsigned char request[100], grant[32], device[64], address[48];
+    void *held[16];
+    uint64_t context, active_id;
+    unsigned inline_mode, scenario, i, old_id;
+    uct_ep_params_t params;
+    uct_ep_h result;
+
+    for (inline_mode = 0; inline_mode < 2; ++inline_mode) {
+        for (scenario = 0; scenario < 7; ++scenario) {
+            iface_v2_fixture_init(&a, 1, inline_mode ? 128 : 32);
+            iface_v2_fixture_init(&b, 2, inline_mode ? 128 : 32);
+            iface_v2_fixture_init(&c, 3, inline_mode ? 128 : 32);
+            ep = iface_v2_new_ep(&a, &b);
+            peer = ep->peer;
+            if (scenario == 0) {
+                /* Request allocation fails after the data WR is accepted. */
+                for (i = 0; i < 16; ++i) {
+                    held[i] = ucs_mpool_get(&a.iface.tx.pending_mp);
+                    assert(held[i] != NULL);
+                }
+                a.iface.tx.pending_mp.data->quota = 0;
+            }
+            if (scenario == 3) {
+                /* Static K limits distinct peers, not logical EP count. */
+                a.iface.link.max_peers = 1;
+                assert(uct_ub_iface_get_device_address(&c.iface.super.super.super,
+                           (uct_device_addr_t *)device) == UCS_OK);
+                assert(uct_rm_urma_link_get_address(&c.iface.super.super.super,
+                           (uct_iface_addr_t *)address) == UCS_OK);
+                memset(&params, 0, sizeof(params));
+                params.field_mask = UCT_EP_PARAM_FIELD_IFACE |
+                                    UCT_EP_PARAM_FIELD_DEV_ADDR |
+                                    UCT_EP_PARAM_FIELD_IFACE_ADDR;
+                params.iface = &a.iface.super.super.super;
+                params.dev_addr = (uct_device_addr_t *)device;
+                params.iface_addr = (uct_iface_addr_t *)address;
+                assert(UCS_CLASS_NEW(uct_rm_urma_ep_t, &result, &params) ==
+                       UCS_ERR_EXCEEDS_LIMIT);
+                assert(a.iface.link.peer_count == 1 && mock.imports == 1);
+                replacement = iface_v2_new_ep(&a, &b);
+                assert(replacement->peer == peer && peer->credits == 8);
+                assert(send_short(replacement) == UCS_OK);
+                complete(&a.iface, mock.ctx);
+            } else if (scenario == 4) {
+                /* No CQE may retire the wrong reused local EP index. */
+                for (i = 0; i < 32; ++i) {
+                    if (i < 8) {
+                        assert(send_short(ep) == UCS_OK);
+                        context = mock.ctx;
+                        old_id = ep->super.ep_id;
+                        uct_rm_urma_ep_destroy(&ep->super.super.super);
+                        assert(!__ucs_ptr_array_is_free(a.iface.super.eps.start[old_id]));
+                        replacement = iface_v2_new_ep(&a, &b);
+                        assert(replacement->super.ep_id != old_id);
+                        assert(replacement->peer == peer && peer->credits == 7 - i);
+                        complete(&a.iface, context);
+                        uct_rm_urma_iface_gc(&a.iface);
+                        assert(__ucs_ptr_array_is_free(a.iface.super.eps.start[old_id]));
+                        ep = replacement;
+                    } else {
+                        uct_rm_urma_ep_destroy(&ep->super.super.super);
+                        ep = iface_v2_new_ep(&a, &b);
+                        assert(ep->peer == peer && peer->credits == 0);
+                        assert(send_short(ep) == UCS_ERR_NO_RESOURCE);
+                    }
+                }
+                assert(mock.imports == 1 && mock.seg_imports == 1);
+            } else if (scenario == 6) {
+                a.iface.link.sequence = UINT64_MAX;
+                for (i = 0; i < 6; ++i) {
+                    assert(send_short(ep) == UCS_OK);
+                    complete(&a.iface, mock.ctx);
+                }
+                assert(a.iface.tx.error == UCS_ERR_EXCEEDS_LIMIT);
+                assert(mock.errors == 1 && ucs_list_is_empty(&a.iface.link.pending));
+            } else {
+                for (i = 0; i < 6; ++i) {
+                    assert(send_short(ep) == UCS_OK);
+                    complete(&a.iface, mock.ctx);
+                }
+                if (scenario == 0) {
+                    assert(a.iface.tx.error == UCS_ERR_NO_MEMORY && mock.errors == 1);
+                    for (i = 0; i < 16; ++i) {
+                        ucs_mpool_put(held[i]);
+                    }
+                } else if (scenario == 1) {
+                    mock.fail_next = 1;
+                    mock.fail_status = URMA_EINVAL;
+                    uct_rm_urma_link_progress(&a.iface);
+                    assert(a.iface.tx.error == UCS_ERR_IO_ERROR && mock.errors == 1);
+                    assert(!ucs_list_is_empty(&a.iface.link.pending));
+                    assert(send_short(ep) == UCS_ERR_IO_ERROR);
+                } else {
+                    active_id = peer->active_id;
+                    uct_rm_urma_link_progress(&a.iface);
+                    memcpy(request, mock.frame + 3, sizeof(request));
+                    context = mock.ctx;
+                    uct_rm_urma_ep_destroy(&ep->super.super.super);
+                    assert(ucs_list_is_empty(&peer->eps));
+                    assert(mock.live_targets == 1 && mock.unimports == 0);
+                    complete(&a.iface, context); /* control CQE after every business EP is gone */
+                    assert(uct_rm_urma_link_receive(&b.iface, request, 100) == UCS_OK);
+                    if (scenario == 2) {
+                        uct_rm_urma_link_account_rx(&b.iface, 6, 1, 7);
+                        uct_rm_urma_link_progress(&b.iface);
+                        memcpy(grant, mock.frame + 3, sizeof(grant));
+                        complete(&b.iface, mock.ctx);
+                        assert(uct_rm_urma_ctrl_v2_unpack(grant, 32,
+                                  a.iface.link.instance, &control, NULL) == UCS_OK);
+                        ++control.request_id;
+                        assert(uct_rm_urma_ctrl_v2_pack(grant, 32, &control, NULL) == UCS_OK);
+                        assert(uct_rm_urma_link_receive(&a.iface, grant, 32) == UCS_OK);
+                        assert(peer->active_id == active_id && peer->credits == 2);
+                        --control.request_id;
+                        assert(uct_rm_urma_ctrl_v2_pack(grant, 32, &control, NULL) == UCS_OK);
+                        assert(uct_rm_urma_link_receive(&a.iface, grant, 32) == UCS_OK);
+                        assert(peer->credits == 8 && peer->active_id == 0);
+                        replacement = iface_v2_new_ep(&a, &b);
+                        assert(replacement->peer == peer && peer->credits == 8);
+                        assert(send_short(replacement) == UCS_OK);
+                        complete(&a.iface, mock.ctx);
+                        assert(uct_rm_urma_link_receive(&a.iface, grant, 32) == UCS_OK);
+                        assert(peer->credits == 7); /* old grant never refills a recreated EP */
+                    } else {
+                        /* Close with a queued grant and no RX repost: never fabricate credit. */
+                        uct_rm_urma_link_progress(&b.iface);
+                        assert(b.iface.tx.ctrl_ep == NULL);
+                        assert(!ucs_list_is_empty(&b.iface.link.pending));
+                    }
+                }
+            }
+            fixture_allow_other_live = 1;
+            control_fixture_cleanup(&a);
+            control_fixture_cleanup(&b);
+            fixture_allow_other_live = 0;
+            control_fixture_cleanup(&c);
+            assert(mock.live_targets == 0 && mock.live_segments == 0);
+        }
+    }
+    puts("PASS A7 iface_v2: 14 new actual-C lifecycle/error cases, inline/non-inline");
+    puts("     32 EP generations, late control CQE/grant, K limit, pending OOM,");
+    puts("     terminal post, queued-grant close and request-ID overflow; CPU ONLY");
+}
+
 int main(void)
 {
     uct_rm_urma_iface_t iface = {};
@@ -1651,5 +1802,6 @@ int main(void)
     test_iface_v2_bidirectional();
     test_iface_v2_constructor_failures();
     test_iface_v2_pending_other_peer();
+    test_iface_v2_lifecycle_failures();
     return 0;
 }

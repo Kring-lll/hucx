@@ -2,10 +2,10 @@
   "base_commit": "990398f43e7b589b4030e45d69b48c1766f5eac3",
   "scope": "iface_v2软件实现、ARM64正常28项与直接UCT四EP/零反向业务EP跨窗专项通过；完整A7/性能/CTP故障契约未验收",
   "files": {
-    "contrib/rm_ctp/LINK_DESIGN.md": "3628dd819a4436418c8ceb9ad4fc36e9be5403fcf74ed9352144d0e382d42ce3",
-    "contrib/rm_ctp/REQUIREMENTS.md": "c8bfac48beb74caa8cacb9f10debb87d61df8e1d9a09ed7b8866ef74edf6e227",
+    "contrib/rm_ctp/LINK_DESIGN.md": "6754572c15c131c9e53f84ae417490c5b263d83652ebd01a98ff515673359a6e",
+    "contrib/rm_ctp/REQUIREMENTS.md": "5a1f30e9a9ce2e2ddcc56ed7cc3528ff1c94d4a8b4156f79377ab93809f19519",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
-    "contrib/rm_ctp/r1/README.md": "94d63ac5e7670e98c58c5c4c9fa5445356375632935fa6f6d44d2cbac56cc4c1",
+    "contrib/rm_ctp/r1/README.md": "8c276bc22380f6e1a5700bb323d49083d5d682e1909584ca4c24680922cf16c6",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
     "contrib/rm_ctp/r1/accept_iface.py": "a6fd4eedec1aa42d75feef463f78b9520a668f75a2fb9fbdd568b5a5a16e9fe4",
     "contrib/rm_ctp/r1/acceptance_a4_target_20261023.md": "4c03091efafb7a92f7446ca48a542c3a2dae58d3e7175cc9077fbe9162330450",
@@ -18,7 +18,7 @@
     "contrib/rm_ctp/r1/run_mock.sh": "2f70e26909914cca62a47166b261ac5ed3fad99aeafe3187635a0c29e02c507b",
     "contrib/rm_ctp/r1/target_reuse.c": "6eceeebc8a3333d36c60eb799dd3fb038dfb02f46670eb4b684f67345206f78e",
     "contrib/rm_ctp/r1/test_link_addr.c": "1b75d2cdd590ade730316dedef2bae1ea4dc311ea3b87adbfb92ceb6b6860118",
-    "contrib/rm_ctp/r1/test_shared_tx.c": "442ab4862b4274b585ed3422eeb935bf9d1b80fdc66437be1d7664b0ded65492",
+    "contrib/rm_ctp/r1/test_shared_tx.c": "3d326f2da4a5053e675c37eaff934e25f942f3831ffc957755ef3057f859d080",
     "src/uct/urma/Makefile.am": "f9f05558dafd2f59b3280aeb6d30175302efe64773f1cbdd2658104aa110ffc5",
     "src/uct/urma/base/urma_iface.c": "149da5132d434da9f6050ed50035520c237fc840295d610e2486d86a795bdd33",
     "src/uct/urma/base/urma_iface.h": "9c1002be4e66ccce0ce1a7690d0864781d6b25e7da7c6b1e84b66d644b2e59af",
@@ -34,7 +34,10 @@
     "contrib/rm_ctp/r1/acceptance_iface_summary_20261026.json": "9cdec3e1842411da8cc6442b2aa687de743a6a4f02bb73dda2fb2feeb30e5d18",
     "contrib/rm_ctp/r1/a7_iface_four_ep_20261026.py": "3a1f75998b22c20aafc12a0f03f272d8d22ba2aebcd9ca166755debb8db6623e",
     "contrib/rm_ctp/r1/acceptance_direct_20261026.md": "35705022ceae6eb1fd92db6e450e209ac21224b609253f52eb199b9cdc3d96ff",
-    "contrib/rm_ctp/r1/acceptance_direct_summary_20261026.json": "e655359b243e5b76336ee3ab7257bc090d12a328a03cecafab1a6c56e8ee2353"
+    "contrib/rm_ctp/r1/acceptance_direct_summary_20261026.json": "e655359b243e5b76336ee3ab7257bc090d12a328a03cecafab1a6c56e8ee2353",
+    "contrib/rm_ctp/r1/a7_iface_lifecycle.c": "fa7529fab6d035a5c3ec2f40dfef5e917fb58bc0a9d1ce414f72a18f283ae232",
+    "contrib/rm_ctp/r1/a7_iface_lifecycle_20261026.py": "23f1feeaab56b7b217257f0adb0b9f068a213ee5e68aface1855779685c75aef",
+    "contrib/rm_ctp/r1/a7_lifecycle_20261026.md": "c7dd7516adc37f44828864261ccdc2e499fc87152e3fb141b8786ec009db80ad"
   },
   "current_validation": {
     "full_local_build": "Base62fb full x86 build PASS; 2a8e actual object CPU regressions PASS; 2a8e ARM64 isolated full build PASS",
@@ -60,7 +63,9 @@
       "MPI启动阶段时间点与实际交换数量若作为收益结论需另测；A8性能未验收"
     ],
     "focused_direct_uct_node_pass": true,
-    "focused_direct_summary": "contrib/rm_ctp/r1/acceptance_direct_summary_20261026.json"
+    "focused_direct_summary": "contrib/rm_ctp/r1/acceptance_direct_summary_20261026.json",
+    "a7_new_actual_c_lifecycle_errors": "PASS: 14 actual-C cases with ASan/UBSan plus all existing harness/codec regressions",
+    "a7_new_node_lifecycle": "PENDING: two iface lifetimes, 32 EP generations, 160 creates/destroys, pending purge/requeue; no product modification"
   },
   "product_tested_commit": "2a8e3b771211e5af491c8ca483ebcc01a03c2f01",
   "product_module_sha256": "26b9dac631af27622d0f04f3f86758332bb59874f4cf21743d2820c5783e3aa6",

@@ -1,5 +1,7 @@
 # R1: shared local RM Jetty
 
+A7候选：新增14个实际C异常/生命周期场景已通过；[节点生命周期工具与范围](a7_lifecycle_20261026.md)已准备，节点待执行。本轮产品源码不变。
+
 最新补充：2a8e直接UCT四EP/零反向业务EP/跨窗FC节点专项通过，见[验收记录](acceptance_direct_20261026.md)。复现工具a7_iface_four_ep_20261026.py只编译测试程序，不替换产品；不是完整A7或性能验收。
 
 ## Validated substep: A4 target reuse, step 1 (not complete A4/A6)

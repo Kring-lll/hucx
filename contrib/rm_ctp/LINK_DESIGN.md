@@ -529,3 +529,7 @@ CPU/节点/底层契约证据分开。性能、PPN20、C1故障语义仍未验�
 固定2a8e/26b9模块，地址发布/接收先于业务EP创建（48B iface、0B EP、R64/K5/W8）；发送端四业务EP，接收端零反向业务EP，64条×64B全部校验通过，short/bcopy各32条。FC request/grant各10，补回60额度。发送端目标import/reuse/release=1/14/1，接收端1/10/1，模块/maps均通过。
 
 工具及证据见r1/acceptance_direct_20261026.md；本专项不经过MPI，不代替MPI初始化打点，也不证明UCP wireup消失。关闭上述节点专项缺口，转A7生命周期/异常验证；C1与A8边界保持。
+
+### 12.9 A7生命周期候选：复用既有机制，产品不变
+
+新增14个实际C测试及完整既有harness在ASan/UBSan下通过；补充两轮iface、32代业务EP、在途销毁与pending取消/重提的节点工具，待执行。源码审查及覆盖范围见r1/a7_lifecycle_20261026.md；不借此声称必要C1或A7完整验收已完成。
