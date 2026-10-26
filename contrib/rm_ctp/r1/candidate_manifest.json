@@ -2,10 +2,10 @@
   "base_commit": "990398f43e7b589b4030e45d69b48c1766f5eac3",
   "scope": "iface_v2完整软件候选；静态有界对端、AM short/bcopy；等待ARM64/节点/性能验收",
   "files": {
-    "contrib/rm_ctp/LINK_DESIGN.md": "daa8b56070cac62f620737c7ea2384000e08d85f542eeb2fc48f6f3c5c88da76",
-    "contrib/rm_ctp/REQUIREMENTS.md": "08aac7eb351489873c25c5bf240c66132f8ebabb4b8c60975e6065bc9f421a2d",
+    "contrib/rm_ctp/LINK_DESIGN.md": "4192688152e1a2c8dbd34bacc6d934777b18dd6182f1f8911a69a8605a1a23a4",
+    "contrib/rm_ctp/REQUIREMENTS.md": "1fb4a33f1e78a95c780215cb5569eb61e17d7f2391a0aa0e2fd7bb504e9c97a7",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
-    "contrib/rm_ctp/r1/README.md": "0136abc78787f11c34504d9f4172a499300c1c6b47f0e428f364f42484fbfdcd",
+    "contrib/rm_ctp/r1/README.md": "635a8dd3a5c409f65816747c8d8ecd02cb6f96601b66dc4c10ec9de4531b43fc",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
     "contrib/rm_ctp/r1/accept_iface.py": "a6fd4eedec1aa42d75feef463f78b9520a668f75a2fb9fbdd568b5a5a16e9fe4",
     "contrib/rm_ctp/r1/acceptance_a4_target_20261023.md": "4c03091efafb7a92f7446ca48a542c3a2dae58d3e7175cc9077fbe9162330450",
@@ -18,7 +18,7 @@
     "contrib/rm_ctp/r1/run_mock.sh": "2f70e26909914cca62a47166b261ac5ed3fad99aeafe3187635a0c29e02c507b",
     "contrib/rm_ctp/r1/target_reuse.c": "6eceeebc8a3333d36c60eb799dd3fb038dfb02f46670eb4b684f67345206f78e",
     "contrib/rm_ctp/r1/test_link_addr.c": "1b75d2cdd590ade730316dedef2bae1ea4dc311ea3b87adbfb92ceb6b6860118",
-    "contrib/rm_ctp/r1/test_shared_tx.c": "439e4a2fc4e41bf17dce1d238a57da9b84f844bbdd91cb9967a354b22bc1728e",
+    "contrib/rm_ctp/r1/test_shared_tx.c": "442ab4862b4274b585ed3422eeb935bf9d1b80fdc66437be1d7664b0ded65492",
     "src/uct/urma/Makefile.am": "f9f05558dafd2f59b3280aeb6d30175302efe64773f1cbdd2658104aa110ffc5",
     "src/uct/urma/base/urma_iface.c": "149da5132d434da9f6050ed50035520c237fc840295d610e2486d86a795bdd33",
     "src/uct/urma/base/urma_iface.h": "9c1002be4e66ccce0ce1a7690d0864781d6b25e7da7c6b1e84b66d644b2e59af",
@@ -28,11 +28,11 @@
     "src/uct/urma/rm_urma/rm_urma_ep.h": "bdc1947d1c3465240593b8ed9fdff6385367bb21dda0a096fdf3c38f211b721a",
     "src/uct/urma/rm_urma/rm_urma_iface.c": "ca17943eecbefbc97e0444840bbf8be1344f40708f0f41f5af17c97d8b403fae",
     "src/uct/urma/rm_urma/rm_urma_iface.h": "a13d58ff6212d6aaa1cc11fa32831ba318f1046976bda0cf7b4f33ecc96b92cf",
-    "src/uct/urma/rm_urma/rm_urma_link.c": "05609b66d6e5ae0b914125875bd07f3cd7955bac449cce1382f42f3d5ff231be",
+    "src/uct/urma/rm_urma/rm_urma_link.c": "4ebaa108828ec072720b5d2387ac585644517de52c92232c4e8d0780e83c01ee",
     "src/uct/urma/rm_urma/rm_urma_link.h": "517ea4683cae82ec05511b9c1416b53d63df80b11db66d031e6de109f236eced"
   },
   "current_validation": {
-    "full_local_build": "PASS: autogen/configure/make/install, x86; public SDK50288 headers + compile-only placeholder library, not provider validation",
+    "full_local_build": "Base62fb PASS; current fix recompiled actual RM link object with ASan/UBSan and ran full C harness; fresh full build/ARM64 pending",
     "actual_c_cpu": "PASS: 19 new iface/RX/constructor/pending cases, 30 reused control-owner cases, existing 11 FC errors/70000 completions/targets; ASan/UBSan",
     "wire_codec": "PASS: 5 groups, actual C; golden bytes/unaligned/truncation/budget overflow/identity/output atomicity",
     "node_runner": "syntax/help, override/validation/trace positive and negative fixtures checked; NOT EXECUTED ON NODES",
@@ -45,7 +45,8 @@
     "performance_accepted": false,
     "ctp_contract_closed": false,
     "prior_rc_regression_open": true,
-    "node_acceptance_command": "python3 source/contrib/rm_ctp/r1/accept_iface.py CASE --repeats 3"
+    "node_acceptance_command": "python3 source/contrib/rm_ctp/r1/accept_iface.py CASE --repeats 3",
+    "legacy_zero_length_address": "PASS: public UCT API with NULL/non-NULL outputs and canaries; unfixed62fb object fails first, fixed object passes"
   },
   "product_tested_commit": null,
   "product_module_sha256": null,
@@ -122,5 +123,31 @@
     "API trace counts are not network packet counts; UCP wireup may remain",
     "normal functionality, CPU fault injection and hardware reliability evidence are separate",
     "a pinned old physical target cannot be silently reused by a new incarnation; dynamic restart is unsupported"
-  ]
+  ],
+  "historical_62fb_validation": {
+    "product_commit": "62fb1bc631841f326f05f30448e595113676dcb1",
+    "module_sha256": "3725e9bc401624714284667ccc421d6700d3cff73f4106605cb415b1ecc6491d",
+    "archive_sha256": "9e61df4edbf88820ebff354c1b05da1297f93488ad7dbc12e7d4f9e7ca076a7b",
+    "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_62fb1bc63_lyxO2g",
+    "results": "iface_accept_ap2fc5ar/results.json",
+    "terminal_log": "iface_accept_terminal_I9N3hk",
+    "old_control": "old8b_control_d3s35skp",
+    "evidence_source": "operator summaries and selected first-error lines; full node logs not downloaded",
+    "arm64_build": "PASS",
+    "new_iface_8b_repeats": "3 PASS",
+    "new_iface_many_and_oneway": "1/2/4 peers all six PASS; depth/maps/live checks enforced by pinned runner",
+    "legacy": "3 8B failures and six many/burst failures reported; representative logs fail worker address publication with Unsupported operation",
+    "rc_many_and_burst": "peers1/2 fail; peers4 PASS; representative send CQE status2",
+    "old_8b_us": {
+      "rc": 2.23,
+      "rm": 1.97
+    },
+    "candidate_8b_median_us": {
+      "iface": 2.21,
+      "rc": 2.57
+    },
+    "functional_acceptance": false,
+    "performance_accepted": false,
+    "ctp_contract_closed": false
+  }
 }

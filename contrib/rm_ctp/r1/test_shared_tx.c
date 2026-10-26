@@ -1487,6 +1487,31 @@ static void test_accounted_rx(void)
     puts("     actual AM callback and truncated receive (5 actual C cases)");
 }
 
+static void test_legacy_iface_address(void)
+{
+    uct_rm_urma_iface_t iface = {0};
+    uct_iface_h tl_iface = &iface.super.super.super;
+    unsigned char address[64];
+    unsigned i;
+
+    tl_iface->ops = uct_rm_urma_iface_tl_ops;
+    iface.link.mode = UCT_RM_URMA_LINK_LEGACY;
+    memset(address, 0xa5, sizeof(address));
+    /* UCP worker packing calls the public API even for iface_addr_len=0. */
+    assert(uct_iface_get_address(tl_iface, (uct_iface_addr_t *)address) == UCS_OK);
+    assert(uct_iface_get_address(tl_iface, NULL) == UCS_OK);
+    for (i = 0; i < sizeof(address); ++i) {
+        assert(address[i] == 0xa5);
+    }
+    iface.link.mode = 99;
+    assert(uct_iface_get_address(tl_iface, (uct_iface_addr_t *)address) ==
+           UCS_ERR_UNSUPPORTED);
+    for (i = 0; i < sizeof(address); ++i) {
+        assert(address[i] == 0xa5);
+    }
+    puts("PASS legacy zero-length iface address through public UCT API: no writes; invalid mode rejected");
+}
+
 int main(void)
 {
     uct_rm_urma_iface_t iface = {};
@@ -1617,6 +1642,7 @@ int main(void)
     ucs_callbackq_cleanup(&worker.super.progress_q);
     ucs_mpool_cleanup(&iface.tx.pending_mp, 1);
     puts("PASS synthetic CQE isolation and cleanup; MOCK ONLY, no hardware validation");
+    test_legacy_iface_address();
     test_fc_errors();
     test_target_reuse();
     test_control_sender();

@@ -492,3 +492,22 @@ K=5/W=8/R=64满足；40rank、W8/R512满足预算但尚未测试；384rank、W8/
 
 所有失败保存，RC OPEN不能隐藏，少量时延样本不代替性能无回退验收；未测PPN20、扩展、分片、RMA和故障恢复。
 第2步为完整软件候选，不是已完成真实节点验收；A4/A5/A6的最终勾选及正式AtomGit交付以明示门槛闭合为准。
+
+### 12.6 2026-10-26节点结果与legacy地址回归修复
+
+62fb在ARM64构建通过，用户返回的新模式三轮8B以及1/2/4 peers双向/单向共9例均通过；
+1/2/4规模资源检查通过。旧d58 8B为RC2.23us/RM1.97us，候选新模式/RC三轮中位数为2.21/2.57us，
+legacy三轮8B和多对端失败，部分RC用例发送完成status2；整轮未通过，不能作无回退结论。
+节点CASE为r1_shared_62fb1bc63_lyxO2g，结果iface_accept_ap2fc5ar/results.json。
+这些依据用户终端摘要，助手未下载原始节点结果；不补造逐轮样本。
+
+legacy代表日志显示worker地址发布返回Unsupported operation。源码核验：
+UCP address.c的地址打包在iface_addr_len=0时仍调用uct_iface_get_address；
+原990 RM与当前RC为ucs_empty_function_return_success，UM则导出自己的非零长度地址。
+62fb新回调错误地对所有非iface_v2返回UNSUPPORTED，这是本轮引入的兼容回归。
+修复仅让legacy返回UCS_OK且不访问输出地址；未知模式仍拒绝，iface_v2编解码及流控不变。
+
+新增回归通过公共uct_iface_get_address调用实际RM回调，覆盖零长度地址的NULL/非NULL输出、
+缓冲canary及未知模式。测试先对未修复62fb实际对象失败，再对修复对象通过；
+ASan/UBSan下原共享队列/目标/控制owner/新iface/RX/codec回归也通过。
+本次修复待重新隔离构建及双节点复验；RC status2继续OPEN，不改RC源码，不宣称系统OOM或已证明平台根因。

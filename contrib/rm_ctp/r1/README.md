@@ -195,4 +195,9 @@ UCX_RM_URMA_MAX_PEERS=K，并显式启用FC和满足预算的RX深度/窗口。
 新代码复用tx.mp、pending_mp、arbiter、outstanding和CQE，无新注册池/Jetty/重传定时器。
 fc_burst.c从已验证FC helper提取，内容SHA256仍502048a73533151fccba7cde6b77c24a84ae26e7e1c6ec7b6f9a6291d44d3b59。
 run_mock.sh执行实际C路径；test_link_addr.c为独立编解码边界测试，不是Python设计模型。
-当前没有ARM64、新MPI、性能无回退或故障恢复结果；历史4b/638结果不能归给本候选。
+本段原为节点测试前状态；62fb后续结果及修复边界见下文，历史4b/638结果不能归给本候选。
+
+2026-10-26：62fb ARM64构建和新模式9个正常用例通过，完整矩阵因legacy/部分RC失败未通过。
+legacy失败定位为零长度iface地址回调误报UNSUPPORTED；本次仅恢复legacy的成功no-op。
+test_shared_tx.c新增公共UCT地址API回归，未修复对象先失败、修复后完整CPU回归通过。
+当前修复版仍待ARM64/节点复验；RC status2保持OPEN，未确认性能无回退或故障恢复。

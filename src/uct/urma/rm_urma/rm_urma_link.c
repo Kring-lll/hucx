@@ -76,6 +76,11 @@ ucs_status_t uct_rm_urma_link_get_address(uct_iface_h tl_iface,
     uct_rm_urma_iface_t *iface = ucs_derived_of(tl_iface,
                                                uct_rm_urma_iface_t);
 
+    if (iface->link.mode == UCT_RM_URMA_LINK_LEGACY) {
+        /* UCP also calls this for a zero-length CONNECT_TO_EP address.
+         * Match the original RM/RC no-op callback without touching addr. */
+        return UCS_OK;
+    }
     if (iface->link.mode != UCT_RM_URMA_LINK_IFACE_V2) {
         return UCS_ERR_UNSUPPORTED;
     }
