@@ -182,7 +182,7 @@ history and verify that the four product files match the tested commit.
 Formal AtomGit delivery is a separate workflow checkpoint.
 
 
-## 2026-10-25 iface_v2候选（未作节点验收）
+## iface_v2候选与验证范围
 
 基线：AtomGit rm-a-connection/990398f；完整设计/源码责任表见../LINK_DESIGN.md第12节。
 默认legacy_ep不切换。新模式的变量为UCX_RM_URMA_LINK_MODE=iface_v2、
@@ -200,4 +200,9 @@ run_mock.sh执行实际C路径；test_link_addr.c为独立编解码边界测试�
 2026-10-26：62fb ARM64构建和新模式9个正常用例通过，完整矩阵因legacy/部分RC失败未通过。
 legacy失败定位为零长度iface地址回调误报UNSUPPORTED；本次仅恢复legacy的成功no-op。
 test_shared_tx.c新增公共UCT地址API回归，未修复对象先失败、修复后完整CPU回归通过。
-当前修复版仍待ARM64/节点复验；RC status2保持OPEN，未确认性能无回退或故障恢复。
+当时修复版仍待ARM64/节点复验；RC status2保持OPEN，未确认性能无回退或故障恢复。
+
+2026-10-26后续：2a8e ARM64构建和28项正常矩阵全部通过，legacy已恢复。
+原始时延、API计数和资源结果见acceptance_iface_20261026.md及acceptance_iface_summary_20261026.json。
+本记录只更新证据；产品/构建代码与已测2a8e一致，文档提交无需重新构建。
+正常矩阵不证明接收端不存在反向应用EP，也不替代完整生命周期/时序/故障语义验收；下一专项与A7衔接。

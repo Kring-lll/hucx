@@ -1,11 +1,11 @@
 {
   "base_commit": "990398f43e7b589b4030e45d69b48c1766f5eac3",
-  "scope": "iface_v2完整软件候选；静态有界对端、AM short/bcopy；等待ARM64/节点/性能验收",
+  "scope": "iface_v2完整软件实现；ARM64/两节点28项正常矩阵通过，完整清单专项/性能/CTP故障契约未验收",
   "files": {
-    "contrib/rm_ctp/LINK_DESIGN.md": "4192688152e1a2c8dbd34bacc6d934777b18dd6182f1f8911a69a8605a1a23a4",
-    "contrib/rm_ctp/REQUIREMENTS.md": "1fb4a33f1e78a95c780215cb5569eb61e17d7f2391a0aa0e2fd7bb504e9c97a7",
+    "contrib/rm_ctp/LINK_DESIGN.md": "6fdeb467bbc4ee91c1cc411c1d14c6489f2218799d144aeff55f9ed68fbb164a",
+    "contrib/rm_ctp/REQUIREMENTS.md": "a9af0691d36a95e9c2f90a40caf6b450cfaffdc2f7f95015ef462e8ff4876d27",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
-    "contrib/rm_ctp/r1/README.md": "635a8dd3a5c409f65816747c8d8ecd02cb6f96601b66dc4c10ec9de4531b43fc",
+    "contrib/rm_ctp/r1/README.md": "555fc620fded4562e4a0367bceb0d889a2176d7d184fce625b8068c49c19511e",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
     "contrib/rm_ctp/r1/accept_iface.py": "a6fd4eedec1aa42d75feef463f78b9520a668f75a2fb9fbdd568b5a5a16e9fe4",
     "contrib/rm_ctp/r1/acceptance_a4_target_20261023.md": "4c03091efafb7a92f7446ca48a542c3a2dae58d3e7175cc9077fbe9162330450",
@@ -29,15 +29,17 @@
     "src/uct/urma/rm_urma/rm_urma_iface.c": "ca17943eecbefbc97e0444840bbf8be1344f40708f0f41f5af17c97d8b403fae",
     "src/uct/urma/rm_urma/rm_urma_iface.h": "a13d58ff6212d6aaa1cc11fa32831ba318f1046976bda0cf7b4f33ecc96b92cf",
     "src/uct/urma/rm_urma/rm_urma_link.c": "4ebaa108828ec072720b5d2387ac585644517de52c92232c4e8d0780e83c01ee",
-    "src/uct/urma/rm_urma/rm_urma_link.h": "517ea4683cae82ec05511b9c1416b53d63df80b11db66d031e6de109f236eced"
+    "src/uct/urma/rm_urma/rm_urma_link.h": "517ea4683cae82ec05511b9c1416b53d63df80b11db66d031e6de109f236eced",
+    "contrib/rm_ctp/r1/acceptance_iface_20261026.md": "d604b70b5f15d96bf1464fc1ac16ac8c7cece18f848db594587e7f05eed425a6",
+    "contrib/rm_ctp/r1/acceptance_iface_summary_20261026.json": "9cdec3e1842411da8cc6442b2aa687de743a6a4f02bb73dda2fb2feeb30e5d18"
   },
   "current_validation": {
     "full_local_build": "Base62fb PASS; current fix recompiled actual RM link object with ASan/UBSan and ran full C harness; fresh full build/ARM64 pending",
     "actual_c_cpu": "PASS: 19 new iface/RX/constructor/pending cases, 30 reused control-owner cases, existing 11 FC errors/70000 completions/targets; ASan/UBSan",
     "wire_codec": "PASS: 5 groups, actual C; golden bytes/unaligned/truncation/budget overflow/identity/output atomicity",
-    "node_runner": "syntax/help, override/validation/trace positive and negative fixtures checked; NOT EXECUTED ON NODES",
-    "arm64": "NOT_RUN",
-    "hardware": "NOT_RUN",
+    "node_runner": "Pinned accept_iface.py executed on two nodes; all28 passed; node SHA/normal matrix resources and7 API traces checked",
+    "arm64": "PASS: tested2a8e autogen/configure/make/install; operator build summary",
+    "hardware": "PASS: 28-case normal matrix, source/module/raw-sample/API-summary assertions passed on node; full logs remain on nodes",
     "a4_software_design_finalized": true,
     "a4_complete": false,
     "a5_a6_software_implemented": true,
@@ -46,10 +48,17 @@
     "ctp_contract_closed": false,
     "prior_rc_regression_open": true,
     "node_acceptance_command": "python3 source/contrib/rm_ctp/r1/accept_iface.py CASE --repeats 3",
-    "legacy_zero_length_address": "PASS: public UCT API with NULL/non-NULL outputs and canaries; unfixed62fb object fails first, fixed object passes"
+    "legacy_zero_length_address": "PASS: public UCT API with NULL/non-NULL outputs and canaries; unfixed62fb object fails first, fixed object passes",
+    "a5_a6_normal_path_regression_pass": true,
+    "node_summary": "contrib/rm_ctp/r1/acceptance_iface_summary_20261026.json",
+    "remaining_evidence": [
+      "C1真实故障契约",
+      "发布与首次创建时序/字段的明确留档",
+      "本版本节点四逻辑EP、无反向应用EP和跨窗控制专项；与A7衔接"
+    ]
   },
-  "product_tested_commit": null,
-  "product_module_sha256": null,
+  "product_tested_commit": "2a8e3b771211e5af491c8ca483ebcc01a03c2f01",
+  "product_module_sha256": "26b9dac631af27622d0f04f3f86758332bb59874f4cf21743d2820c5783e3aa6",
   "historical_4b_validation": {
     "product_commit": "4b77878ce65994387a1bf9e9a1c283e676c7f786",
     "module_sha256": "ed196bd68a22353067c73fc5f1a7a2e177123f9139beebc532ce767aebc4591c",
@@ -149,5 +158,13 @@
     "functional_acceptance": false,
     "performance_accepted": false,
     "ctp_contract_closed": false
+  },
+  "hardware_2a8e_normal_matrix": {
+    "record": "contrib/rm_ctp/r1/acceptance_iface_20261026.md",
+    "summary": "contrib/rm_ctp/r1/acceptance_iface_summary_20261026.json",
+    "normal_matrix_pass": true,
+    "full_feature_acceptance": false,
+    "performance_accepted": false,
+    "historical_rc_status2_root_cause": "UNRESOLVED; all RC cases pass in this normal matrix"
   }
 }
