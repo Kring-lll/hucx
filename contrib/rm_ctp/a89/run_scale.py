@@ -20,7 +20,7 @@ import tempfile
 import time
 import uuid
 
-from resume import load_checkpoint
+from resume import CheckpointExpired, load_checkpoint
 
 from support import (A8_LEVELS, DEFAULT_CASE, LAB, MINIMAL, MINIMAL_MODULE,
                      PRE_IFACE, PRE_IFACE_COMMIT, PRE_IFACE_MODULE,
@@ -444,7 +444,7 @@ def main():
         raise RuntimeError('本包固定已测CASE；不要用未验证的库替代')
     out = Path(tempfile.mkdtemp(prefix='a89_', dir=str(case)))
     print('A89_DIR=' + str(out), flush=True)
-    report = {'toolkit': toolkit, 'toolkit_tree_base': '170d43cfa5cef3bf8b36367c220caf3e53d19a88',
+    report = {'toolkit': toolkit, 'toolkit_tree_base': '10a4e47e7706432351a872e6307c1c694834d3ff',
               'product_commit': PRODUCT_COMMIT, 'module_sha256': PRODUCT_MODULE,
               'trials': [], 'comparisons': [], 'a8_functional': False,
               'a9_functional': False, 'full_acceptance': False,
@@ -490,8 +490,13 @@ def main():
         save()
         checkpoint = None
         if args.resume_from:
-            checkpoint = load_checkpoint(args.resume_from, case, report, toolkit,
-                                         baseline, args.repeats)
+            try:
+                checkpoint = load_checkpoint(args.resume_from, case, report, toolkit,
+                                             baseline, args.repeats)
+            except CheckpointExpired as exc:
+                report['resume_expired_fresh_run'] = {'source': str(args.resume_from), 'reason': str(exc)}
+                print('检查点已过期；不复用旧样本，本轮自动完整重跑门禁和计时', flush=True)
+        if checkpoint:
             report['regressions'] = checkpoint['regressions']
             report['resume_source'] = checkpoint['provenance']
             print('检查点验证=通过；复用四组回归及九个PPN1计时，三模式资源轮全部重跑', flush=True)

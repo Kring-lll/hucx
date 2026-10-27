@@ -124,7 +124,7 @@ class ResumeTests(unittest.TestCase):
 
     def test_rejects_expired_checkpoint_and_unapproved_toolkit(self):
         os.utime(self.path, (1, 1))
-        with self.assertRaisesRegex(ValueError, '一小时'):
+        with self.assertRaisesRegex(resume.CheckpointExpired, '一小时'):
             self.load()
         self.save()
         self.report['toolkit']['date'] = 'changed'

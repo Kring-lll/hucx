@@ -218,9 +218,13 @@ def resource_counts(directory, expected_ranks, mode, install, depth, expected_pi
         process_id = int(match[2])
         if expected_pids is not None and expected_pids.get(rank) != process_id:
             raise ValueError('observer PID does not belong to the measured application')
-        check_maps(path.with_suffix('.maps').read_text(), install)
+        snapshots = []
+        for phase in ('after_init', 'after_first', 'after_steady'):
+            snapshot = Path(directory) / ('rank%d_%s.maps' % (rank, phase))
+            check_maps(snapshot.read_text(), install)
+            snapshots.append(snapshot.name)
         results[str(rank)] = {'peaks_per_context': peaks, 'tx_depth': depth,
-                              'live_at_exit': 0, 'application_pid': process_id}
+                              'live_at_exit': 0, 'application_pid': process_id, 'maps': snapshots}
     if set(map(int, results)) != set(expected_ranks):
         raise ValueError('observer rank coverage incomplete')
     return results

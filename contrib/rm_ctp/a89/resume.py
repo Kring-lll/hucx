@@ -16,6 +16,11 @@ SOURCE_MANIFEST = 'fbe71a04c639a49513919a4a5b4a126ab3afc3e3566199cffe30c9d9048a6
 SOURCE_DIRECTORY = 'a89_xtypmczp'
 
 
+class CheckpointExpired(ValueError):
+    """Age alone permits a fresh full run, never unchecked reuse."""
+
+
+
 def manifest_digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
@@ -27,7 +32,7 @@ def load_checkpoint(path, case, current, toolkit, baseline, repeats):
         raise ValueError('恢复仅支持本次a89_xtypmczp检查点及原三轮采样')
     age = time.time() - path.stat().st_mtime
     if age < 0 or age > 3600:
-        raise ValueError('检查点已超过一小时；请不带--resume-from重新运行')
+        raise CheckpointExpired('检查点已超过一小时，本轮完整重跑门禁和计时')
     previous = json.loads(path.read_text())
     if (previous['product_commit'] != PRODUCT_COMMIT or previous['module_sha256'] != PRODUCT_MODULE or
             manifest_digest(previous['toolkit']) != SOURCE_MANIFEST):

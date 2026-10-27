@@ -98,11 +98,22 @@ class ObserverTests(unittest.TestCase):
                      'ptr': 'p', 'ctx': 'c', 'depth': 64},
                     {'event': 'release', 'kind': 'jetty', 'rc': 0, 'ptr': 'p'}]
             observer.write_text('\n'.join(map(json.dumps, rows)))
-            observer.with_suffix('.maps').write_text('\n'.join(
-                '0-1 rw /candidate/lib/' + lib + '.0' for lib in
-                ('libucp.so', 'libuct.so', 'libucs.so', 'libucm.so', 'libuct_ub.so')))
+            maps = '\n'.join('0-1 rw /candidate/lib/' + lib + '.0' for lib in
+                             ('libucp.so', 'libuct.so', 'libucs.so', 'libucm.so', 'libuct_ub.so'))
+            for phase in ('after_init', 'after_first', 'after_steady'):
+                (root / ('rank0_%s.maps' % phase)).write_text(maps)
+            self.assertFalse(observer.with_suffix('.maps').exists())
             result = support.resource_counts(root, [0], 1, '/candidate', 64, {0: 123})
             self.assertEqual(result['0']['application_pid'], 123)
+            self.assertEqual(result['0']['maps'], ['rank0_after_init.maps',
+                                                  'rank0_after_first.maps', 'rank0_after_steady.maps'])
+            (root / 'rank0_after_steady.maps').unlink()
+            with self.assertRaises(FileNotFoundError):
+                support.resource_counts(root, [0], 1, '/candidate', 64, {0: 123})
+            (root / 'rank0_after_steady.maps').write_text(maps.replace('/candidate/', '/wrong/'))
+            with self.assertRaisesRegex(ValueError, 'mixed'):
+                support.resource_counts(root, [0], 1, '/candidate', 64, {0: 123})
+            (root / 'rank0_after_steady.maps').write_text(maps)
             with self.assertRaisesRegex(ValueError, 'PID'):
                 support.resource_counts(root, [0], 1, '/candidate', 64, {0: 456})
             observer.write_text('\n'.join(map(json.dumps, rows[:-1])))

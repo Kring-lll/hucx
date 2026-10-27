@@ -51,11 +51,11 @@ A9的运行门禁是A8完整正常功能与资源安全门禁通过；此时性�
 
 ## 节点运行
 
-将交付的`hucx_a89_observerfix_20261027.zip`手动上传实验根`upload`。zip是Python zipapp，不是源码tar包；
+将交付的`hucx_a89_mapsfix_20261027.zip`手动上传实验根`upload`。zip是Python zipapp，不是源码tar包；
 入口核验内含工具哈希，解压到固定已测CASE下新的toolkit目录。**不用重编译传输库，不覆盖旧版本。**
 
 ```bash
-python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/upload/hucx_a89_observerfix_20261027.zip
+python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/upload/hucx_a89_mapsfix_20261027.zip
 ```
 
 默认全部回归+A8+A9。仅看预算可追加`--plan`（不SSH不启动MPI）；只运行A8可追加`--phase a8`。
@@ -109,9 +109,21 @@ B下一步参见[B_NEXT.md](B_NEXT.md)，本包没有提前完成分片。
 工具重新核对双端库、boot ID/CPU许可、启动JSON、原工具manifest、回归通过日志、
 原二进制、每rank原始数据及maps、空清理结果；只复用四组回归及九个PPN1无观察器计时。
 原始失败不覆盖，新报告保留路径、哈希和失败对象。三模式资源轮全部重跑；后续规模照常运行。
-恢复只允许一小时内同一节点/库环境；过期或任一证据不符则停止，需不带恢复参数重新跑。
+恢复只允许一小时内同一节点/库环境；过期则自动完整重跑门禁和计时，不复用旧数据；其他证据不符仍停止。
 原始计时和恢复后资源观测来自不同时间点，性能仍须人工审阅，不能自动宣称稳定优势。
 
 新增4项观察器测试使用真实gcc动态库和GNU timeout，复现双构造并验证仅应用被记录；
 新增4项恢复测试用明确标注的CPU模拟数据验证通过复用、失败保留和变更拒绝。
 所有src保持已测2a8e；真实节点资源重跑尚未执行，A8/A9仍未验收。
+
+## 2026-10-27 三阶段maps取证文件契约修复
+
+a89_e_vkgiij节点观察器归属已正确：两rank观察器PID=应用PID，RM各acquire/release=1/1，
+深度64，数据及Finalize通过，清理无残留。但检查器错误沿用旧many_peer的per-PID maps文件名，
+而mpi_scale.c实际生成rankN_after_init/after_first/after_steady.maps，导致FileNotFoundError。
+现按这三个真实阶段核验库加载，任何阶段缺失或混库仍拒绝，不复制文件假造旧格式，也不取消检查。
+
+CPU文件契约检查已接通实际C基准体的PID、三阶段kernel maps、资源解析、比较统计和Markdown/JSON报告；
+该检查使用明确标注的文件MPI替身、空DSO和模拟Jetty事件，不是实际UCX/URMA验收。
+恢复入口保持核验；一小时内可复用原回归和九个PPN1计时，只有“过期”会自动改为完整新跑，
+其他证据不符仍停止。原失败不修改，后续节点结果仍待回收。
