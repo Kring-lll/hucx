@@ -193,7 +193,7 @@
     "path": "contrib/rm_ctp/a89",
     "product_unchanged": true,
     "cpu_checks": "PREPARED_AND_RUN_SEPARATELY",
-    "node_acceptance": "PENDING",
+    "node_acceptance": "PARTIAL_A8_FUNCTIONAL_RESOURCE_PASS_A9_TO_64_COLLECTION_96_OPEN",
     "performance_acceptance": "PENDING_REVIEW",
     "atomgit_delivery": "NOT_YET",
     "first_node_run": {
@@ -204,7 +204,7 @@
       "failure": "unrecognized saved launcher option: /usr/bin/env",
       "scope": "operator terminal evidence; full node JSON not downloaded"
     },
-    "launcher_env_fix": "CPU_CHECKED_NODE_RECHECK_PENDING",
+    "launcher_env_fix": "NODE_PASS",
     "second_node_run": {
       "directory": "r1_shared_2a8e3b771_ps2tIz/a89_xtypmczp",
       "regression_groups_passed": 4,
@@ -212,7 +212,7 @@
       "error": "timeout and application both observed; wrapper has no Jetty",
       "payload_and_finalize_both": "PASS",
       "cleanup_terminated_pids_both": [],
-      "observer_fix": "CPU_CHECKED_NODE_RECHECK_PENDING",
+      "observer_fix": "NODE_PASS",
       "source": "operator terminal, full raw report remains on node"
     },
     "third_node_run": {
@@ -225,8 +225,34 @@
       "actual_tx_depth": 64,
       "payload_and_finalize_both": "PASS",
       "failure": "checker expects obsolete per-PID maps, C writes rank/phase maps",
-      "maps_checker_fix": "CPU_CHECKED_NODE_RECHECK_PENDING",
+      "maps_checker_fix": "NODE_PASS",
       "source": "operator terminal, full raw node report not downloaded"
-    }
+    },
+    "fourth_node_run": {
+      "directory": "r1_shared_2a8e3b771_ps2tIz/a89_n8hhrpqz",
+      "a8_functional_resources_ppn_pass": [
+        1,
+        2,
+        4,
+        8,
+        12,
+        16,
+        20
+      ],
+      "a9_ppn_pass": [
+        32,
+        48,
+        64
+      ],
+      "stopped_trial": "iface_p96_r0_resources",
+      "failure": "post-launch scp artifact fetch timeout after 120s",
+      "launcher_exit": 0,
+      "cleanup_terminated_own_pids_both": [],
+      "source": "operator terminal and abbreviated trial diagnostic; full raw report remains on nodes",
+      "performance_accepted": false,
+      "highest_ppn_proven": 64
+    },
+    "artifact_stream_fix": "CPU_CHECKED_NODE_RECHECK_PENDING",
+    "recovery_scope": "Revalidate historical matrix; fetch PPN96 artifacts and gate all ranks; continue only RM128/160/192, retaining original failures and separate cohorts"
   }
 }

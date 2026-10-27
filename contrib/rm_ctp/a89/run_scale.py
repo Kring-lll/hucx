@@ -21,6 +21,7 @@ import time
 import uuid
 
 from resume import CheckpointExpired, load_checkpoint
+from artifacts import fetch as fetch_artifacts
 
 from support import (A8_LEVELS, DEFAULT_CASE, LAB, MINIMAL, MINIMAL_MODULE,
                      PRE_IFACE, PRE_IFACE_COMMIT, PRE_IFACE_MODULE,
@@ -224,23 +225,43 @@ def regressions(case, out):
 
 
 def fetch_trial(run, ranks, probe, hostname):
-    # A fresh local directory receives only artifacts from this exact peer run.
-    names = []
-    for rank in ranks:
-        names.extend(['rank%d.json' % rank, 'pid_rank%d.json' % rank])
-        names.extend('rank%d_%s.maps' % (rank, phase) for phase in
-                     ('after_init', 'after_first', 'after_steady'))
-    if probe:
-        data = ssh('set -eu\npython3 -c "$2" "$1"\n', run,
-                   'import pathlib,sys,json;print(json.dumps([p.name for p in pathlib.Path(sys.argv[1]).glob("rank*_pid*.*")]))')
-        names.extend(json.loads(data))
-    if any('/' in name or name in ('', '.', '..') for name in names):
-        raise RuntimeError('对端artifact名称越界')
-    # scp supports multiple explicit source arguments without wildcards.
-    source = [PEER + ':' + str(run / name) for name in sorted(set(names))]
-    subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8'] +
-                   source + [str(run) + '/'], check=True, timeout=120)
+    fetch_artifacts(run, ranks, probe, PEER)
     return hostname
+
+
+def validate_trial_artifacts(run, config, ppn, inventories, install, mode, probe):
+    """The same data/maps/binding/resource gates for new and recovered runs."""
+    hostname = [row['hostname'] for row in inventories]
+    rows = [json.loads((run / ('rank%d.json' % rank)).read_text()) for rank in range(2 * ppn)]
+    for row in rows:
+        rank = row['rank']
+        if row['hostname'] != hostname[rank // ppn]:
+            raise RuntimeError('实际rank放置不符')
+        pid = json.loads((run / ('pid_rank%d.json' % rank)).read_text())
+        if pid['nonce'] != config['nonce'] or not pid['cpu_affinity']:
+            raise RuntimeError('rank身份/绑核证据缺失')
+        if not set(pid['cpu_affinity']) <= set(inventories[rank // ppn]['allowed_cpus']):
+            raise RuntimeError('rank绑核不在可用范围')
+        for phase in ('after_init', 'after_first', 'after_steady'):
+            check_maps((run / ('rank%d_%s.maps' % (rank, phase))).read_text(), install)
+    for host_index in range(2):
+        affinities = [set(json.loads((run / ('pid_rank%d.json' % rank)).read_text())['cpu_affinity'])
+                      for rank in range(host_index * ppn, (host_index + 1) * ppn)]
+        if any(left & right for i, left in enumerate(affinities) for right in affinities[i + 1:]):
+            raise RuntimeError('rank CPU绑定重叠，不接受同规模公平比较')
+    text = (run / 'launcher.log').read_text(errors='replace')
+    completed = [int(value) for value in re.findall(r'^A89_RANK_PASS rank=(\d+)\b', text, re.M)]
+    if sorted(completed) != list(range(2 * ppn)):
+        raise RuntimeError('rank退出标记缺失')
+    if re.search(r'UCX\s+(ERROR|FATAL)|A89_DATA_OR_RUNTIME_ERROR|Caught signal', text):
+        raise RuntimeError('日志包含终态错误')
+    checked = {'metrics': summarize(rows, ppn)}
+    if probe:
+        checked['resources'] = resource_counts(run, range(2 * ppn),
+                                              2 if mode == 'rc' else 1,
+                                              str(install), config['budget']['tx_depth'],
+                                              {row['rank']: row['pid'] for row in rows})
+    return checked
 
 
 def trial(case, out, base_commands, inventories, mode, ppn, repeat, probe, timeout):
@@ -296,34 +317,8 @@ def trial(case, out, base_commands, inventories, mode, ppn, repeat, probe, timeo
     try:
         result.update(run_logged(command, launch_env, run / 'launcher.log', timeout + 20))
         fetch_trial(run, range(ppn, 2 * ppn), probe, hostname[1])
-        rows = [json.loads((run / ('rank%d.json' % rank)).read_text()) for rank in range(2 * ppn)]
-        for row in rows:
-            rank = row['rank']
-            if row['hostname'] != hostname[rank // ppn]:
-                raise RuntimeError('实际rank放置不符')
-            pid = json.loads((run / ('pid_rank%d.json' % rank)).read_text())
-            if pid['nonce'] != nonce or not pid['cpu_affinity']:
-                raise RuntimeError('rank身份/绑核证据缺失')
-            if not set(pid['cpu_affinity']) <= set(inventories[rank // ppn]['allowed_cpus']):
-                raise RuntimeError('rank绑核不在可用范围')
-            for phase in ('after_init', 'after_first', 'after_steady'):
-                check_maps((run / ('rank%d_%s.maps' % (rank, phase))).read_text(), install)
-        for host_index in range(2):
-            affinities = [set(json.loads((run / ('pid_rank%d.json' % rank)).read_text())['cpu_affinity'])
-                          for rank in range(host_index * ppn, (host_index + 1) * ppn)]
-            if any(left & right for i, left in enumerate(affinities) for right in affinities[i + 1:]):
-                raise RuntimeError('rank CPU绑定重叠，不接受同规模公平比较')
-        text = (run / 'launcher.log').read_text(errors='replace')
-        if len(re.findall(r'^A89_RANK_PASS rank=', text, re.M)) != 2 * ppn:
-            raise RuntimeError('rank退出标记缺失')
-        if re.search(r'UCX\s+(ERROR|FATAL)|A89_DATA_OR_RUNTIME_ERROR|Caught signal', text):
-            raise RuntimeError('日志包含终态错误')
-        result['metrics'] = summarize(rows, ppn)
-        if probe:
-            result['resources'] = resource_counts(run, range(2 * ppn),
-                                                  2 if mode == 'rc' else 1,
-                                                  str(install), config_budget['tx_depth'],
-                                                  {row['rank']: row['pid'] for row in rows})
+        result.update(validate_trial_artifacts(run, config, ppn, inventories,
+                                               install, mode, probe))
         result['passed'] = True
     except BaseException as exc:
         failure = exc
@@ -398,6 +393,9 @@ def render_summary(out, report):
                 group['ppn'], mode, m['init_max_ms']['median'],
                 m['first_all_peers_max_ms']['median'], e['median'], e['minimum'], e['maximum'],
                 m['burst1024_payload_MBps']['median'], row['resource_memory_mib']['steady_rss_sum_mib']))
+    if 'history' in report:
+        lines.extend(['', '历史来源：`' + report['history']['source_report'] +
+                      '`。A8及PPN96以内属于原轮次，续跑更高规模属于新轮次；原始失败记录保留，不混合重算中位数。'])
     lines.extend(['', 'A9仅RM（无同规模RC基线）：', ''])
     for row in report.get('a9_levels', []):
         metrics = row['timings']
@@ -444,7 +442,7 @@ def main():
         raise RuntimeError('本包固定已测CASE；不要用未验证的库替代')
     out = Path(tempfile.mkdtemp(prefix='a89_', dir=str(case)))
     print('A89_DIR=' + str(out), flush=True)
-    report = {'toolkit': toolkit, 'toolkit_tree_base': '10a4e47e7706432351a872e6307c1c694834d3ff',
+    report = {'toolkit': toolkit, 'toolkit_tree_base': '9c10557c3665948dc0297db94bd52eaf2efd4456',
               'product_commit': PRODUCT_COMMIT, 'module_sha256': PRODUCT_MODULE,
               'trials': [], 'comparisons': [], 'a8_functional': False,
               'a9_functional': False, 'full_acceptance': False,

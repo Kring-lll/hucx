@@ -19,7 +19,7 @@ import tempfile
 import zipfile
 
 case = pathlib.Path('/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz')
-if '--plan' in sys.argv:
+if '--plan' in sys.argv or '--help' in sys.argv:
     target = pathlib.Path(tempfile.mkdtemp(prefix='hucx_a89_plan_'))
 else:
     if not case.is_dir():
@@ -31,7 +31,10 @@ with zipfile.ZipFile(sys.argv[0]) as archive:
             raise SystemExit('工具包路径越界')
     archive.extractall(target)
 sys.path.insert(0, str(target / 'a89'))
-runpy.run_path(str(target / 'a89/run_scale.py'), run_name='__main__')
+entry = 'recover_a9.py' if '--recover-a9' in sys.argv else 'run_scale.py'
+if '--recover-a9' in sys.argv:
+    sys.argv.remove('--recover-a9')
+runpy.run_path(str(target / 'a89' / entry), run_name='__main__')
 '''
 
 
@@ -41,7 +44,7 @@ def manifest():
              '__pycache__' not in path.parts and path.name != 'toolkit_manifest.json'}
     regressions = {name: hashlib.sha256((REGRESSION / name).read_bytes()).hexdigest()
                    for name in REGRESSION_FILES}
-    value = {'date': '2026-10-27', 'development_base': '10a4e47e7706432351a872e6307c1c694834d3ff',
+    value = {'date': '2026-10-27', 'development_base': '9c10557c3665948dc0297db94bd52eaf2efd4456',
              'product_commit': '2a8e3b771211e5af491c8ca483ebcc01a03c2f01',
              'node_acceptance': 'PENDING', 'files': files, 'regression_files': regressions}
     (ROOT / 'toolkit_manifest.json').write_text(json.dumps(value, indent=2) + '\n')
