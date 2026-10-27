@@ -24,7 +24,7 @@ from analysis import BENCHMARKS, compare, inspect_jettys, inspect_ranks, parse_o
 
 OSU = LAB / 'osu_build_7.5.2_20261020_AOlmOB/install/libexec/osu-micro-benchmarks/mpi'
 PML = 'ucx'
-COLL = 'tuned,basic,self'
+COLL = 'tuned,basic,libnbc,self'
 
 
 def validate_package():
@@ -70,6 +70,60 @@ def mpi_dependency(text):
     return Path(match[1]).resolve()
 
 
+def check_collective_components(text):
+    available = set(re.findall(r'^mca:coll:([^:]+):(?:version|param):', text, re.M))
+    required = set(COLL.split(','))
+    missing = sorted(required - available)
+    if missing:
+        raise ValueError('required MPI collective components unavailable: ' + ','.join(missing))
+    return sorted(available)
+
+
+def capture_cli(command, env, out, name, timeout=25):
+    """Persist the actual singleton help/component environment and exit status."""
+    record = {'command': command, 'environment': {k: v for k, v in env.items()
+              if k.startswith(('LD_', 'OPAL_', 'OMPI_', 'UCX_')) or k == 'PATH'}}
+    path = out / (name + '.json')
+    base.write_json(path, record)
+    try:
+        result = subprocess.run(command, env=env, text=True, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        def decode(value):
+            return value.decode(errors='replace') if isinstance(value, bytes) else value or ''
+        (out / (name + '.txt')).write_text(decode(exc.stdout) + decode(exc.stderr))
+        record.update(timed_out=True, timeout_seconds=timeout)
+        base.write_json(path, record)
+        raise RuntimeError('CLI timeout; details=' + str(path)) from exc
+    text = result.stdout + result.stderr
+    (out / (name + '.txt')).write_text(text)
+    record.update(exit=result.returncode, stdout_stderr_sha256=hashlib.sha256(text.encode()).hexdigest())
+    base.write_json(path, record)
+    return result
+
+
+def collective_preflight(out, info, env, runtime):
+    """Check mandatory blocking and nonblocking modules on both MPI installs."""
+    command = [str(info), '--parsable', '--param', 'coll', 'all']
+    local = capture_cli(command, env, out, 'hmpi_coll_components_node89')
+    if local.returncode:
+        raise ValueError('local MPI collective component query failed')
+    local_text = local.stdout + local.stderr
+    local_available = check_collective_components(local_text)
+    code = ('import os,subprocess,json\ne=dict(os.environ);e.update(json.loads(' + repr(json.dumps(runtime)) + '))\n'
+            'p=subprocess.run(' + repr(command) + ',env=e,text=True,capture_output=True,timeout=25)\n'
+            'print(json.dumps({"exit":p.returncode,"stdout":p.stdout,"stderr":p.stderr}))\n')
+    peer = json.loads(base.ssh('python3 -c "$1"\n', code, timeout=35))
+    peer_text = peer['stdout'] + peer['stderr']
+    (out / 'hmpi_coll_components_node97.txt').write_text(peer_text)
+    base.write_json(out / 'hmpi_coll_components_node97.json',
+                    {'command': command, 'environment': runtime, **peer})
+    if peer['exit']:
+        raise ValueError('peer MPI collective component query failed')
+    peer_available = check_collective_components(peer_text)
+    return {'required': COLL.split(','), 'node89_available': local_available,
+            'node97_available': peer_available}
+
+
 def preflight(out, commands):
     """No two-node benchmark here: module/CLI/loader/CPU checks and a probe build."""
     evidence = {'candidate': base.module_check(DEFAULT_CASE / 'install', PRODUCT_MODULE),
@@ -86,6 +140,9 @@ def preflight(out, commands):
     # Keep identical runtime dependency resolution on the peer without a shell profile assumption.
     runtime = {key: value for key, value in help_env.items()
                if key.startswith(('LD_', 'OPAL_', 'OMPI_')) or key == 'PATH'}
+    mpi_launcher = next(Path(v) for v in commands['rm'][0] if Path(v).name in ('mpirun', 'mpiexec'))
+    evidence['collective_components'] = collective_preflight(
+        out, mpi_launcher.with_name('ompi_info'), help_env, runtime)
     for benchmark, (relative, _, _) in BENCHMARKS.items():
         path = OSU / relative
         if not path.is_file() or not os.access(path, os.X_OK):
@@ -95,12 +152,12 @@ def preflight(out, commands):
         if peer_sha != record['sha256']:
             raise ValueError('OSU binary differs between nodes: ' + benchmark)
         for option, name in (('-h', 'help'), ('-v', 'version')):
-            result = subprocess.run([str(path), option], env=help_env, text=True,
-                                    capture_output=True, timeout=25)
+            result = capture_cli([str(path), option], help_env, out, benchmark + '_' + name)
             text = result.stdout + result.stderr
             (out / (benchmark + '_' + name + '.txt')).write_text(text)
             if result.returncode:
-                raise ValueError('OSU ' + name + ' failed: ' + benchmark)
+                raise ValueError('OSU ' + name + ' failed: ' + benchmark +
+                                 ' EXIT=' + str(result.returncode) + ' LOG=' + str(out / (benchmark + '_' + name + '.txt')))
             record[name + '_sha256'] = hashlib.sha256(text.encode()).hexdigest()
             if option == '-h':
                 required = ['--message-size', '--iterations', '--warmup', '--validation']
@@ -242,7 +299,7 @@ def main():
             args.repeats < 3 or args.iterations < 1000 or args.warmup < 100 or args.timeout < 60):
         parser.error('PPN须递增唯一且1..20，repeats>=3，iterations>=1000，warmup>=100，timeout>=60')
     manifest = validate_package()
-    plan = {'source_base': '1a3996a3f7ad260b8619972fae6a4446a6ad8631',
+    plan = {'source_base': '944d0a4e2d4d2291006b760cf03827f000f426dd',
             'product_commit': PRODUCT_COMMIT, 'module_sha256': PRODUCT_MODULE,
             'osu_version': '7.5.2', 'benchmarks': args.benchmarks, 'message_bytes': 8,
             'ppn': args.ppn, 'repeats': args.repeats, 'iterations': args.iterations,

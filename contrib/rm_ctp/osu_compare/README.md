@@ -21,16 +21,16 @@ A9已由用户退出，暂不恢复。本包产品src仍是节点已测2a8e，�
 4. RSS从没有URMA观察器的正式计时轮取值：各进程进入MPI_Finalize前RSS之和，再取多轮中位数，单位MiB。各rank采样不是同步瞬时总量；含MPI/UCX/分配器等，不是Jetty或设备独占内存。
 5. 小型`identity.c` PMPI取证库只包装MPI_Init/Init_thread/Finalize，在OSU计时循环外保存真实应用PID、maps、RSS及退出状态；没有SEND/RECV/collective/MPI_Wtime包装，不替代OSU性能计时。
 6. multi_lat源码每轮还有MPI_Barrier，故不能预测其Jetty等于“一对进程一条连接”；不复用原自编A8的2/16/32/40计数或2.84/2.57等交换耗时。
-7. 固定PML=ucx、集合组件tuned/basic/self，关闭tuned动态规则，保持相同HMPI默认固定规则。没有猜测数值型算法ID；保存ompi_info参数证据。结果代表此配置，不代表所有集合算法。
+7. 固定PML=ucx、集合组件tuned/basic/libnbc/self，关闭tuned动态规则，保持相同HMPI默认固定规则。没有猜测数值型算法ID；保存ompi_info参数证据。结果代表此配置，不代表所有集合算法。
 
 ## 使用方式
 
-上传`hucx_osu_compare_20261027.zip`到实验根`upload`。
+上传`hucx_osu_compare_collfix_20261027.zip`到实验根`upload`。
 
 默认只预检，不启动双节点性能任务：
 
 ```bash
-python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/upload/hucx_osu_compare_20261027.zip --preflight-only
+python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/upload/hucx_osu_compare_collfix_20261027.zip --preflight-only
 ```
 
 预检会核对双端候选库/OSU二进制、完整`-h/-v`和参数、HMPI依赖/CPU许可/观察器，
@@ -40,7 +40,7 @@ python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_2026101
 在两节点无其他通信/重负载任务的窗口正式执行：
 
 ```bash
-python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/upload/hucx_osu_compare_20261027.zip --run
+python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/upload/hucx_osu_compare_collfix_20261027.zip --run
 ```
 
 可先追加`--ppn 1`只跑两节点各1进程；其结果仅该规模，不冒充完整PPN20矩阵。
@@ -60,10 +60,19 @@ python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_2026101
 
 ## 本地检查与限制
 
-OSU专用13个CPU检查通过：官方格式解析/失败拒绝、CSV/Markdown、真实C身份探针动态加载、
+OSU专用16个CPU检查通过：官方格式解析/失败拒绝、CSV/Markdown、真实C身份探针动态加载、
 PMPI两个启动API、真实PID/maps/RSS、12种用例×模式×阶段的文件流程、正确资源schema及nonce清理。
 其中使用显式CPU MPI/API和Jetty事件替身，不是真实MPI/UCX/URMA硬件或性能证明。
 既有A89 34项检查中33通过、1因Work环境PID虚拟化跳过；C测试主体PPN1/4文件API与故意损坏数据检查仍通过。
 身份探针真实HMPI编译、PowerShell执行与完整矩阵仍待用户节点/新电脑输出，不能承诺一次通过。
 
 官方来源与核对结论见[SOURCES.md](SOURCES.md)。GitHub仅过程提交，待实际OSU结果审阅后再按方向分支约定整理AtomGit交付。
+
+## 2026-10-27 首次预检组件遗漏修复
+
+节点`osu_compare_1u7mztv9`中，OSU在MPI_Init阶段报告coll初始化/销毁失败，日志明确提示basic、libnbc、self。
+原工具白名单`tuned,basic,self`漏掉libnbc；仅测试阻塞集合并不表示可以缺少通信器初始化所需的非阻塞集合支持。
+当前统一补成`tuned,basic,libnbc,self`，用于本地帮助预检和正式RM/RC测试，其他测试口径不变。
+在OSU-h前先通过两端ompi_info可解析输出检查四个必需组件；完整组件输出、帮助/版本的实际环境、命令和退出码另存JSON/TXT。
+本地新增3项检查拒绝旧缺失配置并覆盖双端检查和失败诊断留档；CPU共16项通过。真实HMPI预检和正式矩阵仍待节点，不能从CPU解析测试推导硬件通过。
+此次未改产品库、OSU二进制或身份探针，没有开始A9；初次失败记录保留。

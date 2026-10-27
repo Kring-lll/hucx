@@ -39,7 +39,7 @@ class CompareTests(unittest.TestCase):
         result = runner.fixed_mca(command)
         self.assertEqual(result.count('coll'), 1)
         self.assertEqual(result.count('pml'), 1)
-        self.assertIn('tuned,basic,self', result)
+        self.assertIn('tuned,basic,libnbc,self', result)
         self.assertIn('self,tcp', result)
         self.assertIn('ppr:20:node', result)
         self.assertNotIn('^hcoll,ucc', result)

@@ -35,3 +35,13 @@ alltoall计时仅包围MPI_Alltoall，之后统计各rank时间，full输出平�
 - 不改变RM/RC/UM传输逻辑，不复制brpc协议，不增加C重传，不在本包重启A9或开启B的大消息路径。
 
 正式比较控制HMPI集合组件配置；结果只适用于该配置。所有失败、负收益和资源观察开销均保留说明。
+
+## 集合组件依赖修复的源码依据
+
+上游Open MPI v4.1.6（节点HMPI是派生实现，因此上游源码不是节点二进制证明）：
+<https://github.com/open-mpi/ompi/blob/v4.1.6/ompi/mca/coll/base/coll_base_comm_select.c>
+选择流程对iallgather/iallreduce/ialltoall等非阻塞操作也有CHECK_NULL检查，不能只留下阻塞集合组件。
+<https://github.com/open-mpi/ompi/blob/v4.1.6/opal/runtime/opal_info_support.c>
+可解析输出使用mca:coll:<component>:version或param前缀；新预检据此检查必需组件，未自行猜算法编号。
+原工具遗漏libnbc与用户节点日志相符；新配置仍须真实节点-h和性能任务验证。
+本次补丁起点为用户实际提交944d0a4e2d4d2291006b760cf03827f000f426dd，保留前文原工具起点及产品基线。

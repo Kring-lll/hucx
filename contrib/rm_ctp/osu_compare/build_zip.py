@@ -41,7 +41,7 @@ def main():
              and p.name != 'manifest.json'}
     dependencies = {name: hashlib.sha256((ROOT.parent / 'a89' / name).read_bytes()).hexdigest()
                     for name in DEPENDENCIES}
-    manifest = {'date': '2026-10-27', 'source_base': '1a3996a3f7ad260b8619972fae6a4446a6ad8631',
+    manifest = {'date': '2026-10-27', 'source_base': '944d0a4e2d4d2291006b760cf03827f000f426dd',
                 'product_commit': '2a8e3b771211e5af491c8ca483ebcc01a03c2f01',
                 'node_acceptance': 'PENDING', 'files': files, 'a89_dependencies': dependencies}
     path = ROOT / 'manifest.json'

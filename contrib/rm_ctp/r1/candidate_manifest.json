@@ -272,7 +272,7 @@
     "message_bytes": 8,
     "timing_repeats": 5,
     "node_matrix": "PENDING",
-    "cpu_checks": "13_PASS_WITH_EXPLICIT_MPI_AND_OBSERVER_FIXTURES_NOT_HARDWARE",
+    "cpu_checks": "16_PASS_WITH_EXPLICIT_MPI_AND_OBSERVER_FIXTURES_NOT_HARDWARE",
     "osu_install_inventory": "USER_CONFIRMED_8_EXECUTABLES",
     "help_exit0": [
       "osu_multi_lat",
@@ -280,6 +280,14 @@
     ],
     "actual_full_options": "PREFLIGHT_WILL_VERIFY",
     "a9": "USER_CONFIRMED_EXITED_DEFERRED_NODE_SHARING",
-    "atomgit_delivery": "NOT_YET"
+    "atomgit_delivery": "NOT_YET",
+    "first_node_preflight": {
+      "directory": "r1_shared_2a8e3b771_ps2tIz/osu_compare_1u7mztv9",
+      "failed_step": "osu_multi_lat -h / MPI_Init",
+      "error": "coll whitelist omitted libnbc; log requests basic/libnbc/self",
+      "performance_started": false,
+      "fix": "tuned,basic,libnbc,self plus both-host required component preflight",
+      "node_recheck": "PENDING"
+    }
   }
 }
