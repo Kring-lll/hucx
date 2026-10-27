@@ -22,11 +22,12 @@ import hashlib, io, json, pathlib, re, sys, tarfile
 run = pathlib.Path(sys.argv[1])
 ranks = json.loads(sys.argv[2])
 probe = sys.argv[3] == '1'
+schema = sys.argv[4] if len(sys.argv) > 4 else 'a89'
+phases = ('after_init', 'before_finalize') if schema == 'osu' else ('after_init', 'after_first', 'after_steady')
 names = []
 for rank in ranks:
     names += ['rank%d.json' % rank, 'pid_rank%d.json' % rank]
-    names += ['rank%d_%s.maps' % (rank, phase) for phase in
-              ('after_init', 'after_first', 'after_steady')]
+    names += ['rank%d_%s.maps' % (rank, phase) for phase in phases]
 if probe:
     names += [p.name for p in run.glob('rank*_pid*.jsonl')
               if re.fullmatch(r'rank(\d+)_pid\d+\.jsonl', p.name)
@@ -52,16 +53,18 @@ with tarfile.open(fileobj=sys.stdout.buffer, mode='w|gz') as archive:
 '''
 
 
-def required_names(ranks):
+def required_names(ranks, schema='a89'):
+    if schema not in ('a89', 'osu'):
+        raise ValueError('unknown artifact schema')
+    phases = ('after_init', 'before_finalize') if schema == 'osu' else ('after_init', 'after_first', 'after_steady')
     names = set()
     for rank in ranks:
         names.update(('rank%d.json' % rank, 'pid_rank%d.json' % rank))
-        names.update('rank%d_%s.maps' % (rank, phase) for phase in
-                     ('after_init', 'after_first', 'after_steady'))
+        names.update('rank%d_%s.maps' % (rank, phase) for phase in phases)
     return names
 
 
-def unpack_checked(archive_path, run, ranks, probe):
+def unpack_checked(archive_path, run, ranks, probe, schema='a89'):
     """Validate the entire archive before writing any rank artifact."""
     run = Path(run)
     ranks = set(ranks)
@@ -76,7 +79,7 @@ def unpack_checked(archive_path, run, ranks, probe):
         if len(names) != len(set(names)):
             raise ValueError('duplicate artifact member')
         manifest = json.load(archive.extractfile(members[0]))
-        expected = required_names(ranks)
+        expected = required_names(ranks, schema)
         observed = set()
         for name in manifest:
             if '/' in name or '\\' in name or name in ('', '.', '..'):
@@ -110,11 +113,12 @@ def unpack_checked(archive_path, run, ranks, probe):
     return manifest
 
 
-def fetch(run, ranks, probe, peer='root@9.88.43.97', destination=None):
+def fetch(run, ranks, probe, peer='root@9.88.43.97', destination=None, schema='a89'):
     """Fetch one immutable post-exit set, retaining archive/log/receipt locally."""
     source = Path(run)
     target = Path(destination) if destination is not None else source
     ranks = list(ranks)
+    required_names(ranks, schema)
     receipt_dir = target / 'artifact_fetch'
     receipt_dir.mkdir(exist_ok=True)
     token = uuid.uuid4().hex
@@ -122,7 +126,7 @@ def fetch(run, ranks, probe, peer='root@9.88.43.97', destination=None):
     stderr = receipt_dir / (token + '.stderr.log')
     command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', peer,
                shlex.join(['python3', '-c', REMOTE, str(source), json.dumps(ranks),
-                           '1' if probe else '0'])]
+                           '1' if probe else '0', schema])]
     try:
         with partial.open('wb') as stream, stderr.open('wb') as errors:
             result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=stream,
@@ -135,9 +139,9 @@ def fetch(run, ranks, probe, peer='root@9.88.43.97', destination=None):
                            (partial, stderr)) from exc
     archive_path = partial.with_suffix('.tar.gz')
     partial.replace(archive_path)
-    manifest = unpack_checked(archive_path, target, ranks, probe)
+    manifest = unpack_checked(archive_path, target, ranks, probe, schema)
     receipt = {'method': 'one_ssh_tar_gzip_stream', 'source_run': str(source),
-               'peer': peer, 'ranks': ranks, 'archive': str(archive_path),
+               'peer': peer, 'ranks': ranks, 'schema': schema, 'archive': str(archive_path),
                'archive_sha256': hashlib.sha256(archive_path.read_bytes()).hexdigest(),
                'files': manifest, 'validated': True}
     (receipt_dir / (token + '.json')).write_text(json.dumps(receipt, indent=2) + '\n')

@@ -254,5 +254,32 @@
     },
     "artifact_stream_fix": "CPU_CHECKED_NODE_RECHECK_PENDING",
     "recovery_scope": "Revalidate historical matrix; fetch PPN96 artifacts and gate all ranks; continue only RM128/160/192, retaining original failures and separate cohorts"
+  },
+  "osu_standard_comparison": {
+    "path": "contrib/rm_ctp/osu_compare",
+    "product_unchanged": true,
+    "source_base": "1a3996a3f7ad260b8619972fae6a4446a6ad8631",
+    "benchmarks": [
+      "osu_multi_lat",
+      "osu_alltoall"
+    ],
+    "ppn": [
+      1,
+      8,
+      16,
+      20
+    ],
+    "message_bytes": 8,
+    "timing_repeats": 5,
+    "node_matrix": "PENDING",
+    "cpu_checks": "13_PASS_WITH_EXPLICIT_MPI_AND_OBSERVER_FIXTURES_NOT_HARDWARE",
+    "osu_install_inventory": "USER_CONFIRMED_8_EXECUTABLES",
+    "help_exit0": [
+      "osu_multi_lat",
+      "osu_alltoall"
+    ],
+    "actual_full_options": "PREFLIGHT_WILL_VERIFY",
+    "a9": "USER_CONFIRMED_EXITED_DEFERRED_NODE_SHARING",
+    "atomgit_delivery": "NOT_YET"
   }
 }

@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-27",
+  "source_base": "1a3996a3f7ad260b8619972fae6a4446a6ad8631",
+  "product_commit": "2a8e3b771211e5af491c8ca483ebcc01a03c2f01",
+  "node_acceptance": "PENDING",
+  "files": {
+    ".gitignore": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793",
+    "README.md": "725c4a7ca0bcb2783337166c7fc6732e291c9c840f2f1991c04a33e2d84901f7",
+    "SOURCES.md": "f04de509708ab09d16c07e1040c72f31c45b27a023cff8a3bab86c92d18410d3",
+    "analysis.py": "86112d51aa211121152a082bd07c48ae7f18347bddafd7a422af8484a2b91b95",
+    "build_zip.py": "279529f4450750545e4b49bec926cda2fc3a1c7c296cf10a5cec4d022304c4fa",
+    "identity.c": "f550eee4a2b644d8aa2d36ab502b73861d9104608c949e89c8dc91e0a9f63891",
+    "osu_rank.py": "1734a06ec4a5cd3715290e092716bf1f9c3910511bec9f6a19fb013b7fb9e5a9",
+    "run.py": "7f7e9f63256f9a70238a533aa0a8b52b143598a9fcdb222b30a85969dfd683ab",
+    "tests/mpi.h": "e484c0a68c1d86f3bf2bd43f358f17bb683e1739818ad992d840025902eb4fe7",
+    "tests/test_cleanup.py": "ae004fe93f35e419929e048f82eb5ce07430ddc290b66884f0df17629459b9e7",
+    "tests/test_compare.py": "d8e7b4053c8156a1031f36a639eb548bd3d77b8e685059653309a81b7b7c42b3",
+    "tests/test_identity.py": "9399901e207402924fa9e32c2ce38dbd17513be8d0cc08b5aef55c680151be42",
+    "tests/test_transfer.py": "ebc680121864ddb15c5ac5a940e31a8373d8588297b3d065ec18376b79edc436"
+  },
+  "a89_dependencies": {
+    "artifacts.py": "fd62b3b485b6a40d7f121bace5615822ce50121fbdfc38bf7da1fc9e7c19e3ef",
+    "support.py": "e96951d9180e4e8867135ae9d578b96cf5b89de4c609ef423b7a9eb37cbe5157",
+    "rank_exec.py": "3ed8bc0811b3c4f57de553dff5b9dd5ac1aa5ba3290c59c87f97ec4c39b85dc0",
+    "run_scale.py": "73413602b7a63af46da8dd867e729fecbaf236ab6cdf79736c5577e232ef832b",
+    "resume.py": "ee0819cac4367c5be3f0c9e05c404de1348c8f518d10dc34579442460c51abb2"
+  }
+}
