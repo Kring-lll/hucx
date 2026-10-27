@@ -51,11 +51,11 @@ A9的运行门禁是A8完整正常功能与资源安全门禁通过；此时性�
 
 ## 节点运行
 
-将交付的`hucx_a89_20261027.zip`手动上传实验根`upload`。zip是Python zipapp，不是源码tar包；
+将交付的`hucx_a89_envfix_20261027.zip`手动上传实验根`upload`。zip是Python zipapp，不是源码tar包；
 入口核验内含工具哈希，解压到固定已测CASE下新的toolkit目录。**不用重编译传输库，不覆盖旧版本。**
 
 ```bash
-python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/upload/hucx_a89_20261027.zip
+python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/upload/hucx_a89_envfix_20261027.zip
 ```
 
 默认全部回归+A8+A9。仅看预算可追加`--plan`（不SSH不启动MPI）；只运行A8可追加`--phase a8`。
@@ -85,3 +85,14 @@ python3 contrib/rm_ctp/a89/tests/cpu_program.py
 真实HMPI/URMA编译、硬件资源、当前固件行为和完整运行器端到端仍须节点验证。
 
 B下一步参见[B_NEXT.md](B_NEXT.md)，本包没有提前完成分片。
+
+## 2026-10-27 启动命令兼容修复
+
+首次节点运行a89_fethe1ma：旧8B及四组既有回归通过；A8首次任务在解析保存命令时
+遇到应用侧`/usr/bin/env`而停止，规模MPI任务尚未启动。不是传输层数据失败。
+修复把MPI选项与应用env分开，保留应用赋值写入rank配置；本轮受控的mode/FC/队列等
+参数仍由规模配置覆盖。MCA值中的env不会被误判为应用边界。
+支持plain env及可选`--`后的NAME=value；清空环境/取消变量/执行shell等未实现动作仍明确拒绝，
+不会静默忽略。新增5项CPU用例覆盖两侧env、优先级、MCA值边界和不支持动作。
+预检提前到旧8B/四组回归前，失败保留来源JSON哈希和停止位置。传输src未改。
+新zip用独立文件名，不覆盖旧包；节点仍需实际重跑，A8/A9保持未验收。

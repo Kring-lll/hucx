@@ -65,11 +65,13 @@ def saved_spec(path, install):
         raise ValueError('saved validated OSU command is required')
     if str(install) not in shlex.join(command) + str(environment):
         raise ValueError('saved command does not pin the expected install')
+    _, _, application_env = launcher_layout(command)
+    environment.update(application_env)
     environment['UCX_MODULE_DIR'] = str(install / 'lib/ucx')
     return command, environment
 
 
-def launcher(command, ppn, hosts, wrapper, config):
+def launcher_layout(command):
     """Retain the pinned MPI binary/prefix/MCA. Replace only placement/app/env.
 
     Fail closed for unrecognized options instead of silently dropping MCA args.
@@ -81,6 +83,7 @@ def launcher(command, ppn, hosts, wrapper, config):
     application = next(i for i, x in enumerate(command) if Path(x).name == 'osu_latency')
     source = command[position + 1:application]
     retained = []
+    application_env = {}
     index = 0
     placement = {'-n', '-np', '--np', '--n', '--host', '-H', '--map-by', '-map-by',
                  '--rank-by', '--bind-to', '--hostfile', '-hostfile', '--machinefile', '-x'}
@@ -89,6 +92,18 @@ def launcher(command, ppn, hosts, wrapper, config):
              '--oversubscribe', '--nooversubscribe', '--display-map'}
     while index < len(source):
         item = source[index]
+        if Path(item).name == 'env':
+            # env starts the application, not another mpirun option. Preserve
+            # its assignments in the rank configuration, outside MPI argv.
+            assignments = source[index + 1:]
+            if assignments and assignments[0] == '--':
+                assignments = assignments[1:]
+            for assignment in assignments:
+                key, separator, value = assignment.partition('=')
+                if not separator or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key):
+                    raise ValueError('unsupported application env wrapper argument: ' + assignment)
+                application_env[key] = value
+            break
         if item in ('--mca', '-mca', '--gmca', '-gmca'):
             if index + 2 >= len(source):
                 raise ValueError('incomplete MCA option')
@@ -99,6 +114,8 @@ def launcher(command, ppn, hosts, wrapper, config):
                 raise ValueError('incomplete placement/export option')
             index += 2
         elif item in one_value:
+            if index + 1 >= len(source):
+                raise ValueError('incomplete launcher option: ' + item)
             retained.extend(source[index:index + 2])
             index += 2
         elif item in flags:
@@ -109,7 +126,12 @@ def launcher(command, ppn, hosts, wrapper, config):
             index += 1
         else:
             raise ValueError('unrecognized saved launcher option: ' + item)
-    return [command[position]] + retained + [
+    return command[position], retained, application_env
+
+
+def launcher(command, ppn, hosts, wrapper, config):
+    binary, retained, _ = launcher_layout(command)
+    return [binary] + retained + [
         '-np', str(2 * ppn), '--host', '%s:%d,%s:%d' % (hosts[0], ppn, hosts[1], ppn),
         '--map-by', 'ppr:%d:node' % ppn, '--rank-by', 'slot', '--bind-to', 'core',
         '--nooversubscribe', '/usr/bin/python3', str(wrapper), str(config)]

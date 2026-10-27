@@ -434,7 +434,7 @@ def main():
         raise RuntimeError('本包固定已测CASE；不要用未验证的库替代')
     out = Path(tempfile.mkdtemp(prefix='a89_', dir=str(case)))
     print('A89_DIR=' + str(out), flush=True)
-    report = {'toolkit': toolkit, 'toolkit_tree_base': 'f7946817f0855576a104e74d040c2a140db6d07e',
+    report = {'toolkit': toolkit, 'toolkit_tree_base': '751c3cc801192ee2403bbd93e8ac026bf38c7945',
               'product_commit': PRODUCT_COMMIT, 'module_sha256': PRODUCT_MODULE,
               'trials': [], 'comparisons': [], 'a8_functional': False,
               'a9_functional': False, 'full_acceptance': False,
@@ -464,6 +464,18 @@ def main():
         print('两端可用物理核=' + str([row['available_cores'] for row in report['inventory']]) +
               '；目标PPN=' + str(min(capacity, args.target_ppn)), flush=True)
         baseline = LAB / 'osu_minimal8_ff_14ns8'
+        # Validate every saved command before spending time on regressions.
+        # This includes an application-side /usr/bin/env after mpirun options.
+        commands = {kind: saved_spec(baseline / (kind + '_run.json'), case / 'install')
+                    for kind in ('rm', 'rc')}
+        previews = {kind: launcher(command, 1, HOSTS, out / 'rank_exec.py',
+                                    out / 'preview_config.json')
+                    for kind, (command, _) in commands.items()}
+        write_json(out / 'launcher_preflight.json', {
+            'saved_record_sha256': {kind: digest(baseline / (kind + '_run.json'))
+                                     for kind in ('rm', 'rc')},
+            'preview_argv_not_executed': previews})
+        print('启动命令解析门禁=通过（保留MPI/MCA，应用env写入rank配置）', flush=True)
         report['old8b_control'] = old8b_control(out, baseline)
         save()
         if not args.skip_regressions:
@@ -471,8 +483,6 @@ def main():
             save()
         else:
             report['regressions_skipped'] = True
-        commands = {kind: saved_spec(baseline / (kind + '_run.json'), case / 'install')
-                    for kind in ('rm', 'rc')}
         mpi = next(Path(value) for value in commands['rm'][0]
                    if Path(value).name in ('mpirun', 'mpiexec'))
         binary = out / 'mpi_scale'

@@ -69,6 +69,73 @@ class PlanningTests(unittest.TestCase):
             self.assertEqual(env['LD_LIBRARY_PATH'], '/new/lib')
             self.assertIn('LD_LIBRARY_PATH=/new/lib', command)
 
+    def test_application_env_after_mpirun_is_not_an_mpi_option(self):
+        for env_binary in ('env', '/usr/bin/env'):
+            with self.subTest(env_binary=env_binary):
+                source = ['/mpi/mpirun', '--mca', 'pml', 'ucx', '-np', '2',
+                          '--host', 'old:1,peer:1', env_binary,
+                          'UCX_TLS=rm_urma,um_urma:aux,self',
+                          'LD_LIBRARY_PATH=/candidate/lib', 'EXTRA_NAME=a b=c',
+                          '/osu/osu_latency', '-c']
+                result = support.launcher(source, 4, ('a', 'b'), '/wrapper', '/config')
+                self.assertIn('a:4,b:4', result)
+                self.assertNotIn(env_binary, result)
+                self.assertNotIn('EXTRA_NAME=a b=c', result)
+                binary, options, values = support.launcher_layout(source)
+                self.assertEqual(binary, '/mpi/mpirun')
+                self.assertEqual(options, ['--mca', 'pml', 'ucx'])
+                self.assertEqual(values['EXTRA_NAME'], 'a b=c')
+
+    def test_application_assignment_overrides_recorded_and_exported_environment(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'saved.json'
+            source = ['timeout', '60', '/usr/bin/env', 'UCX_TLS=prefix',
+                      '/mpi/mpirun', '--mca', 'pml', 'ucx', '-x', 'UCX_TLS=export',
+                      '/usr/bin/env', '--', 'UCX_TLS=rm_urma,um_urma:aux,self',
+                      'PATH=/recorded/bin:/usr/bin',
+                      'LD_LIBRARY_PATH=' + str(support.MINIMAL / 'lib'),
+                      '/osu/osu_latency', '-c']
+            path.write_text(json.dumps({'command': source,
+                                        'environment': {'UCX_TLS': 'recorded'}}))
+            command, saved = support.saved_spec(path, Path('/new'))
+            self.assertEqual(saved['UCX_TLS'], 'rm_urma,um_urma:aux,self')
+            self.assertEqual(saved['PATH'], '/recorded/bin:/usr/bin')
+            self.assertEqual(saved['LD_LIBRARY_PATH'], '/new/lib')
+            for mode in ('iface', 'old_rm', 'rc'):
+                effective = support.environment(saved, mode, Path('/new'), support.budget(20))
+                self.assertEqual(effective['PATH'], '/recorded/bin:/usr/bin')
+                self.assertEqual(effective['UCX_LOG_LEVEL'], 'warn')
+                self.assertEqual(effective['UCX_' + ('RC' if mode == 'rc' else 'RM') +
+                                           '_URMA_TX_DEPTH'], '64')
+            self.assertIn('/usr/bin/python3', support.launcher(command, 20, ('a', 'b'), '/w', '/c'))
+
+    def test_unsafe_or_unimplemented_env_actions_are_not_silently_dropped(self):
+        for tail in (['-i', 'UCX_TLS=x'], ['-u', 'PATH'], ['--chdir=/elsewhere'],
+                     ['/bin/sh', '-c', 'exec x']):
+            source = ['/mpi/mpirun', '/usr/bin/env'] + tail + ['/osu/osu_latency', '-c']
+            with self.subTest(tail=tail), self.assertRaisesRegex(ValueError, 'env wrapper argument'):
+                support.launcher(source, 1, ('a', 'b'), '/w', '/c')
+
+    def test_env_as_mca_value_remains_a_value(self):
+        source = ['/mpi/mpirun', '--mca', 'custom_agent', '/usr/bin/env',
+                  '/usr/bin/env', 'UCX_TLS=x', '/osu/osu_latency', '-c']
+        binary, options, values = support.launcher_layout(source)
+        self.assertEqual(options, ['--mca', 'custom_agent', '/usr/bin/env'])
+        self.assertEqual(values, {'UCX_TLS': 'x'})
+
+    def test_app_boundary_replay_is_accepted_before_preflight(self):
+        # Replay precisely the grammar that failed on node: mpirun options,
+        # application-side env assignments, then the saved OSU executable.
+        source = ['/mpi/mpirun', '--prefix', '/mpi', '--mca', 'pml', 'ucx',
+                  '--host', '9.88.43.89:1,9.88.43.97:1',
+                  '--map-by', 'ppr:1:node', '--bind-to', 'core', '-np', '2',
+                  '/usr/bin/env', 'UCX_NET_DEVICES=udmac0d1e2:1',
+                  'UCX_PROTO_ENABLE=n', '/osu/osu_latency', '-c', '-m', '8:8']
+        result = support.launcher(source, 1, ('a', 'b'), '/w', '/c')
+        self.assertEqual(result[-3:], ['/usr/bin/python3', '/w', '/c'])
+        self.assertEqual(result.count('/usr/bin/python3'), 1)
+        self.assertNotIn('/osu/osu_latency', result)
+
     def test_env_cannot_inherit_debug_or_new_mode_into_old(self):
         initial = {'UCX_NET_DEVICES': 'dev:1', 'UCX_RM_URMA_LINK_MODE': 'iface_v2',
                    'UCX_RM_URMA_MAX_PEERS': '999', 'LD_DEBUG': 'libs',
