@@ -1,0 +1,41 @@
+{
+  "evidence_type": "用户原始终端摘要及固定工具门禁，非下载的节点results.json",
+  "development_commit": "5ef021e38ded79e139086c60df0b28050df1cdff",
+  "product_commit": "2a8e3b771211e5af491c8ca483ebcc01a03c2f01",
+  "module_sha256": "26b9dac631af27622d0f04f3f86758332bb59874f4cf21743d2820c5783e3aa6",
+  "tool_sha256": "3e90cf0e964d2980b372896af287c1b35d268b61a975664c822e4b6d847540a2",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz",
+  "results": "a7_lifecycle_o1_vbos5/results.json",
+  "a7_node_lifecycle_pass": true,
+  "product_match_tested": true,
+  "iface_cycles": 2,
+  "ep_generations_per_iface": 16,
+  "business_ep_created": 160,
+  "business_ep_destroyed": 160,
+  "reverse_business_eps": 0,
+  "inflight_destroy": 32,
+  "data": {
+    "messages": 512,
+    "bytes": 64,
+    "short": 256,
+    "bcopy": 256,
+    "validation_pass": true,
+    "duplicates": 0
+  },
+  "pending": {
+    "purged": 32,
+    "requeued_completed": 32
+  },
+  "targets_per_iface": {
+    "import": 1,
+    "release": 1,
+    "max_control_owner": 1
+  },
+  "maps_both_pass": true,
+  "cpu_fault_tests_separate": true,
+  "cpu_new_cases": 14,
+  "a7_validation_work_package_pass": true,
+  "formal_joint_delivery_preconditions_closed": false,
+  "ctp_contract_closed": false,
+  "performance_accepted": false
+}

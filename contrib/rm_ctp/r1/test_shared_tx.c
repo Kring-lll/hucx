@@ -7,6 +7,7 @@
 #include "../../../src/uct/urma/rm_urma/rm_urma_ep.c"
 
 static unsigned fail_target_alloc;
+static int fixture_allow_other_live;
 static void *target_test_malloc(size_t size, const char *name);
 #define ucs_malloc target_test_malloc
 #include "../../../src/uct/urma/rm_urma/rm_urma_iface.c"
@@ -32,6 +33,14 @@ static struct {
     unsigned require_quiesce, hardware_stopped;
     unsigned am_calls, destroy_on_error, purge_on_error, purged;
     urma_status_t fail_status;
+    unsigned char frame[2112];
+    unsigned frame_length;
+    urma_cr_t rx_cr[8];
+    int rx_count;
+    unsigned rx_post_count;
+    unsigned rx_post_fail;
+    void *rx_owned[32];
+    unsigned rx_owned_count;
 } mock;
 
 urma_status_t urma_init(urma_init_attr_t *attr) { return URMA_SUCCESS; }
@@ -98,10 +107,47 @@ urma_status_t urma_post_jetty_send_wr(urma_jetty_t *j, urma_jfs_wr_t *wr,
         *bad = wr;
         return mock.fail_status ? mock.fail_status : URMA_ENOMEM;
     }
+    mock.frame_length = 0;
+    for (unsigned i = 0; i < wr->send.src.num_sge; ++i) {
+        urma_sge_t *sge = &wr->send.src.sge[i];
+        assert(mock.frame_length + sge->len <= sizeof(mock.frame));
+        if (sge->len != 0) {
+            memcpy(mock.frame + mock.frame_length, (void *)sge->addr, sge->len);
+        }
+        mock.frame_length += sge->len;
+    }
     mock.ctx = wr->user_ctx;
     mock.target = wr->tjetty;
     mock.header_addr = wr->send.src.sge[0].addr;
     ++mock.posts;
+    return URMA_SUCCESS;
+}
+
+int urma_poll_jfc(urma_jfc_t *jfc, int capacity, urma_cr_t *cr)
+{
+    int count = mock.rx_count;
+
+    assert(count <= capacity);
+    if (count > 0) {
+        memcpy(cr, mock.rx_cr, count * sizeof(*cr));
+    }
+    mock.rx_count = 0;
+    return count;
+}
+
+urma_status_t urma_post_jfr_wr(urma_jfr_t *jfr, urma_jfr_wr_t *wr,
+                              urma_jfr_wr_t **bad)
+{
+    while (wr != NULL) {
+        assert(mock.rx_owned_count < 32);
+        mock.rx_owned[mock.rx_owned_count++] = (void *)wr->user_ctx;
+        ++mock.rx_post_count;
+        wr = wr->next;
+    }
+    if (mock.rx_post_fail) {
+        *bad = NULL; /* Deliberately unknown accepted prefix. */
+        return URMA_FAIL;
+    }
     return URMA_SUCCESS;
 }
 
@@ -305,11 +351,15 @@ static void test_fc_errors(void)
         ucs_ptr_array_init(&iface.super.eps, "fc-error-EPs");
         ucs_list_head_init(&iface.tx.retired_eps);
         kh_init_inplace(uct_rm_urma_targets, &iface.targets);
+    {
+        uct_rm_urma_iface_config_t config = {0};
+        uct_rm_urma_link_init(&iface, &config);
+    }
         ucs_arbiter_init(&iface.tx.arbiter);
         pool_init(&iface.super.tx.mp, sizeof(uct_ub_iface_send_desc_t) + 2048, 1);
         pool_init(&iface.super.tx.short_desc_mp, sizeof(uct_ub_iface_send_desc_t) + 256, 1);
         pool_init(&iface.super.tx.send_op_mp, sizeof(uct_urma_iface_send_op_t), 0);
-        pool_init(&iface.tx.pending_mp, sizeof(uct_rm_urma_pending_req_t), 0);
+        pool_init(&iface.tx.pending_mp, sizeof(uct_rm_urma_fc_pending_req_t), 0);
         free_before = pool_free_count(&iface.tx.pending_mp);
         a = new_ep(&iface, 11);
         b = new_ep(&iface, 22);
@@ -356,7 +406,7 @@ static void test_fc_errors(void)
             assert(send_short(a) == UCS_OK); a1 = mock.ctx;
             assert(send_short(a) == UCS_OK); a2 = mock.ctx;
             receive_fc(&iface, b, UCT_RM_URMA_EP_FLAG_FC_HARD_REQ);
-            assert(ucs_arbiter_group_num_elems(&b->arb_group) == 1);
+            assert(ucs_arbiter_group_num_elems(&iface.tx.ctrl_ep->arb_group) == 1);
             complete(&iface, a1); grant = mock.ctx;
             assert(mock.posts == 3 && b->super.fc.fc_wnd == 3);
             complete(&iface, a2); complete(&iface, grant);
@@ -364,7 +414,7 @@ static void test_fc_errors(void)
             mock.fail_next = 1;
             mock.fail_status = URMA_EAGAIN;
             receive_fc(&iface, a, UCT_RM_URMA_EP_FLAG_FC_HARD_REQ);
-            assert(ucs_arbiter_group_num_elems(&a->arb_group) == 1);
+            assert(ucs_arbiter_group_num_elems(&iface.tx.ctrl_ep->arb_group) == 1);
             assert(pool_free_count(&iface.tx.pending_mp) + 1 == free_before);
             if (scenario == 3) {
                 uct_rm_urma_iface_progress_pending(&iface);
@@ -519,6 +569,10 @@ static void test_target_reuse(void)
     ucs_ptr_array_init(&iface.super.eps, "target-EPs");
     ucs_list_head_init(&iface.tx.retired_eps);
     kh_init_inplace(uct_rm_urma_targets, &iface.targets);
+    {
+        uct_rm_urma_iface_config_t config = {0};
+        uct_rm_urma_link_init(&iface, &config);
+    }
     ucs_arbiter_init(&iface.tx.arbiter);
     pool_init(&iface.super.tx.mp, sizeof(uct_ub_iface_send_desc_t) + 2048, 1);
     pool_init(&iface.super.tx.short_desc_mp,
@@ -659,7 +713,11 @@ static void test_target_reuse(void)
     assert(mock.live_targets == 0 && mock.live_segments == 0);
 
     kh_init_inplace(uct_rm_urma_targets, &iface.targets);
-    pool_init(&iface.tx.pending_mp, sizeof(uct_rm_urma_pending_req_t), 0);
+    {
+        uct_rm_urma_iface_config_t config = {0};
+        uct_rm_urma_link_init(&iface, &config);
+    }
+    pool_init(&iface.tx.pending_mp, sizeof(uct_rm_urma_fc_pending_req_t), 0);
     iface.super.rx.jfr = &jfr;
     a = new_unconnected_ep(&iface);
     b = new_unconnected_ep(&iface);
@@ -683,6 +741,926 @@ static void test_target_reuse(void)
     ucs_mpool_cleanup(&iface.super.tx.send_op_mp, 1);
     ucs_callbackq_cleanup(&worker.super.progress_q);
     ucs_async_context_cleanup(&async);
+}
+
+typedef struct {
+    uct_rm_urma_iface_t iface;
+    uct_priv_worker_t worker;
+    ucs_async_context_t async;
+    uct_ub_md_t md;
+    urma_jetty_t local;
+    urma_jfr_t jfr;
+    urma_context_t context;
+    urma_device_t device;
+    urma_target_seg_t local_segment;
+    uct_ub_iface_ka_desc_t ka;
+} control_fixture_t;
+
+static void control_fixture_init(control_fixture_t *f, unsigned max_inline)
+{
+    uct_rm_urma_iface_t *iface = &f->iface;
+
+    memset(f, 0, sizeof(*f));
+    memset(&mock, 0, sizeof(mock));
+    assert(ucs_async_context_init(&f->async, UCS_ASYNC_MODE_POLL) == UCS_OK);
+    assert(ucs_callbackq_init(&f->worker.super.progress_q) == UCS_OK);
+    f->worker.async = &f->async;
+    iface->super.super.worker = &f->worker;
+    iface->super.super.md = &f->md.super;
+    iface->super.super.err_handler = on_error;
+    iface->super.super.am[0].cb = on_am;
+    iface->super.super.super.ops = uct_rm_urma_iface_tl_ops;
+    iface->super.config.max_inline = max_inline;
+    iface->super.config.seg_size = 2048;
+    iface->super.config.tx_max_wr = 3;
+    iface->super.config.fc_enabled = 1;
+    iface->super.config.fc_wnd_size = 8;
+    iface->super.tx.jfc_available = 64;
+    iface->super.tx.reads_available = 1048576;
+    iface->super.rx.jfr = &f->jfr;
+    iface->rm_urma_jetty.jetty = &f->local;
+    iface->rm_urma_jetty.available = 2;
+    ucs_ptr_array_init(&iface->super.eps, "control-EPs");
+    ucs_list_head_init(&iface->tx.retired_eps);
+    kh_init_inplace(uct_rm_urma_targets, &iface->targets);
+    {
+        uct_rm_urma_iface_config_t config = {0};
+        uct_rm_urma_link_init(iface, &config);
+    }
+    ucs_arbiter_init(&iface->tx.arbiter);
+    pool_init(&iface->super.tx.mp, sizeof(uct_ub_iface_send_desc_t) + 2048, 1);
+    pool_init(&iface->super.tx.short_desc_mp,
+              sizeof(uct_ub_iface_send_desc_t) + 256, 1);
+    pool_init(&iface->super.tx.send_op_mp, sizeof(uct_urma_iface_send_op_t), 0);
+    pool_init(&iface->tx.pending_mp,
+              ucs_max(sizeof(uct_rm_urma_fc_pending_req_t),
+                      sizeof(uct_rm_urma_link_req_t)), 0);
+}
+
+static void control_fixture_cleanup(control_fixture_t *f)
+{
+    uct_rm_urma_iface_t *iface = &f->iface;
+    uct_rm_urma_ep_t *ep;
+    unsigned i;
+
+    for (i = 0; i < iface->super.eps.size; ++i) {
+        if (__ucs_ptr_array_is_free(iface->super.eps.start[i])) {
+            continue;
+        }
+        ep = (uct_rm_urma_ep_t *)iface->super.eps.start[i];
+        if (ep != iface->tx.ctrl_ep) {
+            uct_rm_urma_ep_destroy(&ep->super.super.super);
+        }
+    }
+    /* The real RM cleanup must stop DMA before canceling in-flight grants. */
+    mock.require_quiesce = 1;
+    _UCS_CLASS_CLEANUP_NAME(uct_rm_urma_iface_t)(iface);
+    assert(mock.hardware_stopped && iface->tx.ctrl_ep == NULL);
+    if (!fixture_allow_other_live) {
+        assert(mock.live_targets == 0 && mock.live_segments == 0);
+    }
+    assert(ucs_list_is_empty(&iface->tx.retired_eps));
+    for (i = 0; i < iface->super.eps.size; ++i) {
+        assert(__ucs_ptr_array_is_free(iface->super.eps.start[i]));
+    }
+    ucs_ptr_array_cleanup(&iface->super.eps, 1);
+    ucs_mpool_cleanup(&iface->super.tx.mp, 1);
+    ucs_mpool_cleanup(&iface->super.tx.short_desc_mp, 1);
+    ucs_mpool_cleanup(&iface->super.tx.send_op_mp, 1);
+    ucs_callbackq_cleanup(&f->worker.super.progress_q);
+    ucs_async_context_cleanup(&f->async);
+}
+
+static void test_control_sender(void)
+{
+    control_fixture_t f;
+    uct_rm_urma_iface_t *iface = &f.iface;
+    uct_rm_urma_ep_t *a, *b, *ctrl;
+    urma_rjetty_t remote = {
+        .jetty_id = { .id = 111, .uasid = 17 },
+        .trans_mode = URMA_TM_RM,
+        .type = URMA_JETTY,
+        .tp_type = URMA_CTP
+    };
+    urma_token_t token = {};
+    uint64_t first, second, header;
+    unsigned inline_mode, scenario, i, free_before;
+    void *held[16];
+
+    for (inline_mode = 0; inline_mode < 2; ++inline_mode) {
+        for (scenario = 0; scenario < 15; ++scenario) {
+            control_fixture_init(&f, inline_mode ? 128 : 0);
+            free_before = pool_free_count(&iface->tx.pending_mp);
+            remote.jetty_id.id = 111;
+            remote.jetty_id.eid.raw[0] = 0x45;
+            if (scenario == 0) {
+                /* No business EP exists: full destination identity suffices. */
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                                      &token, 31) == UCS_OK);
+                first = mock.ctx;
+                header = mock.header_addr;
+                ctrl = iface->tx.ctrl_ep;
+                assert(ctrl != NULL && mock.target->id.id == 111);
+                remote.jetty_id.id = 222;
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                                      &token, 42) == UCS_OK);
+                second = mock.ctx;
+                assert(ctrl == iface->tx.ctrl_ep && mock.target->id.id == 222);
+                assert((first >> 32) == ctrl->super.ep_id);
+                assert((second >> 32) == ctrl->super.ep_id);
+                assert(ctrl->target == NULL && ctrl->tjetty == NULL);
+                assert(mock.live_targets == 2 && mock.live_segments == 0);
+                if (!inline_mode) {
+                    assert(header != mock.header_addr);
+                    assert(((uct_ub_hdr_t *)(uintptr_t)header)->ep_id == 31);
+                    assert(((uct_ub_hdr_t *)(uintptr_t)mock.header_addr)->ep_id == 42);
+                }
+                complete(iface, first);
+                complete(iface, second);
+                assert(mock.unimports == 2 && mock.errors == 0);
+            } else if ((scenario == 1) || (scenario == 2)) {
+                a = new_ep(iface, 31);
+                if (scenario == 1) {
+                    mock.fail_next = 1;
+                    mock.fail_status = URMA_EAGAIN;
+                }
+                assert(uct_rm_urma_iface_send_fc_grant(iface,
+                           &a->target->key.remote, &a->target->key.token, 31) == UCS_OK);
+                first = mock.ctx;
+                header = mock.header_addr;
+                assert(a->target->references == 2);
+                uct_rm_urma_ep_destroy(&a->super.super.super);
+                assert(mock.live_targets == 1 && mock.unimports == 0);
+                b = new_ep(iface, 88); /* May reuse the destroyed business EP ID. */
+                if (scenario == 1) {
+                    uct_rm_urma_iface_progress_pending(iface);
+                    first = mock.ctx;
+                    header = mock.header_addr;
+                }
+                assert(mock.target != b->tjetty);
+                if (!inline_mode) {
+                    assert(((uct_ub_hdr_t *)(uintptr_t)header)->ep_id == 31);
+                }
+                complete(iface, first);
+                assert(mock.unimports == 1 && b->target->references == 1);
+            } else if (scenario == 3) {
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                                      &token, 31) == UCS_OK);
+                iface->rm_urma_jetty.available = 0;
+                remote.jetty_id.id = 222;
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                                      &token, 42) == UCS_OK);
+                assert(mock.posts == 1 && mock.live_targets == 2);
+                assert(ucs_arbiter_group_num_elems(&iface->tx.ctrl_ep->arb_group) == 1);
+                /* Cleanup below has both a posted grant and a pending grant. */
+            } else if (scenario == 4) {
+                urma_cr_t cr = { .status = URMA_CR_ACK_TIMEOUT_ERR };
+                a = new_ep(iface, 31);
+                b = new_ep(iface, 42);
+                assert(uct_rm_urma_iface_send_fc_grant(iface,
+                           &a->target->key.remote, &a->target->key.token, 31) == UCS_OK);
+                cr.user_ctx = mock.ctx;
+                iface->rm_urma_jetty.available = 0;
+                assert(uct_rm_urma_iface_send_fc_grant(iface,
+                           &b->target->key.remote, &b->target->key.token, 42) == UCS_OK);
+                mock.destroy_on_error = 1;
+                uct_rm_urma_deal_with_send_cr(iface, &cr, 1);
+                assert(iface->tx.error == UCS_ERR_ENDPOINT_TIMEOUT);
+                assert(mock.errors == 2); /* Never call the user with ctrl_ep. */
+            } else if (scenario == 5) {
+                mock.fail_import = 1;
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                    &token, 31) == UCS_ERR_IO_ERROR);
+                assert(iface->tx.ctrl_ep == NULL && mock.live_targets == 0);
+                fail_target_alloc = 1;
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                    &token, 31) == UCS_ERR_NO_MEMORY);
+                assert(pool_free_count(&iface->tx.pending_mp) == free_before);
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                                      &token, 31) == UCS_OK);
+                complete(iface, mock.ctx);
+            } else if (scenario == 6) {
+                if (!inline_mode) {
+                    for (i = 0; i < 16; ++i) {
+                        held[i] = ucs_mpool_get(&iface->super.tx.short_desc_mp);
+                    }
+                    iface->super.tx.short_desc_mp.data->quota = 0;
+                } else {
+                    iface->rm_urma_jetty.available = 0;
+                }
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                                      &token, 31) == UCS_OK);
+                assert(mock.posts == 0);
+                assert(uct_rm_urma_iface_flush(&iface->super.super.super,
+                                                0, NULL) == UCS_INPROGRESS);
+                if (!inline_mode) {
+                    for (i = 0; i < 16; ++i) {
+                        ucs_mpool_put(held[i]);
+                    }
+                } else {
+                    iface->rm_urma_jetty.available = 2;
+                }
+                uct_rm_urma_iface_progress_pending(iface);
+                assert(mock.posts == 1);
+                complete(iface, mock.ctx);
+                assert(uct_rm_urma_iface_flush(&iface->super.super.super,
+                                                0, NULL) == UCS_OK);
+            } else if (scenario == 7) {
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                                      &token, 31) == UCS_OK);
+                complete(iface, mock.ctx);
+                ctrl = iface->tx.ctrl_ep;
+                ctrl->super.status.pi = ctrl->super.status.ci = UINT32_MAX;
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                                      &token, 31) == UCS_OK);
+                assert((uint32_t)mock.ctx == 0);
+                complete(iface, mock.ctx);
+                assert(ctrl->super.status.pi == 0 && ctrl->super.status.ci == 0);
+            } else if (scenario == 8) {
+                mock.fail_next = 1;
+                mock.fail_status = URMA_EINVAL;
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                    &token, 31) == UCS_ERR_IO_ERROR);
+                assert(mock.posts == 0 && mock.live_targets == 0);
+                assert(pool_free_count(&iface->tx.pending_mp) == free_before);
+            } else if (scenario == 9) {
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                    &token, 65536) == UCS_ERR_INVALID_PARAM);
+                remote.trans_mode = URMA_TM_RC;
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                    &token, 31) == UCS_ERR_INVALID_PARAM);
+                remote.trans_mode = URMA_TM_RM;
+                iface->tx.error = UCS_ERR_IO_ERROR;
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                    &token, 31) == UCS_ERR_IO_ERROR);
+                assert(iface->tx.ctrl_ep == NULL && mock.imports == 0);
+            } else if (scenario == 10) {
+                uint64_t contexts[64];
+                unsigned head = 0, tail = 0, posted;
+                for (i = 0; i < 32; ++i) {
+                    posted = mock.posts;
+                    assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                                          &token, 31) == UCS_OK);
+                    if (mock.posts != posted) {
+                        contexts[tail++] = mock.ctx;
+                    }
+                }
+                assert(mock.imports == 1 && mock.live_targets == 1);
+                while (head < tail) {
+                    posted = mock.posts;
+                    complete(iface, contexts[head++]);
+                    if (mock.posts != posted) {
+                        contexts[tail++] = mock.ctx;
+                    }
+                }
+                assert(mock.posts == 32 && mock.unimports == 1);
+                assert(pool_free_count(&iface->tx.pending_mp) >= free_before);
+            } else if (scenario == 11) {
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                                      &token, 31) == UCS_OK);
+                mock.fail_unimport = 1;
+                complete(iface, mock.ctx);
+                assert(mock.live_targets == 1);
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                    &token, 31) == UCS_ERR_IO_ERROR);
+            } else if (scenario == 12) {
+                assert(uct_rm_urma_iface_send_fc_grant(iface, &remote,
+                                                      &token, 31) == UCS_OK);
+                complete(iface, mock.ctx);
+                ctrl = iface->tx.ctrl_ep;
+                /* A recycled local EP index must not turn a late business
+                 * request into a request on the private control owner. */
+                receive_fc(iface, ctrl, UCT_RM_URMA_EP_FLAG_FC_HARD_REQ);
+                receive_fc(iface, ctrl, UCT_RM_URMA_EP_FLAG_FC_SOFT_REQ);
+                receive_fc(iface, ctrl, UCT_RM_URMA_EP_FC_PURE_GRANT);
+                assert(mock.posts == 1 && mock.am_calls == 0);
+                assert(ctrl->super.fc.fc_wnd == INT16_MAX);
+            } else {
+                a = new_ep(iface, 31);
+                b = new_ep(iface, 42);
+                iface->rm_urma_jetty.available = 0;
+                receive_fc(iface, a, UCT_RM_URMA_EP_FLAG_FC_HARD_REQ);
+                receive_fc(iface, b, UCT_RM_URMA_EP_FLAG_FC_HARD_REQ);
+                ctrl = iface->tx.ctrl_ep;
+                assert(ucs_arbiter_group_num_elems(&ctrl->arb_group) == 2);
+                if (scenario == 13) {
+                    uct_rm_urma_ep_destroy(&a->super.super.super);
+                    assert(mock.unimports == 1);
+                } else {
+                    uct_rm_urma_ep_pending_purge(&a->super.super.super, NULL, NULL);
+                    assert(a->target->references == 1);
+                }
+                assert(ucs_arbiter_group_num_elems(&ctrl->arb_group) == 1);
+                iface->rm_urma_jetty.available = 2;
+                uct_rm_urma_iface_progress_pending(iface);
+                assert(mock.posts == 1 && mock.target == b->tjetty);
+                first = mock.ctx;
+                assert(b->target->references == 2);
+                uct_rm_urma_ep_destroy(&b->super.super.super);
+                complete(iface, first);
+                assert(mock.live_targets == (scenario == 13 ? 0 : 1));
+            }
+            control_fixture_cleanup(&f);
+        }
+    }
+    puts("PASS iface control sender: 30 CPU cases, inline/non-inline, no business EP,");
+    puts("     independent target/CQE lifetime, pending/flush, failure/close and wrap");
+}
+
+static void iface_v2_fixture_init(control_fixture_t *f, unsigned id,
+                                  unsigned max_inline)
+{
+    uct_rm_urma_iface_t *iface = &f->iface;
+
+    control_fixture_init(f, max_inline);
+    f->device.type = URMA_TRANSPORT_UB;
+    f->context.dev = &f->device;
+    f->md.dev.urma_ctx = &f->context;
+    iface->link.mode = UCT_RM_URMA_LINK_IFACE_V2;
+    iface->link.max_peers = 4;
+    iface->super.eid.raw[0] = id;
+    iface->super.uasid = 17;
+    iface->super.config.rx_queue_depth = 42;
+    iface->super.rx.jfr_que_available = 0;
+    iface->super.config.tx_max_wr = 8;
+    iface->super.config.fc_hard_thresh = 2;
+    iface->rm_urma_jetty.available = 8;
+    f->local.jetty_id.id = id + 100;
+    f->local_segment.seg.ubva.va = 0x1000 + id * 64;
+    f->local_segment.seg.len = 64;
+    f->ka.tseg = &f->local_segment;
+    iface->super.ka_local_seg = &f->ka;
+    assert(uct_rm_urma_link_ready(iface) == UCS_OK);
+    assert(iface->link.rx_free == 0);
+}
+
+static uct_rm_urma_ep_t *iface_v2_new_ep(control_fixture_t *from,
+                                       control_fixture_t *to)
+{
+    unsigned char device[64], address[48];
+    uct_ep_params_t params = {
+        .field_mask = UCT_EP_PARAM_FIELD_IFACE | UCT_EP_PARAM_FIELD_DEV_ADDR |
+                      UCT_EP_PARAM_FIELD_IFACE_ADDR,
+        .iface = &from->iface.super.super.super,
+        .dev_addr = (uct_device_addr_t *)device,
+        .iface_addr = (uct_iface_addr_t *)address
+    };
+    uct_ep_h ep;
+
+    assert(uct_ub_iface_get_device_address(&to->iface.super.super.super,
+                                          (uct_device_addr_t *)device) == UCS_OK);
+    assert(uct_rm_urma_link_get_address(&to->iface.super.super.super,
+                                        (uct_iface_addr_t *)address) == UCS_OK);
+    assert(UCS_CLASS_NEW(uct_rm_urma_ep_t, &ep, &params) == UCS_OK);
+    return ucs_derived_of(ep, uct_rm_urma_ep_t);
+}
+
+static void test_iface_v2_one_way(void)
+{
+    control_fixture_t a, b;
+    uct_rm_urma_ep_t *ep[4];
+    uct_rm_urma_peer_t *peer;
+    uct_rm_urma_ctrl_v2_t message;
+    unsigned char request[100], grant[32];
+    uint64_t id, ctx;
+    unsigned scenario, inline_mode, i;
+    char data[32] = "iface_v2 bcopy payload";
+
+    for (inline_mode = 0; inline_mode < 2; ++inline_mode) {
+        for (scenario = 0; scenario < 4; ++scenario) {
+            pending_t waiter = { .req.func = pending_send };
+
+            iface_v2_fixture_init(&a, 1, inline_mode ? 128 : 32);
+            iface_v2_fixture_init(&b, 2, inline_mode ? 128 : 32);
+            for (i = 0; i < 4; ++i) {
+                ep[i] = iface_v2_new_ep(&a, &b);
+                assert(ep[i]->peer == ep[0]->peer);
+            }
+            peer = ep[0]->peer;
+            assert(mock.imports == 1 && mock.seg_imports == 1);
+            assert(a.iface.link.peer_count == 1 && b.iface.link.peer_count == 0);
+            assert(peer->target->references == 5);
+            for (i = 0; i < 8; ++i) {
+                if (i % 2) {
+                    assert(uct_rm_urma_ep_am_bcopy(&ep[i % 4]->super.super.super,
+                                                   0, pack, data, 0) == 32);
+                    assert(mock.frame_length == 35);
+                    assert(!memcmp(mock.frame + 3, data, 32));
+                } else {
+                    assert(send_short(ep[i % 4]) == UCS_OK);
+                    assert(mock.frame_length == 18);
+                    assert(!memcmp(mock.frame + 11, "payload", 7));
+                }
+                assert(mock.frame[0] == 0);
+                assert(uct_iface_invoke_am(&b.iface.super.super, 0,
+                       mock.frame + 3, mock.frame_length - 3, 0) == UCS_OK);
+                complete(&a.iface, mock.ctx);
+            }
+            id = peer->active_id;
+            assert(id != 0 && peer->credits == 0 && peer->requested == 6);
+            assert(send_short(ep[0]) == UCS_ERR_NO_RESOURCE);
+            assert(uct_rm_urma_iface_event_arm(&a.iface.super.super.super,
+                       UCT_EVENT_RECV) == UCS_ERR_BUSY);
+            if (scenario == 3) {
+                waiter.ep = ep[0];
+                assert(uct_rm_urma_ep_pending_add(&ep[0]->super.super.super,
+                                                 &waiter.req, 0) == UCS_OK);
+                assert(waiter.called == 0);
+            }
+            if (scenario == 1) {
+                mock.fail_next = 1;
+                uct_rm_urma_link_progress(&a.iface);
+                assert(peer->active_id == id && !peer->request_posted);
+                assert(!ucs_list_is_empty(&a.iface.link.pending));
+            }
+            uct_rm_urma_link_progress(&a.iface);
+            assert(peer->request_posted && mock.frame_length == 103);
+            memcpy(request, mock.frame + 3, sizeof(request));
+            ctx = mock.ctx;
+            if (scenario == 2) {
+                for (i = 0; i < 4; ++i) {
+                    uct_rm_urma_ep_destroy(&ep[i]->super.super.super);
+                }
+                ep[0] = iface_v2_new_ep(&a, &b);
+                assert(ep[0]->peer == peer && peer->credits == 0);
+                assert(mock.imports == 1 && mock.seg_imports == 1);
+            }
+            complete(&a.iface, ctx);
+            assert(uct_rm_urma_link_receive(&b.iface, request, 100) == UCS_OK);
+            assert(b.iface.link.peer_count == 1);
+            assert(b.iface.tx.ctrl_ep == NULL); /* No reverse business EP. */
+            uct_rm_urma_link_account_rx(&b.iface, 8, 1, 0);
+            uct_rm_urma_link_progress(&b.iface);
+            assert(b.iface.tx.ctrl_ep == NULL);
+            uct_rm_urma_link_account_rx(&b.iface, 0, 0, 1);
+            uct_rm_urma_link_progress(&b.iface);
+            assert(b.iface.tx.ctrl_ep == NULL); /* Receipt is not repost. */
+            uct_rm_urma_link_account_rx(&b.iface, 0, 0, 6);
+            if (scenario == 3) {
+                mock.fail_next = 1;
+                uct_rm_urma_link_progress(&b.iface);
+                assert(b.iface.link.rx_free == 6);
+            }
+            uct_rm_urma_link_progress(&b.iface);
+            assert(mock.frame_length == 35 && b.iface.link.rx_free == 0);
+            memcpy(grant, mock.frame + 3, sizeof(grant));
+            complete(&b.iface, mock.ctx);
+            assert(uct_rm_urma_ctrl_v2_unpack(grant, 32, a.iface.link.instance,
+                                             &message, NULL) == UCS_OK);
+            if (scenario == 0) {
+                ++message.credits;
+                assert(uct_rm_urma_ctrl_v2_pack(grant, 32, &message, NULL) == UCS_OK);
+                assert(uct_rm_urma_link_receive(&a.iface, grant, 32) == UCS_ERR_INVALID_PARAM);
+                assert(peer->credits == 0 && peer->active_id == id);
+                --message.credits;
+                ++message.responder_instance;
+                assert(uct_rm_urma_ctrl_v2_pack(grant, 32, &message, NULL) == UCS_OK);
+                assert(uct_rm_urma_link_receive(&a.iface, grant, 32) == UCS_OK);
+                assert(peer->credits == 0 && peer->active_id == id);
+                --message.responder_instance;
+                assert(uct_rm_urma_ctrl_v2_pack(grant, 32, &message, NULL) == UCS_OK);
+            }
+            assert(uct_rm_urma_link_receive(&a.iface, grant, 32) == UCS_OK);
+            assert(peer->credits == 6 && peer->active_id == 0);
+            assert(uct_rm_urma_link_receive(&a.iface, grant, 32) == UCS_OK);
+            assert(peer->credits == 6);
+            if (scenario == 3) {
+                uct_rm_urma_iface_progress_pending(&a.iface);
+                assert(waiter.called == 1);
+            } else {
+                assert(send_short(ep[0]) == UCS_OK);
+            }
+            complete(&a.iface, mock.ctx);
+            assert(peer->credits == 5);
+            assert(uct_rm_urma_link_receive(&a.iface, grant, 32) == UCS_OK);
+            assert(peer->credits == 5);
+            /* Finish the remaining RX debts; no peer or EP reset creates credit. */
+            uct_rm_urma_link_account_rx(&b.iface, 0, 0, 2);
+            fixture_allow_other_live = 1;
+            control_fixture_cleanup(&a);
+            fixture_allow_other_live = 0;
+            control_fixture_cleanup(&b);
+        }
+    }
+    puts("PASS iface_v2: 8 actual C cases, four EPs/one account, no reverse EP,");
+    puts("     inline/non-inline, delayed/replayed grants, retry and EP replacement");
+}
+
+static void test_iface_v2_bidirectional(void)
+{
+    control_fixture_t a, b;
+    uct_rm_urma_ep_t *ab, *ba;
+    unsigned char request_a[100], request_b[100], grant_a[32], grant_b[32];
+    unsigned i;
+
+    iface_v2_fixture_init(&a, 1, 128);
+    iface_v2_fixture_init(&b, 2, 128);
+    ab = iface_v2_new_ep(&a, &b);
+    ba = iface_v2_new_ep(&b, &a);
+    assert(mock.imports == 2 && mock.seg_imports == 2);
+    for (i = 0; i < 6; ++i) {
+        assert(send_short(ab) == UCS_OK);
+        complete(&a.iface, mock.ctx);
+        assert(send_short(ba) == UCS_OK);
+        complete(&b.iface, mock.ctx);
+    }
+    uct_rm_urma_link_progress(&a.iface);
+    memcpy(request_a, mock.frame + 3, 100);
+    complete(&a.iface, mock.ctx);
+    uct_rm_urma_link_progress(&b.iface);
+    memcpy(request_b, mock.frame + 3, 100);
+    complete(&b.iface, mock.ctx);
+    /* Both requests may arrive before their data, without creating credit. */
+    assert(uct_rm_urma_link_receive(&a.iface, request_b, 100) == UCS_OK);
+    assert(uct_rm_urma_link_receive(&b.iface, request_a, 100) == UCS_OK);
+    uct_rm_urma_link_account_rx(&a.iface, 0, 1, 1);
+    uct_rm_urma_link_account_rx(&b.iface, 0, 1, 1);
+    uct_rm_urma_link_progress(&a.iface);
+    uct_rm_urma_link_progress(&b.iface);
+    assert(!ucs_list_is_empty(&a.iface.link.pending));
+    assert(!ucs_list_is_empty(&b.iface.link.pending));
+    uct_rm_urma_link_account_rx(&a.iface, 6, 0, 6);
+    uct_rm_urma_link_account_rx(&b.iface, 6, 0, 6);
+    uct_rm_urma_link_progress(&a.iface);
+    memcpy(grant_a, mock.frame + 3, 32);
+    complete(&a.iface, mock.ctx);
+    uct_rm_urma_link_progress(&b.iface);
+    memcpy(grant_b, mock.frame + 3, 32);
+    complete(&b.iface, mock.ctx);
+    assert(uct_rm_urma_link_receive(&a.iface, grant_b, 32) == UCS_OK);
+    assert(uct_rm_urma_link_receive(&b.iface, grant_a, 32) == UCS_OK);
+    assert(ab->peer->credits == 8 && ba->peer->credits == 8);
+    assert(a.iface.link.peer_count == 1 && b.iface.link.peer_count == 1);
+    fixture_allow_other_live = 1;
+    control_fixture_cleanup(&a);
+    fixture_allow_other_live = 0;
+    control_fixture_cleanup(&b);
+    puts("PASS iface_v2 bidirectional early requests, shared target and budget drain");
+}
+
+static void test_iface_v2_pending_other_peer(void)
+{
+    control_fixture_t a, b, c;
+    uct_rm_urma_ep_t *ab, *ac;
+    pending_t blocked = { .req.func = pending_send };
+    pending_t ready = { .req.func = pending_send };
+
+    iface_v2_fixture_init(&a, 1, 128);
+    iface_v2_fixture_init(&b, 2, 128);
+    iface_v2_fixture_init(&c, 3, 128);
+    ab = iface_v2_new_ep(&a, &b);
+    ac = iface_v2_new_ep(&a, &c);
+    blocked.ep = ab;
+    ready.ep = ac;
+    a.iface.rm_urma_jetty.available = 0;
+    assert(uct_rm_urma_ep_pending_add(&ab->super.super.super,
+                                     &blocked.req, 0) == UCS_OK);
+    assert(uct_rm_urma_ep_pending_add(&ac->super.super.super,
+                                     &ready.req, 0) == UCS_OK);
+    ab->peer->credits = 0;
+    a.iface.rm_urma_jetty.available = 8;
+    uct_rm_urma_iface_progress_pending(&a.iface);
+    assert(blocked.called == 1 && ready.called == 1);
+    assert(ac->peer->credits == 7);
+    complete(&a.iface, mock.ctx);
+    control_fixture_cleanup(&a);
+    control_fixture_cleanup(&b);
+    control_fixture_cleanup(&c);
+    puts("PASS iface_v2 blocked peer does not strand another peer's pending work");
+}
+
+static void test_iface_v2_constructor_failures(void)
+{
+    control_fixture_t a, b;
+    unsigned char device[64], address[48];
+    uct_ep_params_t params = {0};
+    uct_ep_h ep;
+    unsigned scenario;
+    ucs_status_t status;
+
+    for (scenario = 0; scenario < 4; ++scenario) {
+        iface_v2_fixture_init(&a, 1, 128);
+        iface_v2_fixture_init(&b, 2, 128);
+        assert(uct_ub_iface_get_device_address(&b.iface.super.super.super,
+                         (uct_device_addr_t *)device) == UCS_OK);
+        assert(uct_rm_urma_link_get_address(&b.iface.super.super.super,
+                         (uct_iface_addr_t *)address) == UCS_OK);
+        params.field_mask = UCT_EP_PARAM_FIELD_IFACE | UCT_EP_PARAM_FIELD_DEV_ADDR |
+                            UCT_EP_PARAM_FIELD_IFACE_ADDR;
+        params.iface = &a.iface.super.super.super;
+        params.dev_addr = (uct_device_addr_t *)device;
+        params.iface_addr = (uct_iface_addr_t *)address;
+        if (scenario == 0) {
+            address[28] = 1;
+        } else if (scenario == 1) {
+            mock.fail_import = 1;
+        } else if (scenario == 2) {
+            mock.fail_seg_import = 1;
+        } else {
+            params.field_mask = UCT_EP_PARAM_FIELD_IFACE;
+        }
+        status = UCS_CLASS_NEW(uct_rm_urma_ep_t, &ep, &params);
+        assert(status != UCS_OK);
+        assert(a.iface.link.peer_count == 0);
+        assert(mock.live_targets == 0 && mock.live_segments == 0);
+        assert(kh_size(&a.iface.link.peers_by_address) == 0);
+        {
+            uct_rm_urma_ep_t *retry = iface_v2_new_ep(&a, &b);
+            assert(send_short(retry) == UCS_OK);
+            complete(&a.iface, mock.ctx);
+            assert(a.iface.link.peer_count == 1);
+        }
+        if (scenario == 0) {
+            ++b.iface.link.address.instance;
+            assert(uct_rm_urma_link_get_address(&b.iface.super.super.super,
+                             (uct_iface_addr_t *)address) == UCS_OK);
+            status = UCS_CLASS_NEW(uct_rm_urma_ep_t, &ep, &params);
+            assert(status == UCS_ERR_UNSUPPORTED);
+            assert(a.iface.link.peer_count == 1);
+            assert(mock.live_targets == 1 && mock.live_segments == 1);
+            --b.iface.link.address.instance;
+            assert(iface_v2_new_ep(&a, &b)->peer != NULL);
+            assert(a.iface.link.peer_count == 1);
+        }
+        control_fixture_cleanup(&a);
+        control_fixture_cleanup(&b);
+    }
+    puts("PASS iface_v2 constructor rejects old format, target/segment failures,");
+    puts("     and missing peer address without publishing a partial peer (4 cases)");
+}
+
+static void rx_pool_obj(ucs_mpool_t *mp, void *obj, void *chunk)
+{
+    uct_ub_iface_recv_desc_t *desc = obj;
+
+    desc->src_tseg = (urma_target_seg_t *)(uintptr_t)1;
+}
+
+static void test_accounted_rx(void)
+{
+    control_fixture_t f;
+    uct_rm_urma_iface_t *iface = &f.iface;
+    ucs_mpool_params_t params;
+    static ucs_mpool_ops_t ops = {
+        .chunk_alloc = ucs_mpool_chunk_malloc,
+        .chunk_release = ucs_mpool_chunk_free,
+        .obj_init = rx_pool_obj
+    };
+    uct_ub_iface_recv_desc_t *desc;
+    uct_ub_hdr_t *header;
+    uct_ub_iface_rx_result_t result;
+    void *held[16];
+    unsigned scenario, i;
+
+    for (scenario = 0; scenario < 5; ++scenario) {
+        iface_v2_fixture_init(&f, 1, 128);
+        iface->super.config.rx_hdr_offset = sizeof(*desc);
+        iface->super.config.rx_payload_offset = sizeof(*desc) + sizeof(*header);
+        iface->super.config.rx_max_batch = 16;
+        iface->super.config.rx_max_poll = 8;
+        iface->super.ops = &uct_rm_urma_iface_ops;
+        ucs_mpool_params_reset(&params);
+        params.elem_size = sizeof(*desc) + 2051;
+        params.elems_per_chunk = 16;
+        params.max_elems = 16;
+        params.alignment = 8;
+        params.ops = &ops;
+        params.name = "v2-rx-test";
+        assert(ucs_mpool_init(&params, &iface->super.rx.mp) == UCS_OK);
+        if (scenario == 0) {
+            /* Exactly one missing WR: old batching leaves it unfilled. */
+            iface->super.rx.jfr_que_available = 1;
+            assert(uct_ub_iface_poll_rx(&iface->super, 0xe0) == 0);
+            assert(mock.rx_post_count == 0);
+            uct_ub_iface_poll_rx_accounted(&iface->super, 0xe0, 1, &result);
+            assert(result.status == UCS_OK && result.posted == 1);
+        } else if (scenario == 1) {
+            iface->super.rx.jfr_que_available = 1;
+            for (i = 0; i < 16; ++i) {
+                held[i] = ucs_mpool_get(&iface->super.rx.mp);
+                assert(held[i] != NULL);
+            }
+            uct_ub_iface_poll_rx_accounted(&iface->super, 0xe0, 1, &result);
+            assert(result.posted == 0);
+            ucs_mpool_put(held[0]);
+            uct_ub_iface_poll_rx_accounted(&iface->super, 0xe0, 1, &result);
+            assert(result.posted == 1); /* No new CQE was needed. */
+            for (i = 1; i < 16; ++i) {
+                ucs_mpool_put(held[i]);
+            }
+        } else if (scenario == 2) {
+            iface->super.rx.jfr_que_available = 3;
+            mock.rx_post_fail = 1;
+            uct_ub_iface_poll_rx_accounted(&iface->super, 0xe0, 1, &result);
+            assert(result.status == UCS_ERR_IO_ERROR && result.posted == 0);
+            assert(iface->super.rx.jfr_que_available == 3);
+            assert(pool_free_count(&iface->super.rx.mp) == 13);
+        } else {
+            desc = ucs_mpool_get(&iface->super.rx.mp);
+            assert(desc != NULL);
+            header = uct_ub_iface_recv_desc_hdr(&iface->super, desc);
+            header->am_id = 0;
+            header->ep_id = 0;
+            memcpy(header + 1, "rx-data", 7);
+            mock.rx_cr[0].status = URMA_CR_SUCCESS;
+            mock.rx_cr[0].user_ctx = (uintptr_t)desc;
+            mock.rx_cr[0].completion_len = scenario == 3 ? 10 : 2;
+            mock.rx_count = 1;
+            assert(uct_ub_iface_poll_rx_accounted(&iface->super, 0xe0, 1,
+                                                 &result) == 1);
+            if (scenario == 3) {
+                assert(result.status == UCS_OK && result.data == 1);
+                assert(result.posted == 1 && mock.am_calls == 1);
+            } else {
+                assert(result.status == UCS_ERR_IO_ERROR);
+                assert(result.data == 0 && result.posted == 0);
+                assert(mock.am_calls == 0);
+            }
+        }
+        control_fixture_cleanup(&f);
+        for (i = 0; i < mock.rx_owned_count; ++i) {
+            ucs_mpool_put(mock.rx_owned[i]);
+        }
+        ucs_mpool_cleanup(&iface->super.rx.mp, 1);
+    }
+    puts("PASS accounted RX: short batch, idle refill after release, partial error,");
+    puts("     actual AM callback and truncated receive (5 actual C cases)");
+}
+
+static void test_legacy_iface_address(void)
+{
+    uct_rm_urma_iface_t iface = {0};
+    uct_iface_h tl_iface = &iface.super.super.super;
+    unsigned char address[64];
+    unsigned i;
+
+    tl_iface->ops = uct_rm_urma_iface_tl_ops;
+    iface.link.mode = UCT_RM_URMA_LINK_LEGACY;
+    memset(address, 0xa5, sizeof(address));
+    /* UCP worker packing calls the public API even for iface_addr_len=0. */
+    assert(uct_iface_get_address(tl_iface, (uct_iface_addr_t *)address) == UCS_OK);
+    assert(uct_iface_get_address(tl_iface, NULL) == UCS_OK);
+    for (i = 0; i < sizeof(address); ++i) {
+        assert(address[i] == 0xa5);
+    }
+    iface.link.mode = 99;
+    assert(uct_iface_get_address(tl_iface, (uct_iface_addr_t *)address) ==
+           UCS_ERR_UNSUPPORTED);
+    for (i = 0; i < sizeof(address); ++i) {
+        assert(address[i] == 0xa5);
+    }
+    puts("PASS legacy zero-length iface address through public UCT API: no writes; invalid mode rejected");
+}
+
+/* New-path lifecycle/failure tests execute real RM code, not a model. */
+static void test_iface_v2_lifecycle_failures(void)
+{
+    control_fixture_t a, b, c;
+    uct_rm_urma_ep_t *ep, *replacement;
+    uct_rm_urma_peer_t *peer;
+    uct_rm_urma_ctrl_v2_t control;
+    unsigned char request[100], grant[32], device[64], address[48];
+    void *held[16];
+    uint64_t context, active_id;
+    unsigned inline_mode, scenario, i, old_id;
+    uct_ep_params_t params;
+    uct_ep_h result;
+
+    for (inline_mode = 0; inline_mode < 2; ++inline_mode) {
+        for (scenario = 0; scenario < 7; ++scenario) {
+            iface_v2_fixture_init(&a, 1, inline_mode ? 128 : 32);
+            iface_v2_fixture_init(&b, 2, inline_mode ? 128 : 32);
+            iface_v2_fixture_init(&c, 3, inline_mode ? 128 : 32);
+            ep = iface_v2_new_ep(&a, &b);
+            peer = ep->peer;
+            if (scenario == 0) {
+                /* Request allocation fails after the data WR is accepted. */
+                for (i = 0; i < 16; ++i) {
+                    held[i] = ucs_mpool_get(&a.iface.tx.pending_mp);
+                    assert(held[i] != NULL);
+                }
+                a.iface.tx.pending_mp.data->quota = 0;
+            }
+            if (scenario == 3) {
+                /* Static K limits distinct peers, not logical EP count. */
+                a.iface.link.max_peers = 1;
+                assert(uct_ub_iface_get_device_address(&c.iface.super.super.super,
+                           (uct_device_addr_t *)device) == UCS_OK);
+                assert(uct_rm_urma_link_get_address(&c.iface.super.super.super,
+                           (uct_iface_addr_t *)address) == UCS_OK);
+                memset(&params, 0, sizeof(params));
+                params.field_mask = UCT_EP_PARAM_FIELD_IFACE |
+                                    UCT_EP_PARAM_FIELD_DEV_ADDR |
+                                    UCT_EP_PARAM_FIELD_IFACE_ADDR;
+                params.iface = &a.iface.super.super.super;
+                params.dev_addr = (uct_device_addr_t *)device;
+                params.iface_addr = (uct_iface_addr_t *)address;
+                assert(UCS_CLASS_NEW(uct_rm_urma_ep_t, &result, &params) ==
+                       UCS_ERR_EXCEEDS_LIMIT);
+                assert(a.iface.link.peer_count == 1 && mock.imports == 1);
+                replacement = iface_v2_new_ep(&a, &b);
+                assert(replacement->peer == peer && peer->credits == 8);
+                assert(send_short(replacement) == UCS_OK);
+                complete(&a.iface, mock.ctx);
+            } else if (scenario == 4) {
+                /* No CQE may retire the wrong reused local EP index. */
+                for (i = 0; i < 32; ++i) {
+                    if (i < 8) {
+                        assert(send_short(ep) == UCS_OK);
+                        context = mock.ctx;
+                        old_id = ep->super.ep_id;
+                        uct_rm_urma_ep_destroy(&ep->super.super.super);
+                        assert(!__ucs_ptr_array_is_free(a.iface.super.eps.start[old_id]));
+                        replacement = iface_v2_new_ep(&a, &b);
+                        assert(replacement->super.ep_id != old_id);
+                        assert(replacement->peer == peer && peer->credits == 7 - i);
+                        complete(&a.iface, context);
+                        uct_rm_urma_iface_gc(&a.iface);
+                        assert(__ucs_ptr_array_is_free(a.iface.super.eps.start[old_id]));
+                        ep = replacement;
+                    } else {
+                        uct_rm_urma_ep_destroy(&ep->super.super.super);
+                        ep = iface_v2_new_ep(&a, &b);
+                        assert(ep->peer == peer && peer->credits == 0);
+                        assert(send_short(ep) == UCS_ERR_NO_RESOURCE);
+                    }
+                }
+                assert(mock.imports == 1 && mock.seg_imports == 1);
+            } else if (scenario == 6) {
+                a.iface.link.sequence = UINT64_MAX;
+                for (i = 0; i < 6; ++i) {
+                    assert(send_short(ep) == UCS_OK);
+                    complete(&a.iface, mock.ctx);
+                }
+                assert(a.iface.tx.error == UCS_ERR_EXCEEDS_LIMIT);
+                assert(mock.errors == 1 && ucs_list_is_empty(&a.iface.link.pending));
+            } else {
+                for (i = 0; i < 6; ++i) {
+                    assert(send_short(ep) == UCS_OK);
+                    complete(&a.iface, mock.ctx);
+                }
+                if (scenario == 0) {
+                    assert(a.iface.tx.error == UCS_ERR_NO_MEMORY && mock.errors == 1);
+                    for (i = 0; i < 16; ++i) {
+                        ucs_mpool_put(held[i]);
+                    }
+                } else if (scenario == 1) {
+                    mock.fail_next = 1;
+                    mock.fail_status = URMA_EINVAL;
+                    uct_rm_urma_link_progress(&a.iface);
+                    assert(a.iface.tx.error == UCS_ERR_IO_ERROR && mock.errors == 1);
+                    assert(!ucs_list_is_empty(&a.iface.link.pending));
+                    assert(send_short(ep) == UCS_ERR_IO_ERROR);
+                } else {
+                    active_id = peer->active_id;
+                    uct_rm_urma_link_progress(&a.iface);
+                    memcpy(request, mock.frame + 3, sizeof(request));
+                    context = mock.ctx;
+                    uct_rm_urma_ep_destroy(&ep->super.super.super);
+                    assert(ucs_list_is_empty(&peer->eps));
+                    assert(mock.live_targets == 1 && mock.unimports == 0);
+                    complete(&a.iface, context); /* control CQE after every business EP is gone */
+                    assert(uct_rm_urma_link_receive(&b.iface, request, 100) == UCS_OK);
+                    if (scenario == 2) {
+                        uct_rm_urma_link_account_rx(&b.iface, 6, 1, 7);
+                        uct_rm_urma_link_progress(&b.iface);
+                        memcpy(grant, mock.frame + 3, sizeof(grant));
+                        complete(&b.iface, mock.ctx);
+                        assert(uct_rm_urma_ctrl_v2_unpack(grant, 32,
+                                  a.iface.link.instance, &control, NULL) == UCS_OK);
+                        ++control.request_id;
+                        assert(uct_rm_urma_ctrl_v2_pack(grant, 32, &control, NULL) == UCS_OK);
+                        assert(uct_rm_urma_link_receive(&a.iface, grant, 32) == UCS_OK);
+                        assert(peer->active_id == active_id && peer->credits == 2);
+                        --control.request_id;
+                        assert(uct_rm_urma_ctrl_v2_pack(grant, 32, &control, NULL) == UCS_OK);
+                        assert(uct_rm_urma_link_receive(&a.iface, grant, 32) == UCS_OK);
+                        assert(peer->credits == 8 && peer->active_id == 0);
+                        replacement = iface_v2_new_ep(&a, &b);
+                        assert(replacement->peer == peer && peer->credits == 8);
+                        assert(send_short(replacement) == UCS_OK);
+                        complete(&a.iface, mock.ctx);
+                        assert(uct_rm_urma_link_receive(&a.iface, grant, 32) == UCS_OK);
+                        assert(peer->credits == 7); /* old grant never refills a recreated EP */
+                    } else {
+                        /* Close with a queued grant and no RX repost: never fabricate credit. */
+                        uct_rm_urma_link_progress(&b.iface);
+                        assert(b.iface.tx.ctrl_ep == NULL);
+                        assert(!ucs_list_is_empty(&b.iface.link.pending));
+                    }
+                }
+            }
+            fixture_allow_other_live = 1;
+            control_fixture_cleanup(&a);
+            control_fixture_cleanup(&b);
+            fixture_allow_other_live = 0;
+            control_fixture_cleanup(&c);
+            assert(mock.live_targets == 0 && mock.live_segments == 0);
+        }
+    }
+    puts("PASS A7 iface_v2: 14 new actual-C lifecycle/error cases, inline/non-inline");
+    puts("     32 EP generations, late control CQE/grant, K limit, pending OOM,");
+    puts("     terminal post, queued-grant close and request-ID overflow; CPU ONLY");
 }
 
 int main(void)
@@ -711,10 +1689,15 @@ int main(void)
     ucs_ptr_array_init(&iface.super.eps, "r1-EPs");
     ucs_list_head_init(&iface.tx.retired_eps);
     kh_init_inplace(uct_rm_urma_targets, &iface.targets);
+    {
+        uct_rm_urma_iface_config_t config = {0};
+        uct_rm_urma_link_init(&iface, &config);
+    }
     ucs_arbiter_init(&iface.tx.arbiter);
     pool_init(&iface.super.tx.mp, sizeof(uct_ub_iface_send_desc_t) + 2048, 1);
     pool_init(&iface.super.tx.short_desc_mp, sizeof(uct_ub_iface_send_desc_t) + 256, 1);
     pool_init(&iface.super.tx.send_op_mp, sizeof(uct_urma_iface_send_op_t), 0);
+    pool_init(&iface.tx.pending_mp, sizeof(uct_rm_urma_fc_pending_req_t), 0);
     a = new_ep(&iface, 11);
     b = new_ep(&iface, 22);
     assert(a->rm_urma_jetty == b->rm_urma_jetty);
@@ -775,9 +1758,12 @@ int main(void)
 
     a = new_ep(&iface, 33);
     iface.super.config.max_inline = 0;
-    assert(uct_rm_urma_ep_fc_ctrl(&a->super.super.super, UCT_RM_URMA_EP_FC_PURE_GRANT, NULL) == UCS_OK);
+    iface.super.config.fc_enabled = 1;
+    assert(uct_rm_urma_iface_send_fc_grant(&iface, &a->target->key.remote,
+                                         &a->target->key.token, 33) == UCS_OK);
     a1 = mock.ctx; fc_a = mock.header_addr;
-    assert(uct_rm_urma_ep_fc_ctrl(&b->super.super.super, UCT_RM_URMA_EP_FC_PURE_GRANT, NULL) == UCS_OK);
+    assert(uct_rm_urma_iface_send_fc_grant(&iface, &b->target->key.remote,
+                                         &b->target->key.token, 22) == UCS_OK);
     b1 = mock.ctx; fc_b = mock.header_addr;
     assert(fc_a != fc_b && ((uct_ub_hdr_t *)(uintptr_t)fc_a)->ep_id == 33);
     assert(((uct_ub_hdr_t *)(uintptr_t)fc_b)->ep_id == 22);
@@ -794,6 +1780,8 @@ int main(void)
     uct_rm_urma_ep_destroy(&a->super.super.super);
     uct_rm_urma_ep_destroy(&b->super.super.super);
     assert(mock.unimports == 4);
+    uct_rm_urma_ep_destroy(&iface.tx.ctrl_ep->super.super.super);
+    iface.tx.ctrl_ep = NULL;
     ucs_arbiter_cleanup(&iface.tx.arbiter);
     assert(kh_size(&iface.targets) == 0);
     uct_rm_urma_iface_targets_cleanup(&iface);
@@ -803,8 +1791,17 @@ int main(void)
     ucs_mpool_cleanup(&iface.super.tx.short_desc_mp, 1);
     ucs_mpool_cleanup(&iface.super.tx.send_op_mp, 1);
     ucs_callbackq_cleanup(&worker.super.progress_q);
+    ucs_mpool_cleanup(&iface.tx.pending_mp, 1);
     puts("PASS synthetic CQE isolation and cleanup; MOCK ONLY, no hardware validation");
+    test_legacy_iface_address();
     test_fc_errors();
     test_target_reuse();
+    test_control_sender();
+    test_iface_v2_one_way();
+    test_accounted_rx();
+    test_iface_v2_bidirectional();
+    test_iface_v2_constructor_failures();
+    test_iface_v2_pending_other_peer();
+    test_iface_v2_lifecycle_failures();
     return 0;
 }

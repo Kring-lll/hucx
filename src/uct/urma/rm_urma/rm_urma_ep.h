@@ -15,6 +15,8 @@
 #include <uct/urma/base/urma_ep.h>
 #include <uct/urma/rm_urma/rm_urma_iface.h>
 
+#include "rm_urma_link.h"
+
 #define RM_URMA_UNSIGNALED_INF UINT16_MAX
 
 struct uct_rm_urma_ep {
@@ -27,6 +29,8 @@ struct uct_rm_urma_ep {
     urma_target_jetty_t             *tjetty;
     uct_rm_urma_target_t            *target; /* iface-owned; held through CQEs */
     urma_tp_t                       tp;
+    uct_rm_urma_peer_t              *peer;
+    ucs_list_link_t                  peer_list;
 };
 
 typedef struct uct_rm_urma_ep_addr {
@@ -182,7 +186,14 @@ static UCS_F_ALWAYS_INLINE uint8_t uct_rm_urma_fc_get_fc_hdr(uint8_t id)
 
 #define UCT_RM_URMA_CHECK_RES_AND_FC(_iface, _ep, _am_id) \
     UCT_RM_URMA_CHECK_RES(_iface, _ep) \
-    UCT_RM_URMA_CHECK_FC(_iface, _ep, _am_id) \
+    if ((_iface)->link.mode == UCT_RM_URMA_LINK_IFACE_V2) { \
+        ucs_status_t _link_status = uct_rm_urma_link_check(_ep); \
+        if (_link_status != UCS_OK) { \
+            return _link_status; \
+        } \
+    } else { \
+        UCT_RM_URMA_CHECK_FC(_iface, _ep, _am_id) \
+    } \
     uct_rm_urma_iface_check_pending(_iface, &(_ep)->arb_group);
 
 #define UCT_RM_URMA_UPDATE_FC_WND(_iface, _fc) \
@@ -197,7 +208,9 @@ static UCS_F_ALWAYS_INLINE uint8_t uct_rm_urma_fc_get_fc_hdr(uint8_t id)
     }
 
 #define UCT_RM_URMA_UPDATE_FC(_iface, _ep, _fc_hdr) \
-    { \
+    if ((_iface)->link.mode == UCT_RM_URMA_LINK_IFACE_V2) { \
+        uct_rm_urma_link_sent(_ep); \
+    } else { \
         if ((_fc_hdr) & UCT_RM_URMA_EP_FLAG_FC_GRANT) { \
             UCS_STATS_UPDATE_COUNTER((_ep)->super.fc.stats, UCT_UB_FC_STAT_TX_GRANT, 1); \
         } \

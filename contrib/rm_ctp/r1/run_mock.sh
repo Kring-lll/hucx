@@ -11,7 +11,8 @@ import re, subprocess, sys
 from pathlib import Path
 symbols = set(re.findall(r'\bU\s+(urma_\w+)',
                         subprocess.check_output(['nm', '-u', sys.argv[1]], text=True)))
-mocked = {'urma_post_jetty_send_wr', 'urma_modify_jetty',
+mocked = {'urma_post_jetty_send_wr', 'urma_post_jfr_wr', 'urma_poll_jfc',
+          'urma_modify_jetty',
           'urma_unimport_jetty', 'urma_unimport_seg', 'urma_init', 'urma_uninit',
           'urma_import_jetty', 'urma_import_seg',
           'urma_delete_jetty', 'urma_delete_jfr'}
@@ -31,4 +32,10 @@ ${CC:-gcc} -std=gnu99 -O1 -g -DHAVE_CONFIG_H -fsanitize=address,undefined \
 # Some Work runtimes restrict /proc task enumeration used by LeakSanitizer.
 # ASan/UBSan remain enabled; opt in to LSan with ASAN_OPTIONS=detect_leaks=1.
 UCX_LOG_LEVEL=error ASAN_OPTIONS=${ASAN_OPTIONS:-detect_leaks=0} "$out/test_shared_tx"
+${CC:-gcc} -std=gnu99 -O1 -g -DHAVE_CONFIG_H -Wall -Wextra -Werror \
+    -fsanitize=address,undefined -fno-omit-frame-pointer \
+    -I"$build" -I"$build/src" -I"$src/src" \
+    "$src/src/uct/urma/rm_urma/rm_urma_addr.c" \
+    "$src/contrib/rm_ctp/r1/test_link_addr.c" -o "$out/test_link_addr"
+ASAN_OPTIONS=${ASAN_OPTIONS:-detect_leaks=0} "$out/test_link_addr"
 printf 'MOCK_LOG_DIR=%s\n' "$out"

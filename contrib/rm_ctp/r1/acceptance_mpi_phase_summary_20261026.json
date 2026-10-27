@@ -1,0 +1,76 @@
+{
+  "evidence_type": "用户原始终端及固定工具门禁，非下载的节点results.json",
+  "product_commit": "2a8e3b771211e5af491c8ca483ebcc01a03c2f01",
+  "module_sha256": "26b9dac631af27622d0f04f3f86758332bb59874f4cf21743d2820c5783e3aa6",
+  "tested_tool_sha256": "17be3ed1e6152cc5f378aea0e568431ca2d7660ee8f5a500260164c75b1d31b9",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz",
+  "results": "a5_mpi_phase_0sot496v/results.json",
+  "mpi_address_phase_pass": true,
+  "two_rounds_8b_data_pass": true,
+  "maps_both_pass": true,
+  "legacy_ep_callbacks": 0,
+  "second_round_address_reuse": true,
+  "network_packets_measured": false,
+  "performance_accepted": false,
+  "ctp_contract_closed": false,
+  "ranks": [
+    {
+      "rank": 0,
+      "publish_phases": [
+        "MPI_INIT",
+        "MPI_INIT"
+      ],
+      "peer_get_phases": [
+        "FIRST_DATA"
+      ],
+      "connect_phases": [
+        "FIRST_DATA"
+      ],
+      "transport_api_counts_not_network_packets": {
+        "iface_exports": {
+          "MPI_INIT": 2,
+          "AFTER_INIT_BEFORE_DATA": 0,
+          "FIRST_DATA": 0,
+          "SECOND_DATA": 0,
+          "OTHER": 0
+        },
+        "iface_connects": {
+          "MPI_INIT": 0,
+          "AFTER_INIT_BEFORE_DATA": 0,
+          "FIRST_DATA": 1,
+          "SECOND_DATA": 0,
+          "OTHER": 0
+        }
+      }
+    },
+    {
+      "rank": 1,
+      "publish_phases": [
+        "MPI_INIT",
+        "MPI_INIT"
+      ],
+      "peer_get_phases": [
+        "FIRST_DATA"
+      ],
+      "connect_phases": [
+        "FIRST_DATA"
+      ],
+      "transport_api_counts_not_network_packets": {
+        "iface_exports": {
+          "MPI_INIT": 2,
+          "AFTER_INIT_BEFORE_DATA": 0,
+          "FIRST_DATA": 0,
+          "SECOND_DATA": 0,
+          "OTHER": 0
+        },
+        "iface_connects": {
+          "MPI_INIT": 0,
+          "AFTER_INIT_BEFORE_DATA": 0,
+          "FIRST_DATA": 1,
+          "SECOND_DATA": 0,
+          "OTHER": 0
+        }
+      }
+    }
+  ]
+}

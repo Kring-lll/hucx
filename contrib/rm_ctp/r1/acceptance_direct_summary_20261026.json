@@ -1,0 +1,50 @@
+{
+  "evidence_type": "用户原始终端摘要及固定工具门禁；非下载的节点results.json",
+  "product_commit": "2a8e3b771211e5af491c8ca483ebcc01a03c2f01",
+  "module_sha256": "26b9dac631af27622d0f04f3f86758332bb59874f4cf21743d2820c5783e3aa6",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz",
+  "results": "a7_direct_four_ep_h8gxrgec/results.json",
+  "helper_sha256": "3a1f75998b22c20aafc12a0f03f272d8d22ba2aebcd9ca166755debb8db6623e",
+  "direct_uct_four_ep_pass": true,
+  "module_both_match": true,
+  "address_published_and_received_before_app_ep": true,
+  "iface_address_length": 48,
+  "ep_address_length": 0,
+  "rx_depth": 64,
+  "max_peers": 5,
+  "window": 8,
+  "application_eps": {
+    "sender": 4,
+    "receiver": 0
+  },
+  "payload": {
+    "messages": 64,
+    "bytes_per_message": 64,
+    "am_short": 32,
+    "am_bcopy": 32,
+    "data_pass": true
+  },
+  "fc": {
+    "requests": 10,
+    "grants": 10,
+    "credits": 60
+  },
+  "targets": {
+    "sender": {
+      "import": 1,
+      "reuse": 14,
+      "release": 1
+    },
+    "receiver": {
+      "import": 1,
+      "reuse": 10,
+      "release": 1
+    }
+  },
+  "candidate_maps_both_pass": true,
+  "a6_focused_node_gap_closed": true,
+  "full_a7_accepted": false,
+  "performance_accepted": false,
+  "ctp_contract_closed": false,
+  "mpi_startup_timestamp_measured": false
+}

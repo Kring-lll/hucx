@@ -17,9 +17,46 @@
 #include <ucs/datastruct/list.h>
 #include <ucs/datastruct/khash.h>
 
+#include "rm_urma_addr.h"
+
 #include <urma_api.h>
 
 typedef struct uct_rm_urma_iface    uct_rm_urma_iface_t;
+typedef struct uct_rm_urma_peer     uct_rm_urma_peer_t;
+typedef struct uct_rm_urma_link_req uct_rm_urma_link_req_t;
+
+static UCS_F_ALWAYS_INLINE khint32_t
+uct_rm_urma_peer_hash(const uct_rm_urma_return_addr_t *address)
+{
+    khint32_t hash = kh_int64_hash_func(address->iface.instance);
+    unsigned i;
+
+    hash ^= kh_int_hash_func(address->iface.jetty_id ^ address->uasid);
+    for (i = 0; i < sizeof(address->eid); ++i) {
+        hash = hash * 31 + address->eid[i];
+    }
+    return hash;
+}
+
+static UCS_F_ALWAYS_INLINE int
+uct_rm_urma_peer_equal(const uct_rm_urma_return_addr_t *a,
+                       const uct_rm_urma_return_addr_t *b)
+{
+    return (a->iface.instance == b->iface.instance) &&
+           (a->iface.jetty_id == b->iface.jetty_id) &&
+           (a->uasid == b->uasid) && !memcmp(a->eid, b->eid, sizeof(a->eid));
+}
+
+KHASH_INIT(uct_rm_urma_peers, const uct_rm_urma_return_addr_t *,
+           uct_rm_urma_peer_t *, 1, uct_rm_urma_peer_hash,
+           uct_rm_urma_peer_equal)
+
+KHASH_MAP_INIT_INT64(uct_rm_urma_requests, uct_rm_urma_peer_t *)
+
+enum {
+    UCT_RM_URMA_LINK_LEGACY,
+    UCT_RM_URMA_LINK_IFACE_V2
+};
 
 typedef struct uct_rm_urma_jetty {
     urma_jetty_t                    *jetty;
@@ -95,6 +132,17 @@ typedef struct uct_rm_urma_pending_req {
     uct_ep_t          *ep;
 } uct_rm_urma_pending_req_t;
 
+/* A grant owns its destination independently of any business EP. The same
+ * object stays in pending, then in the control sender's outstanding queue. */
+typedef struct uct_rm_urma_fc_pending_req {
+    uct_rm_urma_pending_req_t super;
+    uct_urma_iface_send_op_t  send_op;
+    uct_rm_urma_target_t     *target;
+    uct_ub_iface_send_desc_t *desc;
+    uct_rm_urma_ep_t         *legacy_ep; /* only while an old-format reply waits */
+    uint16_t                 remote_ep_id;
+} uct_rm_urma_fc_pending_req_t;
+
 struct uct_rm_urma_iface {
     uct_urma_iface_t             super;
     uct_rm_urma_jetty_t          rm_urma_jetty; /* owned once per iface */
@@ -110,6 +158,7 @@ struct uct_rm_urma_iface {
     struct {
         ucs_mpool_t            pending_mp; /* pool for FC grant and keepalive pending requests */
         ucs_arbiter_t          arbiter;
+        uct_rm_urma_ep_t      *ctrl_ep; /* software completion owner, no Jetty */
         ucs_list_link_t        retired_eps;
         ucs_status_t          error;
         unsigned              progress_depth;
@@ -117,6 +166,23 @@ struct uct_rm_urma_iface {
         int                    in_pending;
 #endif
     } tx;
+
+    struct {
+        unsigned mode;
+        unsigned max_peers;
+        unsigned peer_count;
+        int creating_control;
+        uint64_t instance;
+        uint64_t sequence;
+        uint32_t rx_free;
+        uint32_t data_debt;
+        uint32_t control_debt;
+        uct_rm_urma_iface_addr_v2_t address;
+        ucs_list_link_t peers;
+        ucs_list_link_t pending;
+        khash_t(uct_rm_urma_requests) requests;
+        khash_t(uct_rm_urma_peers) peers_by_address;
+    } link;
 
     UCS_STATS_NODE_DECLARE(stats)
 };
@@ -126,6 +192,8 @@ typedef struct uct_rm_urma_iface_config {
     unsigned                   flush_mode;
     unsigned                   tx_jfc_len;
     double                     soft_thresh;
+    unsigned                   link_mode;
+    unsigned                   max_peers;
 } uct_rm_urma_iface_config_t;
 
 static UCS_F_ALWAYS_INLINE int
@@ -170,4 +238,8 @@ ucs_status_t uct_rm_urma_iface_target_get(uct_rm_urma_iface_t *iface,
                                          uct_rm_urma_target_t **target_p);
 void uct_rm_urma_iface_target_put(uct_rm_urma_iface_t *iface,
                                  uct_rm_urma_target_t *target);
+ucs_status_t uct_rm_urma_iface_send_fc_grant(uct_rm_urma_iface_t *iface,
+                                           const urma_rjetty_t *remote,
+                                           const urma_token_t *token,
+                                           uint32_t remote_ep_id);
 #endif

@@ -689,6 +689,19 @@ ucs_status_t uct_ub_iface_create_jfr(uct_urma_iface_t *iface, urma_jfr_cfg_t *jf
 ucs_status_t uct_ub_iface_event_fd_get(uct_iface_h tl_iface, int *fd_p);
 ucs_status_t uct_ub_iface_event_arm(uct_iface_h tl_iface, unsigned events);
 void uct_ub_iface_init_recv_queue(uct_urma_iface_t *iface, unsigned init_count);
+/* Optional RX accounting for transports with a shared receive-credit ledger.
+ * The original poll API retains its batch/error behavior when unused. */
+typedef struct uct_ub_iface_rx_result {
+    unsigned data;
+    unsigned control;
+    unsigned posted;
+    ucs_status_t status;
+} uct_ub_iface_rx_result_t;
+
+unsigned uct_ub_iface_poll_rx_accounted(uct_urma_iface_t *iface, uint32_t fc_mask,
+                                        int force_repost,
+                                        uct_ub_iface_rx_result_t *result);
+
 unsigned uct_ub_iface_poll_rx(uct_urma_iface_t *iface, uint32_t fc_mask);
 ucs_status_t uct_ub_iface_completion_err_proc(uct_urma_iface_t *iface, urma_cr_t *cr, void *jetty,
                                               uct_ub_ep_t *ep, uct_ub_ep_t *fc_ep);

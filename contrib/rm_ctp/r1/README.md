@@ -1,5 +1,11 @@
 # R1: shared local RM Jetty
 
+MPI地址阶段专项通过：两端均初始化发布、首次数据获取/建链、第二轮复用。见[阶段结果与必要契约边界](acceptance_mpi_phase_20261026.md)。产品不变，不是性能/网络包测量。
+
+A7本轮回归通过：14个实际C异常/生命周期场景，加两轮iface/32代业务EP节点专项通过；[结果与范围](a7_lifecycle_20261026.md)。产品源码不变，必要前置契约与性能边界单列。
+
+最新补充：2a8e直接UCT四EP/零反向业务EP/跨窗FC节点专项通过，见[验收记录](acceptance_direct_20261026.md)。复现工具a7_iface_four_ep_20261026.py只编译测试程序，不替换产品；不是完整A7或性能验收。
+
 ## Validated substep: A4 target reuse, step 1 (not complete A4/A6)
 
 Base: `524abdbbbdcdbf05278325de0d0f44f5532d7cc2`.
@@ -180,3 +186,29 @@ point for a new run. Use the corrected `accept.py` above for new runs.
 Package one AtomGit delivery commit for the accepted R1 scope, preserve shared
 history and verify that the four product files match the tested commit.
 Formal AtomGit delivery is a separate workflow checkpoint.
+
+
+## iface_v2候选与验证范围
+
+基线：AtomGit rm-a-connection/990398f；完整设计/源码责任表见../LINK_DESIGN.md第12节。
+默认legacy_ep不切换。新模式的变量为UCX_RM_URMA_LINK_MODE=iface_v2、
+UCX_RM_URMA_MAX_PEERS=K，并显式启用FC和满足预算的RX深度/窗口。
+节点脚本为accept_iface.py CASE --repeats 3；重跑已部署的CASE时加--no-deploy，
+不得覆盖可用安装。脚本自带W8/TX8/RX64/K5矩阵，K包括可能使用RM的self关系。
+先看新模式加载门禁，再看全部legacy/new/RC结果；任何失败都会保留且退出非0。
+终端可显示8B样本和每context Jetty峰值，但存在失败时不形成优势结论。
+
+新代码复用tx.mp、pending_mp、arbiter、outstanding和CQE，无新注册池/Jetty/重传定时器。
+fc_burst.c从已验证FC helper提取，内容SHA256仍502048a73533151fccba7cde6b77c24a84ae26e7e1c6ec7b6f9a6291d44d3b59。
+run_mock.sh执行实际C路径；test_link_addr.c为独立编解码边界测试，不是Python设计模型。
+本段原为节点测试前状态；62fb后续结果及修复边界见下文，历史4b/638结果不能归给本候选。
+
+2026-10-26：62fb ARM64构建和新模式9个正常用例通过，完整矩阵因legacy/部分RC失败未通过。
+legacy失败定位为零长度iface地址回调误报UNSUPPORTED；本次仅恢复legacy的成功no-op。
+test_shared_tx.c新增公共UCT地址API回归，未修复对象先失败、修复后完整CPU回归通过。
+当时修复版仍待ARM64/节点复验；RC status2保持OPEN，未确认性能无回退或故障恢复。
+
+2026-10-26后续：2a8e ARM64构建和28项正常矩阵全部通过，legacy已恢复。
+原始时延、API计数和资源结果见acceptance_iface_20261026.md及acceptance_iface_summary_20261026.json。
+本记录只更新证据；产品/构建代码与已测2a8e一致，文档提交无需重新构建。
+正常矩阵不证明接收端不存在反向应用EP，也不替代完整生命周期/时序/故障语义验收；下一专项与A7衔接。
