@@ -1,9 +1,9 @@
 {
   "base_commit": "990398f43e7b589b4030e45d69b48c1766f5eac3",
-  "scope": "iface_v2软件实现、ARM64正常28项与直接UCT四EP/零反向业务EP跨窗专项通过；完整A7/性能/CTP故障契约未验收",
+  "scope": "已测2a8e有界正常iface建链及A5/A7证据阶段交付；重传按导师安排延期，A8/A9节点验收待完成",
   "files": {
-    "contrib/rm_ctp/LINK_DESIGN.md": "2c3f5ab5510f7859a43f5363d69598318bfb181a108dc0e9df60b01d47fe88c2",
-    "contrib/rm_ctp/REQUIREMENTS.md": "b411dddba782dc61a16f63e87f0d80f7a7dbb6b59239a12adcdfe3a2752f302b",
+    "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
+    "contrib/rm_ctp/REQUIREMENTS.md": "a9c70151ae866533df274b2782093d2213bc986e2b033462c83461c9bb750801",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/README.md": "a3d7d969e9842554eaf283b459c7902a808be2c6fe0df2f24247d27cfa1ca407",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
@@ -74,7 +74,10 @@
     "a7_formal_joint_delivery_preconditions_closed": false,
     "a7_summary": "contrib/rm_ctp/r1/acceptance_a7_summary_20261026.json",
     "a5_mpi_runtime_phase_pass": true,
-    "a5_mpi_phase_summary": "contrib/rm_ctp/r1/acceptance_mpi_phase_summary_20261026.json"
+    "a5_mpi_phase_summary": "contrib/rm_ctp/r1/acceptance_mpi_phase_summary_20261026.json",
+    "delivery_scope": "有界正常建链与已记录回归；非完整CTP故障可靠性/性能验收",
+    "retransmission_deferred_by_mentor_20261026": true,
+    "normal_stage_delivery_scope_explicit": true
   },
   "product_tested_commit": "2a8e3b771211e5af491c8ca483ebcc01a03c2f01",
   "product_module_sha256": "26b9dac631af27622d0f04f3f86758332bb59874f4cf21743d2820c5783e3aa6",
