@@ -3,7 +3,7 @@
   "scope": "已测2a8e有界正常iface建链及A5/A7证据阶段交付；重传按导师安排延期，A8/A9节点验收待完成",
   "files": {
     "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
-    "contrib/rm_ctp/REQUIREMENTS.md": "a9c70151ae866533df274b2782093d2213bc986e2b033462c83461c9bb750801",
+    "contrib/rm_ctp/REQUIREMENTS.md": "d0a7b9da994e9bb50c53cb0d454ebe22be1fac06bef90b1a42a524b2bd138850",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/README.md": "a3d7d969e9842554eaf283b459c7902a808be2c6fe0df2f24247d27cfa1ca407",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
@@ -188,5 +188,13 @@
     "full_feature_acceptance": false,
     "performance_accepted": false,
     "historical_rc_status2_root_cause": "UNRESOLVED; all RC cases pass in this normal matrix"
+  },
+  "a89_tooling": {
+    "path": "contrib/rm_ctp/a89",
+    "product_unchanged": true,
+    "cpu_checks": "PREPARED_AND_RUN_SEPARATELY",
+    "node_acceptance": "PENDING",
+    "performance_acceptance": "PENDING_REVIEW",
+    "atomgit_delivery": "NOT_YET"
   }
 }
