@@ -3,7 +3,7 @@
   "scope": "已测2a8e有界正常iface建链及A5/A7证据阶段交付；重传按导师安排延期，A8/A9节点验收待完成",
   "files": {
     "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
-    "contrib/rm_ctp/REQUIREMENTS.md": "dc4a57c9cb94acbdbf450b1381404ef29f60624b702f8ff4b0941e8ae0fdded3",
+    "contrib/rm_ctp/REQUIREMENTS.md": "c1ce71e5c7cef99a3fc6af39255411586130a7d25bf61cfaa09c09d3d423941f",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/README.md": "a3d7d969e9842554eaf283b459c7902a808be2c6fe0df2f24247d27cfa1ca407",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
@@ -204,6 +204,16 @@
       "failure": "unrecognized saved launcher option: /usr/bin/env",
       "scope": "operator terminal evidence; full node JSON not downloaded"
     },
-    "launcher_env_fix": "CPU_CHECKED_NODE_RECHECK_PENDING"
+    "launcher_env_fix": "CPU_CHECKED_NODE_RECHECK_PENDING",
+    "second_node_run": {
+      "directory": "r1_shared_2a8e3b771_ps2tIz/a89_xtypmczp",
+      "regression_groups_passed": 4,
+      "a8_stage": "PPN1 first resource probe",
+      "error": "timeout and application both observed; wrapper has no Jetty",
+      "payload_and_finalize_both": "PASS",
+      "cleanup_terminated_pids_both": [],
+      "observer_fix": "CPU_CHECKED_NODE_RECHECK_PENDING",
+      "source": "operator terminal, full raw report remains on node"
+    }
   }
 }

@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-27",
+  "development_base": "751c3cc801192ee2403bbd93e8ac026bf38c7945",
+  "product_commit": "2a8e3b771211e5af491c8ca483ebcc01a03c2f01",
+  "node_acceptance": "PENDING",
+  "files": {
+    ".gitignore": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793",
+    "B_NEXT.md": "4c5a387877471410b72990a1aca4a801d190d0016321efd8de7e866081754104",
+    "README.md": "ed29385c56f1c43f9359ee1da6ebab837924a86658bcd27c92d1037f96d7fe75",
+    "build_zip.py": "b438239b7089498e3195bab22ea9805c44a78f65d6ce4815b5dc3d1bff5fad75",
+    "mpi_scale.c": "c2a0a77fbf6c358be40610d6f1d1d4bb8b1510556bd9406245a1adf60c341f7c",
+    "rank_exec.py": "622435f797c1c074d51444cdc96ff9bc82600588fb66a761e0b2937a7eb37530",
+    "run_scale.py": "b6e913d0a25ee345423d89ced63caa71b7e6985c5702affae64f14a2199b786b",
+    "support.py": "ed3cf5ab454178340734492b08c9cbf4a20e056f032c37b328386e25bc4ca365",
+    "tests/cpu_mpi/file_mpi.c": "e82062e6d8254f490e19dbc428cda051944aab74b9d73cec92548097c452399e",
+    "tests/cpu_mpi/mpi.h": "40084b63de8781a3d92c739c0c3f4e89c684e8a79c1169f9f2f789442145b458",
+    "tests/cpu_program.py": "ce889e13e3bd450a17b8fa8a703243760d6463c6c589a59500742d3015bc5629",
+    "tests/test_support.py": "6cbe6c9c9aead04858b59f720f9c5c10986d658c2679808c3ecf1868e5738955"
+  },
+  "regression_files": {
+    "a7_iface_four_ep_20261026.py": "3a1f75998b22c20aafc12a0f03f272d8d22ba2aebcd9ca166755debb8db6623e",
+    "a7_iface_lifecycle_20261026.py": "23f1feeaab56b7b217257f0adb0b9f068a213ee5e68aface1855779685c75aef",
+    "a7_iface_lifecycle.c": "fa7529fab6d035a5c3ec2f40dfef5e917fb58bc0a9d1ce414f72a18f283ae232",
+    "a5_mpi_phase_20261026.py": "b4c52849390ff7815d7d83a11748687f2166216dde8ea97cf00eb936c2803a98",
+    "a5_mpi_phase.c": "29da3cca46dce96e24874c0ace4f58ee144daea380417b0f9891270a9cd0fa35"
+  }
+}

@@ -51,11 +51,11 @@ A9的运行门禁是A8完整正常功能与资源安全门禁通过；此时性�
 
 ## 节点运行
 
-将交付的`hucx_a89_envfix_20261027.zip`手动上传实验根`upload`。zip是Python zipapp，不是源码tar包；
+将交付的`hucx_a89_observerfix_20261027.zip`手动上传实验根`upload`。zip是Python zipapp，不是源码tar包；
 入口核验内含工具哈希，解压到固定已测CASE下新的toolkit目录。**不用重编译传输库，不覆盖旧版本。**
 
 ```bash
-python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/upload/hucx_a89_envfix_20261027.zip
+python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/upload/hucx_a89_observerfix_20261027.zip
 ```
 
 默认全部回归+A8+A9。仅看预算可追加`--plan`（不SSH不启动MPI）；只运行A8可追加`--phase a8`。
@@ -96,3 +96,22 @@ B下一步参见[B_NEXT.md](B_NEXT.md)，本包没有提前完成分片。
 不会静默忽略。新增5项CPU用例覆盖两侧env、优先级、MCA值边界和不支持动作。
 预检提前到旧8B/四组回归前，失败保留来源JSON哈希和停止位置。传输src未改。
 新zip用独立文件名，不覆盖旧包；节点仍需实际重跑，A8/A9保持未验收。
+
+## 2026-10-27 资源观察器进程归属修复与本轮恢复
+
+节点a89_xtypmczp四组回归再次通过。PPN1首个资源轮两rank数据/Finalize均通过，
+每rank记录却有两个PID：timeout进程RM acquire=0，实际程序RM acquire=1。
+根因为旧包装把observer同时预加载进timeout和应用，不是已证实的产品泄漏。
+修复仅把观察器赋值放到timeout之后的env执行边界。非观测计时路径不加载observer，
+资源轮仍严格要求每rank一份记录、TX深度正确、退出live0，并核对实际应用PID。
+
+本次可用`--resume-from CASE/a89_xtypmczp/results.json`，只接受此已知检查点和原三轮配置。
+工具重新核对双端库、boot ID/CPU许可、启动JSON、原工具manifest、回归通过日志、
+原二进制、每rank原始数据及maps、空清理结果；只复用四组回归及九个PPN1无观察器计时。
+原始失败不覆盖，新报告保留路径、哈希和失败对象。三模式资源轮全部重跑；后续规模照常运行。
+恢复只允许一小时内同一节点/库环境；过期或任一证据不符则停止，需不带恢复参数重新跑。
+原始计时和恢复后资源观测来自不同时间点，性能仍须人工审阅，不能自动宣称稳定优势。
+
+新增4项观察器测试使用真实gcc动态库和GNU timeout，复现双构造并验证仅应用被记录；
+新增4项恢复测试用明确标注的CPU模拟数据验证通过复用、失败保留和变更拒绝。
+所有src保持已测2a8e；真实节点资源重跑尚未执行，A8/A9仍未验收。

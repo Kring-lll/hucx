@@ -175,7 +175,7 @@ def check_maps(text, install):
     return True
 
 
-def resource_counts(directory, expected_ranks, mode, install, depth):
+def resource_counts(directory, expected_ranks, mode, install, depth, expected_pids=None):
     results = {}
     for path in sorted(Path(directory).glob('rank*_pid*.jsonl')):
         rows = [json.loads(line) for line in path.read_text().splitlines()]
@@ -212,8 +212,15 @@ def resource_counts(directory, expected_ranks, mode, install, depth):
             raise ValueError('missing Jetty/wrong depth/leak: rank ' + str(rank))
         if mode == 1 and any(value != 1 for value in peaks.values()):
             raise ValueError('RM shared Jetty peak is not one per context')
+        match = re.fullmatch(r'rank(\d+)_pid(\d+)\.jsonl', path.name)
+        if match is None or int(match[1]) != rank:
+            raise ValueError('observer filename/rank identity mismatch')
+        process_id = int(match[2])
+        if expected_pids is not None and expected_pids.get(rank) != process_id:
+            raise ValueError('observer PID does not belong to the measured application')
         check_maps(path.with_suffix('.maps').read_text(), install)
-        results[str(rank)] = {'peaks_per_context': peaks, 'tx_depth': depth, 'live_at_exit': 0}
+        results[str(rank)] = {'peaks_per_context': peaks, 'tx_depth': depth,
+                              'live_at_exit': 0, 'application_pid': process_id}
     if set(map(int, results)) != set(expected_ranks):
         raise ValueError('observer rank coverage incomplete')
     return results

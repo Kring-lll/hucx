@@ -20,6 +20,8 @@ import tempfile
 import time
 import uuid
 
+from resume import load_checkpoint
+
 from support import (A8_LEVELS, DEFAULT_CASE, LAB, MINIMAL, MINIMAL_MODULE,
                      PRE_IFACE, PRE_IFACE_COMMIT, PRE_IFACE_MODULE,
                      PRODUCT_COMMIT, PRODUCT_MODULE, budget, check_maps,
@@ -320,7 +322,8 @@ def trial(case, out, base_commands, inventories, mode, ppn, repeat, probe, timeo
         if probe:
             result['resources'] = resource_counts(run, range(2 * ppn),
                                                   2 if mode == 'rc' else 1,
-                                                  str(install), config_budget['tx_depth'])
+                                                  str(install), config_budget['tx_depth'],
+                                                  {row['rank']: row['pid'] for row in rows})
         result['passed'] = True
     except BaseException as exc:
         failure = exc
@@ -384,6 +387,9 @@ def render_summary(out, report):
              '8B交换耗时是Sendrecv交换，不能与OSU单向latency混用；变化正负均保留。', '',
              '| PPN | 模式 | Init最大ms中位数 | 首轮全对端ms中位数 | 8B交换us中位数[最小,最大] | 1024B有效MB/s中位数 | 稳定RSS合计MiB（资源轮） |',
              '|---|---|---|---|---|---|---|']
+    if 'resume_source' in report:
+        lines.insert(4, '恢复来源：`' + report['resume_source']['source_report'] +
+                     '`。四组回归及PPN1无观察器计时保留原始来源；失败资源轮已留档，资源轮全部重跑。')
     for group in report['comparisons']:
         for mode, row in group['modes'].items():
             m = row['metrics']
@@ -416,9 +422,13 @@ def main():
     parser.add_argument('--phase', choices=('all', 'a8'), default='all')
     parser.add_argument('--skip-regressions', action='store_true',
                         help='仅诊断时使用；完整验收永不因跳过回归变成通过')
+    parser.add_argument('--resume-from', type=Path,
+                        help='只复用a89_xtypmczp的一小时内已核实回归和无观察器计时；资源轮重跑')
     parser.add_argument('--plan', action='store_true', help='只校验工具并打印接收预算，不SSH/不启动MPI')
     args = parser.parse_args()
     toolkit = validate_toolkit()
+    if args.resume_from and args.skip_regressions:
+        parser.error('恢复检查点不能同时跳过回归验证')
     if args.repeats < 3 or args.timeout < 60 or not 20 <= args.target_ppn <= 192:
         parser.error('repeats至少3，timeout至少60，target-ppn在20..192内')
     if args.plan:
@@ -434,7 +444,7 @@ def main():
         raise RuntimeError('本包固定已测CASE；不要用未验证的库替代')
     out = Path(tempfile.mkdtemp(prefix='a89_', dir=str(case)))
     print('A89_DIR=' + str(out), flush=True)
-    report = {'toolkit': toolkit, 'toolkit_tree_base': '751c3cc801192ee2403bbd93e8ac026bf38c7945',
+    report = {'toolkit': toolkit, 'toolkit_tree_base': '170d43cfa5cef3bf8b36367c220caf3e53d19a88',
               'product_commit': PRODUCT_COMMIT, 'module_sha256': PRODUCT_MODULE,
               'trials': [], 'comparisons': [], 'a8_functional': False,
               'a9_functional': False, 'full_acceptance': False,
@@ -478,7 +488,15 @@ def main():
         print('启动命令解析门禁=通过（保留MPI/MCA，应用env写入rank配置）', flush=True)
         report['old8b_control'] = old8b_control(out, baseline)
         save()
-        if not args.skip_regressions:
+        checkpoint = None
+        if args.resume_from:
+            checkpoint = load_checkpoint(args.resume_from, case, report, toolkit,
+                                         baseline, args.repeats)
+            report['regressions'] = checkpoint['regressions']
+            report['resume_source'] = checkpoint['provenance']
+            print('检查点验证=通过；复用四组回归及九个PPN1计时，三模式资源轮全部重跑', flush=True)
+            save()
+        elif not args.skip_regressions:
             report['regressions'] = regressions(case, out)
             save()
         else:
@@ -488,8 +506,13 @@ def main():
         binary = out / 'mpi_scale'
         compile_command = [str(mpi.with_name('mpicc')), '-std=c99', '-O2', '-g',
                            '-Wall', '-Wextra', '-Werror', str(ROOT / 'mpi_scale.c'), '-o', str(binary)]
-        report['compile_command'] = compile_command
-        run_logged(compile_command, dict(os.environ), out / 'compile.log', 90)
+        if checkpoint:
+            shutil.copy2(checkpoint['binary'], binary)
+            report['compile_command'] = checkpoint['compile_command']
+            report['binary_reused_from'] = str(checkpoint['binary'])
+        else:
+            report['compile_command'] = compile_command
+            run_logged(compile_command, dict(os.environ), out / 'compile.log', 90)
         (out / 'rank_exec.py').write_bytes((ROOT / 'rank_exec.py').read_bytes())
         ssh('set -eu\ntest ! -e "$1"\nmkdir "$1"\n', out)
         copy_remote([binary, out / 'rank_exec.py'], str(out) + '/')
@@ -511,8 +534,12 @@ def main():
             for repeat in range(args.repeats):
                 order = ('iface', 'old_rm', 'rc') if repeat % 2 == 0 else ('rc', 'old_rm', 'iface')
                 for mode in order:
-                    row = trial(case, out, commands, report['inventory'], mode, ppn, repeat,
-                                False, args.timeout)
+                    name = '%s_p%d_r%d_timing' % (mode, ppn, repeat)
+                    if checkpoint and name in checkpoint['timings']:
+                        row = checkpoint['timings'][name]
+                    else:
+                        row = trial(case, out, commands, report['inventory'], mode, ppn, repeat,
+                                    False, args.timeout)
                     report['trials'].append(row)
                     group.append(row)
                     save()

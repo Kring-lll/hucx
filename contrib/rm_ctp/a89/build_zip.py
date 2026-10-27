@@ -41,7 +41,7 @@ def manifest():
              '__pycache__' not in path.parts and path.name != 'toolkit_manifest.json'}
     regressions = {name: hashlib.sha256((REGRESSION / name).read_bytes()).hexdigest()
                    for name in REGRESSION_FILES}
-    value = {'date': '2026-10-27', 'development_base': '751c3cc801192ee2403bbd93e8ac026bf38c7945',
+    value = {'date': '2026-10-27', 'development_base': '170d43cfa5cef3bf8b36367c220caf3e53d19a88',
              'product_commit': '2a8e3b771211e5af491c8ca483ebcc01a03c2f01',
              'node_acceptance': 'PENDING', 'files': files, 'regression_files': regressions}
     (ROOT / 'toolkit_manifest.json').write_text(json.dumps(value, indent=2) + '\n')
