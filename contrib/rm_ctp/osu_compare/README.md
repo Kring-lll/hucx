@@ -2,7 +2,43 @@
 
 导师要求正式性能使用OSU；原A8/A9自编用例只作功能、资源、扩展性辅助取证。
 A9已由用户退出，暂不恢复。本包产品src仍是节点已测2a8e，不修改OSU通信代码或原二进制。
-当前只准备工具及CPU检查，真实节点新矩阵尚未运行，不填写OSU性能数值。
+标准OSU两批PPN1/8/16/20已通过，见acceptance_standard_20261027.md；下面原工具准备/预检失败段落为历史记录。
+仅RM扩展的新入口及其最高通过规模仍待节点验收。
+
+## 2026-10-27 新入口：先合表，再仅RM扩展
+
+产品、原OSU二进制、已实测的run.py/analysis.py/identity.c/osu_rank.py及A89依赖均不改。
+新增baselines.py复核两批原始证据，scale_rm.py只调度mode=rm，旧对照入口的PPN20保护保留。
+
+上传新包`hucx_osu_rm_scale_20261027.zip`。只复核并合并已通过的两批表格（无SSH/编译/新MPI）：
+
+```bash
+python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/upload/hucx_osu_rm_scale_20261027.zip --rm-scale --merge-only
+```
+
+该命令固定复核osu_compare_87i9g4lw（PPN1）和osu_compare_697v3h8j（PPN8/16/20）的results/trial/config、完整OSU输出、实际rank/maps、Jetty及退出；原文件不改。
+合表保留各批来源和原始样本范围，不能把两批当成同一批重复采样。
+
+用户协调节点空闲窗口后，执行仅RM扩展：
+
+```bash
+python3 -u /home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/upload/hucx_osu_rm_scale_20261027.zip --rm-scale --run
+```
+
+此命令会使用高规模资源，计划PPN32/48/64/96/128/160/192；每档两节点各PPN个进程，最多共384rank。
+两端CPU许可再次探测，按较小物理核数裁剪，不超配，不表示节点空闲。
+每个用例依次独立校验、5次正式计时、1次资源轮，固定8B/5000迭代/1000预热，验证轮1000/100。
+默认每任务600秒（参数--timeout），只清理本轮nonce/准确目录/starttime匹配的进程；单档失败停止，不重试掩盖错误。
+`--max-ppn 64`可明确限制规模；`--rm-scale --plan`不SSH/编译/MPI。
+
+标准OSU当前共同最高已通过PPN20。扩展运行前，还要求两批历史与当前的boot/CPU许可、库/OSU/HMPI/观察器/保存启动配置一致，改变时停止，不静默沿用旧可比基线。
+各用例分别更新最高完整通过PPN；共同最高仅在该档两个用例全部14个任务通过后更新。
+某个用例失败不抹掉另一个已完成的结果，也不把工具/环境失败称为RM硬件上限。
+高规模RC一律不启动，表中RC/相对收益填XX（本轮未做同规模RC），导师给出的PPN24不是本轮新增实测。
+
+输出完整comparison.md/CSV、results.json及每轮原始证据；表头口径与原对照一致，统计不用资源观察轮的时间/RSS。
+即使192全部通过，也只说明这两个用例在该配置下已验证至PPN192，不证明协议最大值或所有MPI场景。
+本次新增7项CPU检查（含合表失败留档），旧16项合计23项；CPU替身/文件契约不是真实节点扩展证明。
 
 ## 本轮范围
 

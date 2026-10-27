@@ -45,3 +45,12 @@ alltoall计时仅包围MPI_Alltoall，之后统计各rank时间，full输出平�
 可解析输出使用mca:coll:<component>:version或param前缀；新预检据此检查必需组件，未自行猜算法编号。
 原工具遗漏libnbc与用户节点日志相符；新配置仍须真实节点-h和性能任务验证。
 本次补丁起点为用户实际提交944d0a4e2d4d2291006b760cf03827f000f426dd，保留前文原工具起点及产品基线。
+
+## 标准OSU实测基线与RM-only复用边界
+
+2026-10-27通过GitHub只读接口复核rm-a-connection-dev最新提交2d04999fde719d54b769b43b6839f30aff09aae8，固定manifest内容与已交付collfix一致；补丁以其整树3b458d584fc4d3cc7f4fbbabf2430913c6ea4f2e为起点。
+该版本run.py保留PPN<=20保护；analysis.py的OSU解析/PMPI文件门禁及A89 budget/levels已支持较高规模，故新增独立mode=rm调度入口，不为扩展去改传输或原OSU程序。
+新入口复用这些已测文件，原字节保持不变；修改构建器只用于打包新入口和分流参数。
+已通过两批结果的完整文件在节点，本地仅有用户终端摘要；baseline校验器将节点原始结果作为输入重新核对，记录源JSON及trial/log SHA，不补造原始样本。
+CPU检查使用带明确标记的合成OSU日志/MPI API/Jetty事件，不当作节点硬件结果。
+原A89自编32/48/64通过只作历史辅助；新OSU32及更高尚未运行，不能移植原数据。

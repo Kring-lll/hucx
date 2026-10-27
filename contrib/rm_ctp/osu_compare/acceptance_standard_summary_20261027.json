@@ -1,0 +1,188 @@
+{
+  "date": "2026-10-27",
+  "evidence_source": "用户实际终端摘要；原始完整样本在节点，未下载；合表入口将在节点重新校验",
+  "source_commit": "2d04999fde719d54b769b43b6839f30aff09aae8",
+  "source_tree": "3b458d584fc4d3cc7f4fbbabf2430913c6ea4f2e",
+  "product_commit": "2a8e3b771211e5af491c8ca483ebcc01a03c2f01",
+  "module_sha256": "26b9dac631af27622d0f04f3f86758332bb59874f4cf21743d2820c5783e3aa6",
+  "package_sha256": "c211b8787d3ffb665ec5fab4a0b35f03a7c79e185104fad56de0e5d917176b69",
+  "version": "7.5.2",
+  "message_bytes": 8,
+  "timing_repeats": 5,
+  "timing_iterations": 5000,
+  "timing_warmup": 1000,
+  "validation_iterations": 1000,
+  "validation_warmup": 100,
+  "pml": "ucx",
+  "coll_components": "tuned,basic,libnbc,self",
+  "coll_tuned_use_dynamic_rules": 0,
+  "source_reports": [
+    "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz/osu_compare_87i9g4lw/results.json",
+    "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz/osu_compare_697v3h8j/results.json"
+  ],
+  "timing_samples_downloaded": false,
+  "a9_standard_osu": "PENDING",
+  "C": "DEFERRED",
+  "rows": [
+    {
+      "benchmark": "osu_multi_lat",
+      "ppn": 1,
+      "rc_us": 2.51,
+      "rm_us": 2.23,
+      "rm_reduction_pct_reported": 11.16,
+      "rc_jetty_process_peak_range": [
+        2,
+        2
+      ],
+      "rm_jetty_process_peak_range": [
+        1,
+        1
+      ],
+      "rc_rss_mib": 120.34,
+      "rm_rss_mib": 96.3,
+      "data": "PASS",
+      "exit": "PASS",
+      "source_report": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz/osu_compare_87i9g4lw/results.json"
+    },
+    {
+      "benchmark": "osu_alltoall",
+      "ppn": 1,
+      "rc_us": 2.57,
+      "rm_us": 2.28,
+      "rm_reduction_pct_reported": 11.28,
+      "rc_jetty_process_peak_range": [
+        2,
+        2
+      ],
+      "rm_jetty_process_peak_range": [
+        1,
+        1
+      ],
+      "rc_rss_mib": 120.37,
+      "rm_rss_mib": 96.32,
+      "data": "PASS",
+      "exit": "PASS",
+      "source_report": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz/osu_compare_87i9g4lw/results.json"
+    },
+    {
+      "benchmark": "osu_multi_lat",
+      "ppn": 8,
+      "rc_us": 2.32,
+      "rm_us": 2.02,
+      "rm_reduction_pct_reported": 12.93,
+      "rc_jetty_process_peak_range": [
+        9,
+        9
+      ],
+      "rm_jetty_process_peak_range": [
+        1,
+        1
+      ],
+      "rc_rss_mib": 1058.25,
+      "rm_rss_mib": 771.01,
+      "data": "PASS",
+      "exit": "PASS",
+      "source_report": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz/osu_compare_697v3h8j/results.json"
+    },
+    {
+      "benchmark": "osu_alltoall",
+      "ppn": 8,
+      "rc_us": 11.84,
+      "rm_us": 11.1,
+      "rm_reduction_pct_reported": 6.25,
+      "rc_jetty_process_peak_range": [
+        10,
+        12
+      ],
+      "rm_jetty_process_peak_range": [
+        1,
+        1
+      ],
+      "rc_rss_mib": 1069.14,
+      "rm_rss_mib": 933.44,
+      "data": "PASS",
+      "exit": "PASS",
+      "source_report": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz/osu_compare_697v3h8j/results.json"
+    },
+    {
+      "benchmark": "osu_multi_lat",
+      "ppn": 16,
+      "rc_us": 2.43,
+      "rm_us": 2.15,
+      "rm_reduction_pct_reported": 11.52,
+      "rc_jetty_process_peak_range": [
+        17,
+        17
+      ],
+      "rm_jetty_process_peak_range": [
+        1,
+        1
+      ],
+      "rc_rss_mib": 2143.69,
+      "rm_rss_mib": 1872.28,
+      "data": "PASS",
+      "exit": "PASS",
+      "source_report": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz/osu_compare_697v3h8j/results.json"
+    },
+    {
+      "benchmark": "osu_alltoall",
+      "ppn": 16,
+      "rc_us": 17.43,
+      "rm_us": 15.27,
+      "rm_reduction_pct_reported": 12.39,
+      "rc_jetty_process_peak_range": [
+        18,
+        21
+      ],
+      "rm_jetty_process_peak_range": [
+        1,
+        1
+      ],
+      "rc_rss_mib": 2149.14,
+      "rm_rss_mib": 1878.02,
+      "data": "PASS",
+      "exit": "PASS",
+      "source_report": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz/osu_compare_697v3h8j/results.json"
+    },
+    {
+      "benchmark": "osu_multi_lat",
+      "ppn": 20,
+      "rc_us": 2.47,
+      "rm_us": 2.26,
+      "rm_reduction_pct_reported": 8.5,
+      "rc_jetty_process_peak_range": [
+        23,
+        26
+      ],
+      "rm_jetty_process_peak_range": [
+        1,
+        1
+      ],
+      "rc_rss_mib": 2687.52,
+      "rm_rss_mib": 2334.26,
+      "data": "PASS",
+      "exit": "PASS",
+      "source_report": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz/osu_compare_697v3h8j/results.json"
+    },
+    {
+      "benchmark": "osu_alltoall",
+      "ppn": 20,
+      "rc_us": 27.58,
+      "rm_us": 19.57,
+      "rm_reduction_pct_reported": 29.04,
+      "rc_jetty_process_peak_range": [
+        22,
+        25
+      ],
+      "rm_jetty_process_peak_range": [
+        1,
+        1
+      ],
+      "rc_rss_mib": 2686.35,
+      "rm_rss_mib": 2335.7,
+      "data": "PASS",
+      "exit": "PASS",
+      "source_report": "/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019/r1_shared_2a8e3b771_ps2tIz/osu_compare_697v3h8j/results.json"
+    }
+  ]
+}

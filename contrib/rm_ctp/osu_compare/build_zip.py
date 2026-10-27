@@ -28,7 +28,10 @@ with zipfile.ZipFile(sys.argv[0]) as archive:
             raise SystemExit('工具包路径越界')
     archive.extractall(target)
 sys.path.insert(0, str(target / 'osu_compare'))
-runpy.run_path(str(target / 'osu_compare/run.py'), run_name='__main__')
+entry = 'scale_rm.py' if '--rm-scale' in sys.argv else 'run.py'
+if '--rm-scale' in sys.argv:
+    sys.argv.remove('--rm-scale')
+runpy.run_path(str(target / 'osu_compare' / entry), run_name='__main__')
 '''
 
 
@@ -41,7 +44,7 @@ def main():
              and p.name != 'manifest.json'}
     dependencies = {name: hashlib.sha256((ROOT.parent / 'a89' / name).read_bytes()).hexdigest()
                     for name in DEPENDENCIES}
-    manifest = {'date': '2026-10-27', 'source_base': '944d0a4e2d4d2291006b760cf03827f000f426dd',
+    manifest = {'date': '2026-10-27', 'source_base': '2d04999fde719d54b769b43b6839f30aff09aae8',
                 'product_commit': '2a8e3b771211e5af491c8ca483ebcc01a03c2f01',
                 'node_acceptance': 'PENDING', 'files': files, 'a89_dependencies': dependencies}
     path = ROOT / 'manifest.json'

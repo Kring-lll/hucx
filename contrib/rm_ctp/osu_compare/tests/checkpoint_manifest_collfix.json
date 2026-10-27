@@ -1,0 +1,29 @@
+{
+  "date": "2026-10-27",
+  "source_base": "944d0a4e2d4d2291006b760cf03827f000f426dd",
+  "product_commit": "2a8e3b771211e5af491c8ca483ebcc01a03c2f01",
+  "node_acceptance": "PENDING",
+  "files": {
+    ".gitignore": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793",
+    "README.md": "f2ff764a4727c6f049443643ff9cbea566bff1ec314e7a583d2e1746138cfede",
+    "SOURCES.md": "d252c0e527f040dc683c67e88816f7d795ee01bf7e32797215b3f3a599b9a9df",
+    "analysis.py": "86112d51aa211121152a082bd07c48ae7f18347bddafd7a422af8484a2b91b95",
+    "build_zip.py": "cea12ede5036deb578a9f316a7a4a9474027480252f91a5f8c06e4d82fa53d3f",
+    "identity.c": "f550eee4a2b644d8aa2d36ab502b73861d9104608c949e89c8dc91e0a9f63891",
+    "osu_rank.py": "1734a06ec4a5cd3715290e092716bf1f9c3910511bec9f6a19fb013b7fb9e5a9",
+    "run.py": "ba0bcf5864e2bc4322dc96f5e826fb92c73f70b2817c6002300191d3122473e0",
+    "tests/mpi.h": "e484c0a68c1d86f3bf2bd43f358f17bb683e1739818ad992d840025902eb4fe7",
+    "tests/test_cleanup.py": "ae004fe93f35e419929e048f82eb5ce07430ddc290b66884f0df17629459b9e7",
+    "tests/test_compare.py": "a12050b286e375cb8859f69a3c15cd027ee5cce24deff626745ecfa99015c841",
+    "tests/test_identity.py": "9399901e207402924fa9e32c2ce38dbd17513be8d0cc08b5aef55c680151be42",
+    "tests/test_preflight.py": "e5ab4b10ca9ee8526689f7700517d30da052ddc00c29bd2ba1b69b68762fd019",
+    "tests/test_transfer.py": "ebc680121864ddb15c5ac5a940e31a8373d8588297b3d065ec18376b79edc436"
+  },
+  "a89_dependencies": {
+    "artifacts.py": "fd62b3b485b6a40d7f121bace5615822ce50121fbdfc38bf7da1fc9e7c19e3ef",
+    "support.py": "e96951d9180e4e8867135ae9d578b96cf5b89de4c609ef423b7a9eb37cbe5157",
+    "rank_exec.py": "3ed8bc0811b3c4f57de553dff5b9dd5ac1aa5ba3290c59c87f97ec4c39b85dc0",
+    "run_scale.py": "73413602b7a63af46da8dd867e729fecbaf236ab6cdf79736c5577e232ef832b",
+    "resume.py": "ee0819cac4367c5be3f0c9e05c404de1348c8f518d10dc34579442460c51abb2"
+  }
+}
