@@ -1,0 +1,15 @@
+{
+  "source_base": "d0dc384b8045b6e88c4b081120b74a3b4b665157",
+  "source_tree": "a90f15befa4bef2ffc04297c2bf4278b555ba196",
+  "product_unchanged": true,
+  "node_diagnostic": "PENDING",
+  "files": {
+    ".gitignore": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793",
+    "README.md": "f114373af32e39902f6f6e2c1f67e3d1db72b20ed5d6951aa39e7bd1b158d6f7",
+    "build_zip.py": "c68509a06a568cdda869a758fbac320eca75fb36ee427f6b81c691c429e3e7e0",
+    "diagnose.py": "4d3aa003998391a9ab2b9e227454d4836cb2102cb32d5cb60d15aa843aae4213",
+    "proc_guard.py": "0d4c49123073d129d91f61f09680de981671bd8ec8c0a4985cd0c8088f6d1889",
+    "supervisor.py": "d1869e9e2c9e2fe041271efec9cf71155eecbbf234ac1b835083c4ec6f0eaf55",
+    "tests/test_diagnostic.py": "8b7781eb3d5a7cbefc7b42928644452ce2710e9ee317a98781d6af5260bd04de"
+  }
+}
