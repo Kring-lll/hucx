@@ -1,9 +1,9 @@
 {
   "base_commit": "990398f43e7b589b4030e45d69b48c1766f5eac3",
-  "scope": "已测2a8e有界正常iface建链及A5/A7证据阶段交付；重传按导师安排延期，A8/A9节点验收待完成",
+  "scope": "已测2a8e正常建链阶段收口；标准OSU8B同规模对照至PPN20，RM两用例至160；192暂停、C延期；非原全部A验收",
   "files": {
     "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
-    "contrib/rm_ctp/REQUIREMENTS.md": "331ebd0197f0ac93ae7e0614faf1347f276eb4d06b7ffe6d18da5e1b626cd9b9",
+    "contrib/rm_ctp/REQUIREMENTS.md": "aedbabf62b1f0259366df1ce4179a7d21a21699ea94db7c4b67bf91453de55c1",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/README.md": "a3d7d969e9842554eaf283b459c7902a808be2c6fe0df2f24247d27cfa1ca407",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
@@ -42,7 +42,9 @@
     "contrib/rm_ctp/r1/a5_mpi_phase_20261026.py": "b4c52849390ff7815d7d83a11748687f2166216dde8ea97cf00eb936c2803a98",
     "contrib/rm_ctp/r1/a5_mpi_phase.c": "29da3cca46dce96e24874c0ace4f58ee144daea380417b0f9891270a9cd0fa35",
     "contrib/rm_ctp/r1/acceptance_mpi_phase_20261026.md": "fd2879a3b9b8933f8e06703a3d29a793e20cb7d1798909d071b08ff1ee16f5e5",
-    "contrib/rm_ctp/r1/acceptance_mpi_phase_summary_20261026.json": "7b6a56593e3351dcfd078fb402fb879423daaaeaa8fee270be057e77455abe53"
+    "contrib/rm_ctp/r1/acceptance_mpi_phase_summary_20261026.json": "7b6a56593e3351dcfd078fb402fb879423daaaeaa8fee270be057e77455abe53",
+    "contrib/rm_ctp/A_STAGE_CLOSEOUT_20261028.md": "6a0de032ffdaf41998e79b39c99b66a2315784c7d6356320c5a532260d729ca8",
+    "contrib/rm_ctp/OSU_TEST_POLICY.md": "cb80e9aa87d5401cf4a1a23832b39cadd8c5baef3d2fc052ff3f9fc9cfc25ecd"
   },
   "current_validation": {
     "full_local_build": "Base62fb full x86 build PASS; 2a8e actual object CPU regressions PASS; 2a8e ARM64 isolated full build PASS",
@@ -305,7 +307,7 @@
     "message_bytes": 8,
     "record": "contrib/rm_ctp/osu_compare/acceptance_standard_summary_20261027.json",
     "evidence_source": "用户实际终端摘要；原始完整样本在节点，未下载；合表入口将在节点重新校验",
-    "rm_only_extension_node_acceptance": "PENDING",
+    "rm_only_extension_node_acceptance": "PASS_THROUGH_PPN160; PPN192_INCOMPLETE",
     "a8_full_acceptance": false,
     "a9_full_acceptance": false,
     "C": "DEFERRED"
@@ -328,10 +330,22 @@
     "record": "contrib/rm_ctp/osu_compare/acceptance_scale_summary_20261028.json",
     "evidence_source": "operator actual terminal summaries; complete raw samples remain on nodes",
     "ppn192": "multi_lat first validation EXIT124 at600s; all Init traces by~34.5s; root cause OPEN",
-    "diagnostic_tool": "contrib/rm_ctp/p192_diag",
-    "diagnostic_node_acceptance": "PENDING",
+    "diagnostic_node_acceptance": "6/6 STACK_CAPTURES; DIAGNOSTIC_ONLY; ROOT_CAUSE_OPEN; PAUSED",
     "a9_complete": false,
     "a10_complete": false,
-    "C": "DEFERRED"
+    "C": "DEFERRED",
+    "diagnostic_github_only": "6df6880a6e2aaa37b9403f5716be4cbf22be8400:contrib/rm_ctp/p192_diag"
+  },
+  "stage_closeout_20261028": {
+    "record": "contrib/rm_ctp/A_STAGE_CLOSEOUT_20261028.md",
+    "test_policy": "contrib/rm_ctp/OSU_TEST_POLICY.md",
+    "product_unchanged": true,
+    "a8_standard_osu_8b_ppn20_subscope_pass": true,
+    "a8_init_first_old_rm_review": "DEFERRED_NOT_ACCEPTED",
+    "a9_verified_scope_ppn": 160,
+    "ppn192": "OPEN_PAUSED",
+    "full_A_acceptance": false,
+    "C": "DEFERRED",
+    "atomgit_push": "OPERATOR_PENDING"
   }
 }
