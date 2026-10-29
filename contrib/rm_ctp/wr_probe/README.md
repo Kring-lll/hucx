@@ -20,3 +20,11 @@
 节点上传zip，默认无参数仅打印计划、不SSH或运行MPI。显式`--run`才运行，root/node89限定；输出独立`b_wr_probe_*`目录。无gdb、无全局pkill、无节点重置。预估数分钟，节点负载和预检会影响时长。
 
 本地7项检查使用实际URMA头文件和模拟provider：SGE累加、链、inline、原WR/返回/坏WR透传、错误不算成功、RM/UM过滤、元数据/长链/身份/越界拒绝。未在ARM/HMPI实际运行，Windows脚本未在本环境执行。库无法解析是工具失败，不应认定产品故障。
+
+## 2026-10-29 观察器符号解析修正
+
+真实节点旧包在首个8B任务报WR_PROBE_RESOLVE_ERROR，两端退出127，无逐WR证据；不是数据校验失败。原PPN4正常矩阵证据不撤销。旧RTLD_NEXT无法在本地RTLD_LOCAL模拟中找到提供者，已复现同样127；不能仅据此断言节点具体加载命名空间。
+
+修正版在RTLD_NEXT失败后枚举进程已加载的liburma.so或liburma.so.*，只以RTLD_NOLOAD取得句柄，解析实际函数并保留句柄；不加载另一份URMA、不修改产品。摘要新增loaded_handle_used表示是否采用回退。节点启动MPI前双端先编译运行局部加载的模拟provider，失败停止；此门禁不访问设备、不能代替实际URMA发送验收。新增symbol_smoke.py与local_client.c。
+
+本地10项通过（含局部加载成功、错误透传、无provider报127），既有OSU23项通过。已用旧源码在同一局部加载场景实际复现127。ARM节点与PowerShell未执行；修正版仍待节点验证，未宣称一次通过。

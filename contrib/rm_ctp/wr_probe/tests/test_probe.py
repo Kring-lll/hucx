@@ -24,6 +24,7 @@ class ProbeTests(unittest.TestCase):
         compile_file(ROOT / 'tests/fake_provider.c', cls.build / 'liburma.so', ['-fPIC', '-shared'])
         compile_file(ROOT / 'tests/fake_client.c', cls.build / 'client',
                      ['-L' + str(cls.build), '-Wl,-rpath,' + str(cls.build), '-lurma'])
+        compile_file(ROOT / 'tests/local_client.c', cls.build / 'local_client', ['-ldl'])
     @classmethod
     def tearDownClass(cls):
         cls.temporary.cleanup()
@@ -62,6 +63,36 @@ class ProbeTests(unittest.TestCase):
         with self.assertRaises(ValueError): inspect_summary(row, 0, row['pid'], 'a'*32)
     def test_um_calls_forwarded_but_not_counted(self):
         self.assertIsNone(self.invoke(1, FAKE_UM='1'))
+    def local_invoke(self, missing=False, error=False):
+        with tempfile.TemporaryDirectory() as run:
+            env = dict(os.environ, LD_PRELOAD=str(self.build / 'libprobe.so'),
+                       HUCX_OSU_PROBE_DIR=run, OMPI_COMM_WORLD_RANK='0', A89_RUN_NONCE='a'*32)
+            env.pop('LD_LIBRARY_PATH', None)
+            if error: env['FAKE_ERROR'] = '1'
+            result = subprocess.run([str(self.build / 'local_client'),
+                                     'missing' if missing else str(self.build / 'liburma.so')],
+                                    env=env, capture_output=True, text=True)
+            if missing:
+                self.assertEqual(result.returncode, 127)
+                self.assertIn('WR_PROBE_RESOLVE_ERROR', result.stderr)
+                self.assertEqual(list(Path(run).glob('wr_*.json')), [])
+                return None
+            self.assertEqual(result.returncode, 0, result.stderr)
+            paths = list(Path(run).glob('wr_rank0_pid*.json'))
+            self.assertEqual(len(paths), 1)
+            row = json.loads(paths[0].read_text())
+            self.assertEqual(row['loaded_handle_used'], 1)
+            self.assertTrue(row['provider_is_liburma'])
+            return row
+    def test_local_provider_success(self):
+        row = self.local_invoke()
+        self.assertEqual(inspect_summary(row, 0, row['pid'], 'a'*32)['max_send_bytes'], 4096)
+    def test_local_provider_error_forwarded(self):
+        row = self.local_invoke(error=True)
+        self.assertEqual(row['error_calls'], 1)
+        self.assertEqual(row['buckets'][0]['success'], 0)
+    def test_missing_provider_is_tool_failure(self):
+        self.local_invoke(missing=True)
     def test_long_chain_rejected(self):
         row = self.invoke(257)
         self.assertGreater(row['incomplete'], 0)

@@ -48,7 +48,7 @@ def main():
         raise ValueError('only root on node89 may explicitly run')
     out = Path(tempfile.mkdtemp(prefix='b_wr_probe_', dir=osu.DEFAULT_CASE))
     print('WR_PROBE_DIR=' + str(out), flush=True)
-    report = {'tool_source_base': '0376bbd1acbe53a1a02be4475d8ee120464b0811',
+    report = {'tool_source_base': '66c3f2ccb01416f6721ac27e69ae6b6fc9b4d86b',
               'product_commit': osu.PRODUCT_COMMIT, 'module_sha256': osu.PRODUCT_MODULE,
               'status': 'PREFLIGHT', 'scope': 'SEND_METADATA_NOT_NETWORK_PACKETS', 'cases': []}
     def save():
@@ -70,9 +70,13 @@ def main():
         osu.base.ssh('set -eu\ntest ! -e "$1"\nmkdir "$1"\n', out)
         for src, name in ((osu.ROOT / 'osu_rank.py', 'osu_rank.py'),
                           (osu.A89 / 'rank_exec.py', 'a89_rank_exec.py'),
-                          (ROOT / 'send_probe.c', 'send_probe.c')):
+                          (ROOT / 'send_probe.c', 'send_probe.c'),
+                          (ROOT / 'symbol_smoke.py', 'symbol_smoke.py'),
+                          (ROOT / 'tests/fake_provider.c', 'fake_provider.c'),
+                          (ROOT / 'tests/local_client.c', 'local_client.c')):
             shutil.copy2(src, out / name)
-        for name in ('osu_rank.py', 'a89_rank_exec.py', 'send_probe.c', 'libosu_identity.so'):
+        for name in ('osu_rank.py', 'a89_rank_exec.py', 'send_probe.c', 'libosu_identity.so',
+                     'symbol_smoke.py', 'fake_provider.c', 'local_client.c'):
             osu.base.copy_remote([out / name], str(out) + '/')
             if osu.base.ssh('sha256sum "$1"\n', out / name).split()[0] != osu.digest(out / name):
                 raise ValueError('peer helper mismatch: ' + name)
@@ -90,6 +94,16 @@ def main():
         (out / 'compile_peer.log').write_text(peer_compile)
         report['probe_sha256'] = {'local': osu.digest(library),
                                   'peer': osu.base.ssh('sha256sum "$1"\n', library).split()[0]}
+        result = subprocess.run([sys.executable, str(out / 'symbol_smoke.py'), str(out)],
+                                text=True, capture_output=True, timeout=100)
+        (out / 'symbol_smoke_local.log').write_text(result.stdout + result.stderr)
+        if result.returncode:
+            raise ValueError('local loader smoke failed; see symbol_smoke_local.log')
+        report['symbol_smoke'] = {'local': json.loads(result.stdout),
+            'peer': json.loads(osu.base.ssh('python3 "$1" "$2"\n',
+                                          out / 'symbol_smoke.py', out, timeout=100))}
+        save()
+        print('符号转发门禁=双端局部加载模拟通过；尚非真实设备SEND验收', flush=True)
         original_environment = osu.environment
         def traced_environment(*items, **kwargs):
             value = original_environment(*items, **kwargs)

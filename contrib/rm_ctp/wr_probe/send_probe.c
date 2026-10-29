@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include <urma_api.h>
 #include <dlfcn.h>
+#include <link.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -30,13 +31,43 @@ static bucket_t buckets[MAX_BUCKETS];
 static size_t used;
 static uint64_t calls, errors, other_wrs, incomplete;
 static char provider[PATH_MAX];
+static unsigned loaded_handle_used;
+
+static void *provider_handle;
+static int find_loaded_provider(struct dl_phdr_info *info, size_t size, void *arg)
+{
+    (void)size;
+    (void)arg;
+    const char *name = strrchr(info->dlpi_name, '/');
+    name = name != NULL ? name + 1 : info->dlpi_name;
+    if (strcmp(name, "liburma.so") != 0 && strncmp(name, "liburma.so.", 11) != 0) {
+        return 0;
+    }
+    /* Reuse an already loaded object; never introduce a second URMA library. */
+    void *handle = dlopen(info->dlpi_name, RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL);
+    if (handle == NULL) {
+        return 0;
+    }
+    void *symbol = dlsym(handle, "urma_post_jetty_send_wr");
+    if (symbol != NULL && symbol != (void *)urma_post_jetty_send_wr) {
+        provider_handle = handle;
+        loaded_handle_used = 1;
+        *(void **)(&original) = symbol;
+        return 1;
+    }
+    dlclose(handle);
+    return 0;
+}
 
 static void resolve_original(void)
 {
     Dl_info info;
     *(void **)(&original) = dlsym(RTLD_NEXT, "urma_post_jetty_send_wr");
     if (original == NULL) {
-        const char message[] = "WR_PROBE_RESOLVE_ERROR: no next URMA send symbol\n";
+        dl_iterate_phdr(find_loaded_provider, NULL);
+    }
+    if (original == NULL) {
+        const char message[] = "WR_PROBE_RESOLVE_ERROR: no accessible loaded URMA send symbol\n";
         ssize_t written = write(STDERR_FILENO, message, sizeof(message) - 1);
         (void)written;
         _exit(127);
@@ -139,10 +170,10 @@ __attribute__((destructor)) static void save_summary(void)
     /* Provider path is not embedded as unchecked JSON; proof is via /proc maps. */
     fprintf(stream, "{\"schema\":1,\"rank\":%s,\"pid\":%ld,\"nonce\":\"%s\","
             "\"calls\":%llu,\"error_calls\":%llu,\"other_wrs\":%llu,"
-            "\"incomplete\":%llu,\"provider_is_liburma\":%s,\"buckets\":[",
+            "\"incomplete\":%llu,\"loaded_handle_used\":%u,\"provider_is_liburma\":%s,\"buckets\":[",
             rank, (long)getpid(), nonce, (unsigned long long)calls,
             (unsigned long long)errors, (unsigned long long)other_wrs,
-            (unsigned long long)incomplete,
+            (unsigned long long)incomplete, loaded_handle_used,
             strstr(provider, "/liburma.so") != NULL ? "true" : "false");
     for (size_t j = 0; j < used; ++j) {
         fprintf(stream, "%s{\"bytes\":%llu,\"num_sge\":%u,\"inline\":%u,"
