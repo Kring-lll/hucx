@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Small standard OSU diagnostic; no transport rebuild or performance claim."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -36,21 +37,114 @@ def inspect_summary(row, rank, pid, nonce):
             'inline_wrs': sum(b['submitted'] for b in buckets if b['inline'])}
 
 
-def main():
-    parser = argparse.ArgumentParser(description='RM 4K配置下逐SEND长度直方图；默认仅计划')
+# Ordinary tag eager headers in this pinned 64-bit product: UCT=3,
+# eager-only=8, eager-first=24, eager-middle=16 bytes. These are source
+# calculations, not a promise that every MPI call uses this exact protocol.
+BOUNDARY_SIZES = (8, 4084, 4085, 4086, 8145, 8146, 8147, 16384)
+BENCHMARKS = ('osu_multi_lat', 'osu_alltoall')
+
+
+def make_parser():
+    parser = argparse.ArgumentParser(description='RM 4K配置下逐SEND长度验证；默认仅计划')
     parser.add_argument('--run', action='store_true')
-    args = parser.parse_args()
+    parser.add_argument('--boundary-matrix', action='store_true',
+                        help='固定PPN4、两种标准OSU、8项真实头部边界；另跑两项RC 8B门禁')
+    parser.add_argument('--ppn', type=int, choices=(1, 4), default=1)
+    parser.add_argument('--sizes', type=int, nargs='+', default=[8, 4093, 4094, 8192, 16384])
+    parser.add_argument('--benchmarks', choices=BENCHMARKS, nargs='+', default=['osu_multi_lat'])
+    return parser
+
+
+def validate_arguments(parser, args):
+    if args.boundary_matrix:
+        args.ppn = 4
+        args.sizes = list(BOUNDARY_SIZES)
+        args.benchmarks = list(BENCHMARKS)
+    if (args.sizes != sorted(set(args.sizes))
+            or any(size < 1 or size > 16384 for size in args.sizes)
+            or args.benchmarks != list(dict.fromkeys(args.benchmarks))):
+        parser.error('尺寸必须递增唯一且1..16384，用例不可重复')
+    return args
+
+
+def planned_matrix(args):
+    return {'ppn': args.ppn, 'total_ranks': 2 * args.ppn,
+            'sizes': args.sizes, 'benchmarks': args.benchmarks,
+            'rm_validation_trials': len(args.sizes) * len(args.benchmarks),
+            'rc_8b_gates': len(args.benchmarks) if args.boundary_matrix else 0,
+            'segment_bytes': 4096, 'iterations': 100, 'warmup': 10,
+            'validation': True, 'performance_claim': False,
+            'transport_product_changed': False, 'C_retry': 'DEFERRED'}
+
+
+def inspect_trial(run, row, library):
+    """Check every actual OSU PID, not wrappers or a sample of ranks."""
+    run = Path(run)
+    ppn = row['ppn']
+    pids = row['rank_evidence']['pids']
+    if len(pids) != 2 * ppn:
+        raise ValueError('OSU application PID coverage is incomplete')
+    observations = []
+    for rank in range(2 * ppn):
+        pid = pids[rank]
+        path = run / ('wr_rank%d_pid%d.json' % (rank, pid))
+        summary = json.loads(path.read_text())
+        for phase in ('after_init', 'before_finalize'):
+            maps = (run / ('rank%d_%s.maps' % (rank, phase))).read_text()
+            paths = [line.split()[-1] for line in maps.splitlines() if line.split()]
+            if str(library) not in paths:
+                raise ValueError('probe DSO absent from actual OSU mapping: rank %d' % rank)
+        observation = inspect_summary(summary, rank, pid, row['configuration']['nonce'])
+        observation.update(rank=rank, pid=pid)
+        observations.append(observation)
+    return observations
+
+
+def fetch_peer_summaries(run, row):
+    """One bounded SSH for the selected peer summaries; no new processes on devices."""
+    run = Path(run)
+    ppn = row['ppn']
+    pids = row['rank_evidence']['pids']
+    names = ['wr_rank%d_pid%d.json' % (rank, pids[rank]) for rank in range(ppn, 2 * ppn)]
+    code = ('import json,pathlib,sys\n'
+            'root=pathlib.Path(sys.argv[1]);result={}\n'
+            'for name in json.loads(sys.argv[2]):\n'
+            ' p=root/name\n'
+            ' if p.is_symlink() or not p.is_file() or p.stat().st_size>1048576: '
+            'raise ValueError("missing/nonregular/oversized WR summary")\n'
+            ' result[name]=p.read_text()\n'
+            'print(json.dumps(result))\n')
+    files = json.loads(osu.base.ssh('python3 -c "$1" "$2" "$3"\n',
+                                    code, run, json.dumps(names), timeout=40))
+    if set(files) != set(names):
+        raise ValueError('peer WR summary rank coverage differs')
+    receipt = {}
+    for name in names:
+        value = files[name]
+        if not isinstance(value, str) or len(value.encode()) > 1048576:
+            raise ValueError('invalid peer WR summary')
+        path = run / name
+        if path.exists() and path.read_text() != value:
+            raise ValueError('existing WR summary differs: ' + name)
+        path.write_text(value)
+        receipt[name] = hashlib.sha256(value.encode()).hexdigest()
+    osu.base.write_json(run / 'wr_fetch_receipt.json', receipt)
+    return receipt
+
+
+def main():
+    parser = make_parser()
+    args = validate_arguments(parser, parser.parse_args())
     if not args.run:
-        print('PLAN RM_ONLY PPN=1 OSU=osu_multi_lat SIZES=8/4093/4094/8192/16384')
-        print('ITERATIONS=100 WARMUP=10 VALIDATION=YES SEG=4096 DIAGNOSTIC_NOT_PERFORMANCE')
+        print(json.dumps(planned_matrix(args), ensure_ascii=False, indent=2))
         return
     if os.geteuid() != 0 or socket.gethostname() != 'node89':
         raise ValueError('only root on node89 may explicitly run')
     out = Path(tempfile.mkdtemp(prefix='b_wr_probe_', dir=osu.DEFAULT_CASE))
     print('WR_PROBE_DIR=' + str(out), flush=True)
-    report = {'tool_source_base': '66c3f2ccb01416f6721ac27e69ae6b6fc9b4d86b',
+    report = {'tool_source_base': '4a61e88ddf8884f61893d5e0da1baf9c45e8d250',
               'product_commit': osu.PRODUCT_COMMIT, 'module_sha256': osu.PRODUCT_MODULE,
-              'status': 'PREFLIGHT', 'scope': 'SEND_METADATA_NOT_NETWORK_PACKETS', 'cases': []}
+              'plan': planned_matrix(args), 'status': 'PREFLIGHT', 'scope': 'SEND_METADATA_NOT_NETWORK_PACKETS', 'cases': []}
     def save():
         osu.base.write_json(out / 'results.json', report)
     save()
@@ -64,7 +158,7 @@ def main():
                                         (mode + '_run.json'), osu.DEFAULT_CASE / 'install')
                     for mode in ('rm', 'rc')}
         evidence = osu.preflight(out, commands)
-        env = osu.environment(commands['rm'][1], 'iface', osu.DEFAULT_CASE / 'install', osu.budget(1))
+        env = osu.environment(commands['rm'][1], 'iface', osu.DEFAULT_CASE / 'install', osu.budget(args.ppn))
         env[boundary.SEGMENT_KEY] = '4096'
         report['capability'] = boundary.check_remote_caps(osu.DEFAULT_CASE / 'install', env, out)
         osu.base.ssh('set -eu\ntest ! -e "$1"\nmkdir "$1"\n', out)
@@ -104,45 +198,48 @@ def main():
                                           out / 'symbol_smoke.py', out, timeout=100))}
         save()
         print('符号转发门禁=双端局部加载模拟通过；尚非真实设备SEND验收', flush=True)
+        trial_args = argparse.Namespace(iterations=100, warmup=10, timeout=120)
+        if args.boundary_matrix:
+            for benchmark in args.benchmarks:
+                gate = osu.one_trial(out, commands, evidence, benchmark, 'rc', args.ppn,
+                                     'validation', 0, trial_args, message_bytes=8)
+                report['cases'].append(gate)
+                save()
+                if not gate['passed']:
+                    raise ValueError('RC 8B regression gate failed: ' + str(gate.get('error')))
+                print('RC_GATE OSU=%s PPN=%d SIZE=8 DATA=PASS EXIT=0' %
+                      (benchmark, args.ppn), flush=True)
         original_environment = osu.environment
+
         def traced_environment(*items, **kwargs):
             value = original_environment(*items, **kwargs)
-            # FIRST: otherwise preloaded liburma may win symbol lookup and bypass us.
+            # FIRST: otherwise preloaded liburma can bypass the observer.
             value['LD_PRELOAD'] = str(library) + ':' + value['LD_PRELOAD']
             return value
+
         osu.environment = traced_environment
         try:
-            for size in (8, 4093, 4094, 8192, 16384):
-                row = osu.one_trial(out, commands, evidence, 'osu_multi_lat', 'rm', 1,
-                                    'validation', 0,
-                                    argparse.Namespace(iterations=100, warmup=10, timeout=120),
-                                    message_bytes=size, segment_size=4096)
-                report['cases'].append(row)
-                save()
-                if not row['passed']:
-                    raise ValueError('standard OSU failed: ' + row.get('error', str(row)))
-                run = out / row['name']
-                row['wr_probe_passed'] = False
-                save()
-                observations = []
-                for rank in (0, 1):
-                    pid = row['rank_evidence']['pids'][rank]
-                    path = run / ('wr_rank%d_pid%d.json' % (rank, pid))
-                    if rank == 1:
-                        path.write_text(osu.base.ssh('cat "$1"\n', path))
-                    summary = json.loads(path.read_text())
-                    for phase in ('after_init', 'before_finalize'):
-                        maps = (run / ('rank%d_%s.maps' % (rank, phase))).read_text()
-                        if str(library) not in [line.split()[-1] for line in maps.splitlines() if line.split()]:
-                            raise ValueError('probe DSO missing from actual OSU mapping')
-                    observations.append(inspect_summary(summary, rank, pid,
-                                                        row['configuration']['nonce']))
-                row['send_observations'] = observations
-                row['wr_probe_passed'] = True
-                save()
-                print('SIZE=%d DATA=PASS EXIT=0 SEND_WR_MAX=%s COUNTS=%s LENGTH_BOUND_4096=PASS' %
-                      (size, [v['max_send_bytes'] for v in observations],
-                       [v['send_wrs'] for v in observations]), flush=True)
+            for benchmark in args.benchmarks:
+                for size in args.sizes:
+                    row = osu.one_trial(out, commands, evidence, benchmark, 'rm', args.ppn,
+                                        'validation', 0, trial_args,
+                                        message_bytes=size, segment_size=4096)
+                    report['cases'].append(row)
+                    save()
+                    if not row['passed']:
+                        raise ValueError('standard OSU failed: ' + str(row.get('error')))
+                    run = out / row['name']
+                    row['wr_probe_passed'] = False
+                    save()
+                    row['wr_fetch_sha256'] = fetch_peer_summaries(run, row)
+                    observations = inspect_trial(run, row, library)
+                    row['send_observations'] = observations
+                    row['wr_probe_passed'] = True
+                    save()
+                    print('OSU=%s PPN=%d SIZE=%d DATA=PASS EXIT=0 RANKS=%d/%d '
+                          'SEND_WR_MAX=%d LENGTH_BOUND_4096=PASS' %
+                          (benchmark, args.ppn, size, len(observations), 2 * args.ppn,
+                           max(item['max_send_bytes'] for item in observations)), flush=True)
         finally:
             osu.environment = original_environment
         report['status'] = 'SELECTED_SEND_LENGTH_DIAGNOSTIC_PASS'
