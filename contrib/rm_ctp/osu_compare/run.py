@@ -54,8 +54,9 @@ def fixed_mca(command):
     return result
 
 
-def arguments(benchmark, iterations, warmup, validation):
-    result = ['--message-size', '8:8', '--iterations', str(iterations), '--warmup', str(warmup)]
+def arguments(benchmark, iterations, warmup, validation, message_bytes=8):
+    result = ['--message-size', '%d:%d' % (message_bytes, message_bytes),
+              '--iterations', str(iterations), '--warmup', str(warmup)]
     if benchmark == 'osu_alltoall':
         result.append('--full')
     if validation:
@@ -208,8 +209,11 @@ def preflight(out, commands):
     return evidence
 
 
-def one_trial(out, commands, evidence, benchmark, mode, ppn, phase, repeat, args):
+def one_trial(out, commands, evidence, benchmark, mode, ppn, phase, repeat, args,
+              message_bytes=8, segment_size=None):
     name = '%s_%s_p%d_%s_%d' % (benchmark, mode, ppn, phase, repeat)
+    if message_bytes != 8:
+        name += '_b%d' % message_bytes
     run = out / name
     run.mkdir()
     base.ssh('set -eu\ntest ! -e "$1"\nmkdir "$1"\n', run)
@@ -222,11 +226,19 @@ def one_trial(out, commands, evidence, benchmark, mode, ppn, phase, repeat, args
             raise ValueError('current CPU/memory staging budget insufficient')
     command, saved = commands[mode]
     env = environment(saved, 'iface' if mode == 'rm' else 'rc', DEFAULT_CASE / 'install', configuration)
+    if segment_size is not None:
+        if segment_size != 4096 or mode != 'rm':
+            raise ValueError('only the bounded RM 4K segmentation mode is supported')
+        env['UCX_RM_URMA_SEG_SIZE'] = str(segment_size)
     env.update(OMPI_MCA_pml=PML, OMPI_MCA_coll=COLL, OMPI_MCA_coll_tuned_use_dynamic_rules='0',
                HUCX_OSU_PROBE_DIR=str(run))
     env['LD_PRELOAD'] += ':' + str(out / 'libosu_identity.so')
     # Config parsed on both nodes; leave logs beside every trial for review.
-    base.parsed_config(DEFAULT_CASE / 'install', env, run, 'iface' if mode == 'rm' else 'rc')
+    if segment_size is None:
+        base.parsed_config(DEFAULT_CASE / 'install', env, run, 'iface' if mode == 'rm' else 'rc')
+    else:
+        from boundary_config import parsed_config_with_units
+        parsed_config_with_units(DEFAULT_CASE / 'install', env, run, 'iface')
     nonce = uuid.uuid4().hex
     validation = phase == 'validation'
     iterations = min(args.iterations, 1000) if validation else args.iterations
@@ -234,7 +246,9 @@ def one_trial(out, commands, evidence, benchmark, mode, ppn, phase, repeat, args
     hosts = [row['hostname'] for row in evidence['inventory']]
     config = {'nonce': nonce, 'run': str(run), 'environment': env,
               'resource_probe': phase == 'resources', 'binary': str(OSU / BENCHMARKS[benchmark][0]),
-              'timeout': args.timeout, 'arguments': arguments(benchmark, iterations, warmup, validation),
+              'timeout': args.timeout,
+              'arguments': arguments(benchmark, iterations, warmup, validation,
+                                     message_bytes),
               'observers': {hosts[0]: str(LAB / 'observer_build_d886fc3/liburma_resource_observer.so'),
                             hosts[1]: str(LAB / 'observer_runtime_d886fc3/liburma_resource_observer.so')}}
     path = run / 'rank_config.json'
@@ -255,7 +269,7 @@ def one_trial(out, commands, evidence, benchmark, mode, ppn, phase, repeat, args
         row.update(base.run_logged(command, launch_env, run / 'launcher.log', args.timeout + 20))
         fetch(run, range(ppn, 2 * ppn), phase == 'resources', base.PEER, schema='osu')
         row['output'] = parse_output((run / 'launcher.log').read_text(errors='replace'),
-                                     benchmark, validation, iterations)
+                                     benchmark, validation, iterations, message_bytes)
         row['rank_evidence'] = inspect_ranks(run, ppn, evidence['inventory'],
                        DEFAULT_CASE / 'install', nonce, evidence['benchmarks'][benchmark]['mpi_library'])
         if phase == 'resources':

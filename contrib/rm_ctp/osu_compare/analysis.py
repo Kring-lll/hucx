@@ -15,14 +15,15 @@ BENCHMARKS = {
     'osu_alltoall': ('collective/osu_alltoall', 'All-to-All Personalized Exchange Latency Test', '8B Alltoall集合平均耗时')}
 
 
-def parse_output(text, benchmark, validation, iterations):
+def parse_output(text, benchmark, validation, iterations, message_bytes=8):
     if BENCHMARKS[benchmark][1] not in text or not re.search(r'(?<!\d)7\.5\.2(?!\d)', text):
         raise ValueError('OSU benchmark/version header mismatch')
     if re.search(r'UCX\s+(ERROR|FATAL)|OSU_PROOF_ERROR|DATA VALIDATION ERROR|Caught signal|MPI_ERR_|\bFail(?:ed)?\b', text, re.I):
         raise ValueError('terminal/validation error in OSU log')
-    candidates = [line.split() for line in text.splitlines() if re.match(r'^\s*8\s+', line)]
+    candidates = [line.split() for line in text.splitlines()
+                  if re.match(r'^\s*' + str(message_bytes) + r'\s+', line)]
     if len(candidates) != 1:
-        raise ValueError('one and only one 8B result row is required')
+        raise ValueError('one and only one %dB result row is required' % message_bytes)
     values = candidates[0]
     count = (6 if validation else 5) if benchmark == 'osu_alltoall' else (3 if validation else 2)
     if len(values) != count:
