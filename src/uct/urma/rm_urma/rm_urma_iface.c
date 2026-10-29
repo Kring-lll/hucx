@@ -52,7 +52,9 @@ static ucs_stats_class_t uct_rm_urma_iface_stats_class = {
 #endif /* ENABLE_STATS */
 
 ucs_config_field_t uct_rm_urma_iface_config_table[] = {
-    {"URMA_", "", NULL,
+    /* Use the validated AM segment size by default. This is a software default,
+     * not a device-wide CTP limit; explicit SEG_SIZE settings still apply. */
+    {"URMA_", "SEG_SIZE=4096", NULL,
      ucs_offsetof(uct_rm_urma_iface_config_t, super),
      UCS_CONFIG_TYPE_TABLE(uct_urma_iface_config_table)},
 

@@ -107,6 +107,7 @@ def main():
     parser = argparse.ArgumentParser(description='RM iface候选双节点验证，保留全部结果')
     parser.add_argument('case', type=Path)
     parser.add_argument('--baseline', type=Path, default=base.LAB / 'osu_minimal8_ff_14ns8')
+    parser.add_argument('--experiment-root', type=Path, default=base.LAB)
     parser.add_argument('--no-deploy', action='store_true')
     parser.add_argument('--repeats', type=int, default=3)
     parser.add_argument('--rounds', type=int, default=2000)
@@ -114,7 +115,8 @@ def main():
     if args.repeats < 1 or args.rounds < 1:
         parser.error('repeats和rounds必须大于0')
     case = args.case.resolve()
-    if case.parent != base.LAB:
+    experiment_root = args.experiment_root.resolve()
+    if case.parent != experiment_root:
         raise RuntimeError('必须使用实验根下的隔离CASE')
     install = case / 'install'
     manifest = json.loads((case / 'build_manifest.json').read_text())
@@ -160,7 +162,7 @@ def main():
     print('结果目录=' + str(out), flush=True)
     save()
     if not args.no_deploy:
-        target = base.LAB / 'upload' / (case.name + '.install.tar.gz')
+        target = experiment_root / 'upload' / (case.name + '.install.tar.gz')
         remote('set -eu\ntest ! -e "$1"\nmkdir -p "$2"\n', str(case), str(target.parent))
         subprocess.run(['scp', '-q', str(case / 'install.tar.gz'), base.PEER + ':' + str(target)], check=True)
         remote('set -eu\nmkdir "$1"\ntar -xzf "$2" -C "$1"\n', str(case), str(target))

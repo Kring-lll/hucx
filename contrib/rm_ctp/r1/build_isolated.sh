@@ -3,7 +3,8 @@ set -euo pipefail
 archive=$(readlink -f "${1:?usage: build_isolated.sh SOURCE.tar.gz FULL_COMMIT}")
 commit=${2:?full GitHub commit required}
 [[ $commit =~ ^[0-9a-f]{40}$ ]]
-lab=/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019
+lab=$(readlink -f "${HUCX_RM_CTP_EXPERIMENT_ROOT:-/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019}")
+test -d "$lab"
 work=$(mktemp -d "$lab/r1_shared_${commit:0:9}_XXXXXX")
 mkdir "$work/source" "$work/build" "$work/install"
 trap 'rc=$?; if ((rc)); then printf "BUILD_FAILED=%s EXIT=%s\n" "$work" "$rc"; tail -n 16 "$work/build.log" 2>/dev/null || true; fi' EXIT
