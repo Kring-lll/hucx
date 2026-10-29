@@ -1,9 +1,9 @@
 {
   "base_commit": "990398f43e7b589b4030e45d69b48c1766f5eac3",
-  "scope": "RM默认4KB候选：复用UCX子表默认；RC/UM默认不变；ARM节点待验。历史2a8e记录仅作基线，C延期、192暂停",
+  "scope": "RM默认4KB正常功能阶段通过：80b28a25 ARM构建、双端默认、28项回归及18项OSU边界；五轮PPN1 8B已核对；完整B、硬件契约与故障恢复未验收",
   "files": {
     "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
-    "contrib/rm_ctp/REQUIREMENTS.md": "41101824df9b29dcce79410832d908f5898f28b2bc9b738eca0245a7dd9fc30a",
+    "contrib/rm_ctp/REQUIREMENTS.md": "d209975e73a3322c2065f680b0a283c0eb2aa61b45371a5722046178cb0fcaee",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/README.md": "a3d7d969e9842554eaf283b459c7902a808be2c6fe0df2f24247d27cfa1ca407",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
@@ -45,14 +45,19 @@
     "contrib/rm_ctp/r1/acceptance_mpi_phase_summary_20261026.json": "7b6a56593e3351dcfd078fb402fb879423daaaeaa8fee270be057e77455abe53",
     "contrib/rm_ctp/A_STAGE_CLOSEOUT_20261028.md": "fab481735b7c2362c5fd3fc6c33f84793c0fc776846afe1aa1ccac383f05196b",
     "contrib/rm_ctp/OSU_TEST_POLICY.md": "cb80e9aa87d5401cf4a1a23832b39cadd8c5baef3d2fc052ff3f9fc9cfc25ecd",
-    "contrib/rm_ctp/segment_default/README.md": "c98afd14f05d150f797b82f41f01b7244f16639f802d202f39be5ee3c3796140",
+    "contrib/rm_ctp/segment_default/README.md": "1433bc5124551d55524a7f2f058db0c65dec70ec72f9d08458a2b132470a3627",
     "contrib/rm_ctp/segment_default/run_candidate.py": "7db250bde4b8e7f0101edc3be34844b9801bd9aeada5d0105343edd82ae02745",
     "contrib/rm_ctp/segment_default/build_and_accept.sh": "f6cf638cf0866029b49be429e589c355a3dcb5af5afd0343e012fcd9467cedd8",
     "contrib/rm_ctp/segment_default/.gitignore": "6feaded4e28ea86e001a6751b4e3d960e8b7c31b9616ff9936b79297086e809b",
     "contrib/rm_ctp/segment_default/policy.py": "3aa97ae478b8da1f50cfabe0ebe9b036d616c6d525372d1c19a8e214228edbdd",
     "contrib/rm_ctp/segment_default/tests/test_config_parser.py": "e5a1bb0d073e8a76c45d8789592427a985bcc8bb174d2f0296f66f4e8b1cade3",
     "contrib/rm_ctp/segment_default/tests/no_devices.c": "1eb2cd2f9000d5c74a5a341b763e0fef6fbfb233917994c2a1b58ef18a3be6ba",
-    "contrib/rm_ctp/segment_default/tests/test_candidate.py": "f2c73127878deb0a65d2ff6da449ea7ece77e3c75fd5c282ced7912292384e93"
+    "contrib/rm_ctp/segment_default/tests/test_candidate.py": "f2c73127878deb0a65d2ff6da449ea7ece77e3c75fd5c282ced7912292384e93",
+    "contrib/rm_ctp/WORKSPACE_PATHS.md": "f7d53421d8b8a66f3a9e99af590d5348b0719d75b908283f0ce30be857c277d7",
+    "contrib/rm_ctp/B1_SOURCE_AUDIT_20261028.md": "202b212370f67b3501536154ea9932aa847a06c78c6c0fc8a57ba82e6c154b7e",
+    "contrib/rm_ctp/B2_EAGER_REUSE_20261029.md": "12e5a6d984d4f2b68bcd07b751c2d4efd7c5b3cf1d6e5d3ecb960d900fb4d64c",
+    "contrib/rm_ctp/segment_default/acceptance_20261029.md": "56b1aee75073bbc49b969f9b13fd9f8a7c8305d49fef1c0476ec8ec2dbaa72c8",
+    "contrib/rm_ctp/segment_default/acceptance_summary_20261029.json": "ef8ee80a469fff6bb092a0aaa7586e1958a53a84f833b3721222711a26ac9a7b"
   },
   "current_validation": {
     "full_local_build": "Base62fb full x86 build PASS; 2a8e actual object CPU regressions PASS; 2a8e ARM64 isolated full build PASS",
@@ -366,9 +371,14 @@
       "existing_wr_tests": 16,
       "existing_osu_tests": 23
     },
-    "arm_node_acceptance": "PENDING",
-    "performance_acceptance": "PENDING",
-    "atomgit_delivery": "NOT_YET",
-    "old_results_scope": "historical product2a8e only"
-  }
+    "arm_node_acceptance": "NORMAL_SUBSCOPE_PASS_28_REGRESSIONS_18_OSU_BOUNDARY",
+    "performance_acceptance": "FIVE_PPN1_8B_SAMPLES_REVIEWED_NOT_ALL_PERFORMANCE",
+    "atomgit_delivery": "STAGE_SCOPE_DOCUMENTED_SEE_BRANCH_HISTORY",
+    "old_results_scope": "historical product2a8e only",
+    "tested_product_commit": "80b28a25b5ea0e245bca88db44be79d15d06127f",
+    "module_sha256": "8d9ed4133c71c4ca77ad900e60433e9781cfef2adf33dc396f3f642b2cc9821c",
+    "record": "contrib/rm_ctp/segment_default/acceptance_20261029.md",
+    "summary": "contrib/rm_ctp/segment_default/acceptance_summary_20261029.json"
+  },
+  "historical_validation_entries": "早期2a8e/A及其他历史条目保留；当前默认4KB产品以segment_default_candidate_20261029及对应验收记录为准"
 }

@@ -1,5 +1,7 @@
 # B2/B3：复用现有UCP分段重组，补齐真实头部边界
 
+本文记录旧2a8e上显式4KB的边界审查与验证。后续80b28a25已将4KB固化为RM默认并再次通过同范围测试，见[阶段验收](segment_default/acceptance_20261029.md)；既有UCP分段重组代码未改。
+
 源码起点：GitHub `rm-b-segmentation-dev/4a61e88ddf8884f61893d5e0da1baf9c45e8d250`。
 产品仍为节点已测 `2a8e3b771`，本工作包不改 `src`。C重传延期，PPN192暂停。
 

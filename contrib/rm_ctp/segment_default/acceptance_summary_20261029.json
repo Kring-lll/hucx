@@ -1,0 +1,162 @@
+{
+  "date": "2026-10-29",
+  "tested_product_commit": "80b28a25b5ea0e245bca88db44be79d15d06127f",
+  "tested_tree": "d0028d111b549314d1566e20562775a332b2e08a",
+  "module_sha256": "8d9ed4133c71c4ca77ad900e60433e9781cfef2adf33dc396f3f642b2cc9821c",
+  "archive_sha256": "0a38fa66ea92c5cf6638e61056bcdd73c26585c27cd09f5aa5e52ef4d8e09ad2",
+  "archive_bytes": 3361901,
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_80b28a25b_dvKqlu",
+  "results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_80b28a25b_dvKqlu/segment_default_accept_94i91scl/results.json",
+  "evidence_provenance": "用户实际终端输出及只读断言结果转录；不是节点原始JSON的下载副本",
+  "full_node_json_downloaded": false,
+  "arm_build": "PASS",
+  "both_node_defaults": {
+    "RM_SEG_SIZE": 4096,
+    "RC_SEG_SIZE": 8192,
+    "UM_SEG_SIZE": 8192,
+    "RM_AM_BCOPY": 4093,
+    "segment_environment_override": false
+  },
+  "normal_regression": {
+    "passed": 28,
+    "expected": 28,
+    "scope": "既有历史正常回归；包含原OSU与自编专项，不改标为全部标准OSU"
+  },
+  "boundary_matrix": {
+    "passed": 18,
+    "expected": 18,
+    "rc_8b_gates": 2,
+    "rm_cases": 16,
+    "ppn": 4,
+    "ranks": 8,
+    "benchmarks": [
+      "osu_multi_lat",
+      "osu_alltoall"
+    ],
+    "sizes_bytes": [
+      8,
+      4084,
+      4085,
+      4086,
+      8145,
+      8146,
+      8147,
+      16384
+    ],
+    "maximum_observed_send_bytes": 4096,
+    "segment_environment_override": false,
+    "performance_measurement": false
+  },
+  "performance": {
+    "benchmark": "osu_multi_lat",
+    "osu_version": "7.5.2",
+    "ppn": 1,
+    "message_bytes": 8,
+    "timing_iterations": 5000,
+    "timing_warmup": 1000,
+    "repeats_each": 5,
+    "timing_trials_passed": 15,
+    "old_rm_separate_validation": "PASS",
+    "wr_observer_loaded_during_timing": false,
+    "rss_phase": "before_finalize",
+    "rss_scope": "各轮两节点实际OSU进程RSS合计，再取五轮中位数",
+    "samples": {
+      "old_rm": {
+        "latency_us": [
+          2.23,
+          2.23,
+          2.22,
+          2.23,
+          2.23
+        ],
+        "rss_sum_mib": [
+          96.28515625,
+          96.2890625,
+          96.30078125,
+          96.3125,
+          96.27734375
+        ],
+        "latency_us_statistics": {
+          "median": 2.23,
+          "minimum": 2.22,
+          "maximum": 2.23
+        },
+        "rss_sum_mib_statistics": {
+          "median": 96.2890625,
+          "minimum": 96.27734375,
+          "maximum": 96.3125
+        }
+      },
+      "new_rm": {
+        "latency_us": [
+          2.23,
+          2.25,
+          2.22,
+          2.22,
+          2.23
+        ],
+        "rss_sum_mib": [
+          88.30078125,
+          88.3046875,
+          88.30078125,
+          88.28515625,
+          88.29296875
+        ],
+        "latency_us_statistics": {
+          "median": 2.23,
+          "minimum": 2.22,
+          "maximum": 2.25
+        },
+        "rss_sum_mib_statistics": {
+          "median": 88.30078125,
+          "minimum": 88.28515625,
+          "maximum": 88.3046875
+        }
+      },
+      "rc": {
+        "latency_us": [
+          2.52,
+          2.51,
+          2.53,
+          2.52,
+          2.54
+        ],
+        "rss_sum_mib": [
+          122.3359375,
+          122.33203125,
+          120.34765625,
+          122.3359375,
+          120.3359375
+        ],
+        "latency_us_statistics": {
+          "median": 2.52,
+          "minimum": 2.51,
+          "maximum": 2.54
+        },
+        "rss_sum_mib_statistics": {
+          "median": 122.33203125,
+          "minimum": 120.3359375,
+          "maximum": 122.3359375
+        }
+      }
+    },
+    "new_vs_old_latency_reduction_percent": 0.0,
+    "new_vs_rc_latency_reduction_percent": 11.507936507936511,
+    "new_vs_old_rss_reduction_percent": 8.296146044624741,
+    "new_vs_rc_rss_reduction_percent": 27.81875658587988,
+    "review": "本轮五轮样本已核对；8B中位数与旧RM持平，保留波动；不是全场景无回退或长期稳定优势证明"
+  },
+  "software_segment_default_subrequirement": "NORMAL_FUNCTIONAL_PASS",
+  "full_B_acceptance": false,
+  "all_performance_accepted": false,
+  "remaining": [
+    "当前设备单WR完整契约",
+    "大小交替及其余必要正常矩阵",
+    "大消息性能与资源对照",
+    "原生READ/WRITE及rendezvous",
+    "完整B验收"
+  ],
+  "C_retry": "DEFERRED",
+  "ppn192": "PAUSED",
+  "delivery_scope": "RM默认4KB及正常分段阶段，不代表完整B交付"
+}
