@@ -37,4 +37,4 @@ Alltoall尺寸指每个目标块，Allgather尺寸指每rank贡献；集合内�
 首次节点使用建议先预检，再在可用窗口运行。失败立即停止，保留`B_COLLECTIVE_STOPPED`和`RESULTS_JSON`。
 不覆盖CASE/source/install，不重置设备，不全局pkill，只使用既有launcher/nonce限定清理。
 
-节点验证前本项保持PENDING；CPU解析/模拟不等于ARM/HMPI/URMA设备验收。
+2026-10-30节点矩阵及只读复核已通过10任务/36尺寸行/56份日志/52份RM观察，见[阶段验收](acceptance_20261030.md)。CPU解析与真实设备结果分别记录；完整B5、严格大小交替和性能验收仍待补。

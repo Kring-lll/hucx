@@ -1,0 +1,224 @@
+{
+  "date": "2026-10-30",
+  "status": "SELECTED_COLLECTIVE_NORMAL_SCOPE_ACCEPTED",
+  "evidence_source": "用户实际终端及只读JSON断言输出；本文件是摘要，原始完整报告和日志留在节点，未下载",
+  "product_commit": "c7ef02b51d274e4ff3151457b82cc34f493419d5",
+  "module_sha256": "cc12a6ed9299f87f36f927b9d4f8f8043810ec3273a96a55734a4cc89b2848f2",
+  "tool_commit": "740184d8db0555f186bb08988b335c77e21fb884",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_c7ef02b51_vkSZ69",
+  "preflight_results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_c7ef02b51_vkSZ69/b_collective_fptb45_0/results.json",
+  "matrix_results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_c7ef02b51_vkSZ69/b_collective_du17qffs/results.json",
+  "original_node_status": "SELECTED_COLLECTIVE_NORMAL_MATRIX_PASS",
+  "readonly_audit": {
+    "identity": "PASS",
+    "tasks_passed": 10,
+    "size_rows_passed": 36,
+    "actual_process_logs": 56,
+    "rm_send_observations": 52,
+    "rm_send_length_bound_bytes": 4096,
+    "segment_environment_override": false
+  },
+  "cases": [
+    {
+      "benchmark": "osu_alltoall",
+      "mode": "rc",
+      "ppn": 1,
+      "sizes": [
+        8
+      ],
+      "threshold": 16384,
+      "purpose": "8B_GATE",
+      "status": "PASS",
+      "exit": 0,
+      "validated_rows": 1,
+      "actual_process_logs": 2,
+      "rm_send_observations": 0,
+      "max_send_bytes": null
+    },
+    {
+      "benchmark": "osu_alltoall",
+      "mode": "rm",
+      "ppn": 1,
+      "sizes": [
+        8
+      ],
+      "threshold": 16384,
+      "purpose": "8B_GATE",
+      "status": "PASS",
+      "exit": 0,
+      "validated_rows": 1,
+      "actual_process_logs": 2,
+      "rm_send_observations": 2,
+      "max_send_bytes": 103
+    },
+    {
+      "benchmark": "osu_allgather",
+      "mode": "rc",
+      "ppn": 1,
+      "sizes": [
+        8
+      ],
+      "threshold": 16384,
+      "purpose": "8B_GATE",
+      "status": "PASS",
+      "exit": 0,
+      "validated_rows": 1,
+      "actual_process_logs": 2,
+      "rm_send_observations": 0,
+      "max_send_bytes": null
+    },
+    {
+      "benchmark": "osu_allgather",
+      "mode": "rm",
+      "ppn": 1,
+      "sizes": [
+        8
+      ],
+      "threshold": 16384,
+      "purpose": "8B_GATE",
+      "status": "PASS",
+      "exit": 0,
+      "validated_rows": 1,
+      "actual_process_logs": 2,
+      "rm_send_observations": 2,
+      "max_send_bytes": 103
+    },
+    {
+      "benchmark": "osu_alltoall",
+      "mode": "rm",
+      "ppn": 4,
+      "sizes": [
+        8,
+        16,
+        32,
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384,
+        32768,
+        65536
+      ],
+      "threshold": 16384,
+      "purpose": "ASCENDING_SMALL_TO_LARGE",
+      "status": "PASS",
+      "exit": 0,
+      "validated_rows": 14,
+      "actual_process_logs": 8,
+      "rm_send_observations": 8,
+      "max_send_bytes": 4096
+    },
+    {
+      "benchmark": "osu_alltoall",
+      "mode": "rm",
+      "ppn": 4,
+      "sizes": [
+        16385
+      ],
+      "threshold": 16384,
+      "purpose": "NONALIGNED_LARGE",
+      "status": "PASS",
+      "exit": 0,
+      "validated_rows": 1,
+      "actual_process_logs": 8,
+      "rm_send_observations": 8,
+      "max_send_bytes": 4096
+    },
+    {
+      "benchmark": "osu_alltoall",
+      "mode": "rm",
+      "ppn": 4,
+      "sizes": [
+        65536
+      ],
+      "threshold": null,
+      "purpose": "EAGER_CONFIGURATION_CONTROL",
+      "status": "PASS",
+      "exit": 0,
+      "validated_rows": 1,
+      "actual_process_logs": 8,
+      "rm_send_observations": 8,
+      "max_send_bytes": 4096
+    },
+    {
+      "benchmark": "osu_allgather",
+      "mode": "rm",
+      "ppn": 4,
+      "sizes": [
+        8,
+        16,
+        32,
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384,
+        32768,
+        65536
+      ],
+      "threshold": 16384,
+      "purpose": "ASCENDING_SMALL_TO_LARGE",
+      "status": "PASS",
+      "exit": 0,
+      "validated_rows": 14,
+      "actual_process_logs": 8,
+      "rm_send_observations": 8,
+      "max_send_bytes": 4096
+    },
+    {
+      "benchmark": "osu_allgather",
+      "mode": "rm",
+      "ppn": 4,
+      "sizes": [
+        16385
+      ],
+      "threshold": 16384,
+      "purpose": "NONALIGNED_LARGE",
+      "status": "PASS",
+      "exit": 0,
+      "validated_rows": 1,
+      "actual_process_logs": 8,
+      "rm_send_observations": 8,
+      "max_send_bytes": 4096
+    },
+    {
+      "benchmark": "osu_allgather",
+      "mode": "rm",
+      "ppn": 4,
+      "sizes": [
+        65536
+      ],
+      "threshold": null,
+      "purpose": "EAGER_CONFIGURATION_CONTROL",
+      "status": "PASS",
+      "exit": 0,
+      "validated_rows": 1,
+      "actual_process_logs": 8,
+      "rm_send_observations": 8,
+      "max_send_bytes": 4096
+    }
+  ],
+  "limits": {
+    "max_ppn": 4,
+    "max_business_bytes_per_rank": 65536,
+    "collective_business_bytes_are_not_ucp_request_or_network_packet_bytes": true,
+    "size_order": "ASCENDING_NOT_ALTERNATING_OR_FIXED",
+    "actual_request_path_proof": "NOT_CLAIMED_CONFIGURATION_IS_NOT_PROOF",
+    "performance_accepted": false,
+    "new_jetty_resource_observation": false,
+    "native_RMA_accepted": false,
+    "AM_ZCOPY": "DISABLED",
+    "full_B5_acceptance": false,
+    "full_B_acceptance": false,
+    "C_retry": "DEFERRED",
+    "ppn192": "PAUSED"
+  }
+}
