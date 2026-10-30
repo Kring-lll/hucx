@@ -1,0 +1,112 @@
+{
+  "schema": 1,
+  "date": "2026-10-30",
+  "tool_commit": "5b83da9cef6d3e9e40bd028ed99ae34ec46e8b3b",
+  "product_commit": "80b28a25b5ea0e245bca88db44be79d15d06127f",
+  "module_sha256": "8d9ed4133c71c4ca77ad900e60433e9781cfef2adf33dc396f3f642b2cc9821c",
+  "node_zip_sha256": "89f547bc2a1cf3804e2e66c66147d149cf7767adc36ecf5f65dd418295b133dc",
+  "results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_80b28a25b_dvKqlu/b_window_5uahvi2o/results.json",
+  "evidence_source": "操作者真实终端与只读JSON断言转录；完整原始文件留在节点",
+  "full_node_json_downloaded": false,
+  "status": "SELECTED_NORMAL_WINDOW_MATRIX_PASS",
+  "audit_passed": true,
+  "tasks_passed": 10,
+  "size_rows_passed": 54,
+  "rm_tasks_passed": 8,
+  "rm_process_observations": 28,
+  "max_observed_rm_send_bytes": 4096,
+  "rc_send_observed": false,
+  "max_ppn": 4,
+  "iterations": 100,
+  "warmup": 10,
+  "groups": [
+    {
+      "mode": "rc",
+      "benchmarks": [
+        "osu_bw",
+        "osu_bibw"
+      ],
+      "ppn": 1,
+      "sizes": [
+        8
+      ],
+      "window": 8,
+      "tasks": 2,
+      "size_rows": 2
+    },
+    {
+      "mode": "rm",
+      "benchmarks": [
+        "osu_bw",
+        "osu_bibw"
+      ],
+      "ppn": 1,
+      "sizes": [
+        8,
+        16,
+        32,
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384
+      ],
+      "window": 8,
+      "tasks": 2,
+      "size_rows": 24
+    },
+    {
+      "mode": "rm",
+      "benchmarks": [
+        "osu_bw",
+        "osu_bibw"
+      ],
+      "ppn": 1,
+      "sizes": [
+        4086,
+        8147
+      ],
+      "window": 32,
+      "tasks": 4,
+      "size_rows": 4
+    },
+    {
+      "mode": "rm",
+      "benchmarks": [
+        "osu_multi_lat",
+        "osu_alltoall"
+      ],
+      "ppn": 4,
+      "sizes": [
+        8,
+        16,
+        32,
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384
+      ],
+      "window": null,
+      "tasks": 2,
+      "size_rows": 24
+    }
+  ],
+  "size_alternation": "NOT_COVERED",
+  "performance_accepted": false,
+  "new_full_jetty_leak_test": false,
+  "full_B3_acceptance": false,
+  "full_B_acceptance": false,
+  "C": "DEFERRED",
+  "native_RMA_rendezvous": "NOT_ACCEPTED",
+  "product_unchanged": true,
+  "node_rerun_required_for_record": false
+}
