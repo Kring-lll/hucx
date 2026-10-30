@@ -44,3 +44,11 @@ CPU TCP显式PUT_ENABLE=n以匹配RM无原生RMA能力；不加该条件时本�
 | `src/uct/urma/rm_urma/rm_urma_ep.c` | `3e9af37b2cf883bc0d1eb3b7b6b1c684d3f70692967ae7eb5159248523e9deca` |
 | `src/uct/urma/rc_urma/rc_urma_ep.c` | `82a96b6668b35608c3bc937d78a60093171aeb1edbec46814a2258f189ae4cbc` |
 | `src/uct/urma/um_urma/um_urma_ep.c` | `65bf450e235ca0abe6129112e7652f79c9fb43975fb664faf35b9af774d4e518` |
+
+
+## 日志隔离源码依据（2026-10-30）
+
+`src/ucs/config/global_opts.c`的LOG_FILE为现有只读配置，明确支持%h主机和%p进程替换；`src/ucs/debug/log.c`负责打开各进程文件。
+只使用已有环境配置，不修改UCX logger。每任务目录独立，避免PID重用串入其他任务；LOG_FILE_SIZE=inf、LOG_FILE_ROTATE=0保留完整日志。
+OSU解析器仍为原`window_matrix/matrix.py`严格尺寸行/版本/列数/Pass检查。错误扫描扩大到每个实际应用日志，未通过删除或过滤未知数字残片来放行。
+目前node原日志证明退出0和明确65536 Pass行，未单凭该行宣称8rank协议/maps/逐SEND全验收；这些门禁由单项补验继续执行。

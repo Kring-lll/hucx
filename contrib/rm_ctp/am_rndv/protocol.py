@@ -1,5 +1,6 @@
 """Pinned normal AM rendezvous workload and request-level path evidence."""
 from contextlib import contextmanager
+from split_logs import log_pattern
 import re
 
 BASE = '9e1a3a6b5ed4074ac162258397065fd0f54831e0'
@@ -147,7 +148,7 @@ def inspect_trace(text, case, identities):
 
 
 @contextmanager
-def trial_profile(osu, case, parse_output):
+def trial_profile(osu, case, parse_output, log_directory=None):
     previous = osu.arguments, osu.parse_output, osu.environment
 
     def make_arguments(benchmark, iterations, warmup, validation, message_bytes=8):
@@ -164,6 +165,10 @@ def trial_profile(osu, case, parse_output):
     def environment(*args, **kwargs):
         value = previous[2](*args, **kwargs)
         value.pop('UCX_LOG_FILE', None)
+        if log_directory is not None:
+            value['UCX_LOG_FILE'] = log_pattern(log_directory)
+            value['UCX_LOG_FILE_SIZE'] = 'inf'
+            value['UCX_LOG_FILE_ROTATE'] = '0'
         value.update(settings(case))
         return value
 

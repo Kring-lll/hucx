@@ -78,7 +78,8 @@ def matrix(out, case, build):
             tasks = [('WINDOW', item) for item in window.cases()]
             tasks += [('AM_RNDV', item) for item in am.cases()]
             for index, (family, item) in enumerate(tasks):
-                profile = (am.trial_profile(osu, item, am.window_matrix.parse_output)
+                profile = (am.trial_profile(osu, item, am.window_matrix.parse_output,
+                                            log_directory=am.trial_directory(out, item, index))
                            if family == 'AM_RNDV' else window.adapt_trial(osu, item))
                 args = argparse.Namespace(iterations=20 if family == 'AM_RNDV' else 100,
                                           warmup=2 if family == 'AM_RNDV' else 10,

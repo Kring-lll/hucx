@@ -135,7 +135,7 @@
    内容：区分AM回退与原生RMA/rendezvous路径；复核已知注册/rkey生命周期风险，逐项恢复并验证需要的PUT/GET能力，再按真实支持范围上报。
    完成标准：READ/WRITE和所用大消息路径的数据、完成、缓冲/注册/rkey回收正确，覆盖大小交替、地址复用及跨阈值；基础sample通过不能代替HUCX验收。
    前置：B1、B3和相关C1契约。当前RMA能力仍屏蔽，本项未完成；不默认扩展到原子操作等未明确目标。
-   □ 下一子项：[AM rendezvous正常大消息](am_rndv/README.md)，保持原生RMA关闭，验证16KB切换边界、64KB/1MiB及真实请求路径；前4项通过，16385B在RTR发送处触发pending顺序断言，本矩阵未通过；[顺序修复候选](pending_order/README.md)须重新隔离构建和节点回归，不等于恢复原生READ/WRITE。
+   □ 下一子项：[AM rendezvous正常大消息](am_rndv/README.md)，保持原生RMA关闭，验证16KB切换边界、64KB/1MiB及真实请求路径；[顺序修复候选](pending_order/README.md)c7ef已通过16385B原失败点及AM前9项（含单对1MiB）；最后PPN4/64KB多对用例退出0且OSU行Pass，但合并诊断日志导致解析未通过，待[分进程日志单项补验](am_rndv/README.md)。本子项仍未收口，不等于恢复原生READ/WRITE。
 
 5. **□ 完成大小消息和MPI目标场景回归对比（B5）**
 

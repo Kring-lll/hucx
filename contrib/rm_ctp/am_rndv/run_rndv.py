@@ -8,6 +8,8 @@ import socket
 import sys
 import tempfile
 
+from split_logs import collect as collect_split_logs, trial_directory
+
 ROOT = Path(__file__).resolve().parent
 PROJECT = ROOT.parent
 sys.path.insert(0, str(PROJECT / 'window_matrix'))
@@ -53,8 +55,10 @@ def finish_protocol(out, row, case, evidence):
         identities = {rank: {'host': evidence['inventory'][rank // case['ppn']]['hostname'],
                              'pid': row['rank_evidence']['pids'][rank]}
                       for rank in range(2 * case['ppn'])}
-        row['protocol_path'] = inspect_trace(
-            (run / 'launcher.log').read_text(errors='replace'), case, identities)
+        text = (run / 'launcher.log').read_text(errors='replace')
+        if row.get('configuration', {}).get('environment', {}).get('UCX_LOG_FILE'):
+            text, row['protocol_log_files'] = collect_split_logs(out, row, evidence, osu.base)
+        row['protocol_path'] = inspect_trace(text, case, identities)
     except Exception as exc:
         row['passed'] = False
         row['error'] = type(exc).__name__ + ': ' + str(exc)
@@ -116,7 +120,8 @@ def main():
             save()
             task_args = argparse.Namespace(iterations=ITERATIONS, warmup=WARMUP, timeout=args.timeout)
             for index, case in enumerate(cases()):
-                with trial_profile(osu, case, window_matrix.parse_output):
+                with trial_profile(osu, case, window_matrix.parse_output,
+                                   log_directory=trial_directory(out, case, index)):
                     if case['mode'] == 'rm':
                         with window.traced_environment(library):
                             row = osu.one_trial(out, commands, evidence, case['benchmark'],

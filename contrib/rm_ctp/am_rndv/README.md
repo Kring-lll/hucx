@@ -11,6 +11,20 @@
 原始失败目录`b_am_rndv_30dr4_kh`保留；整体状态为未通过。
 [修复候选与重新构建入口](../pending_order/README.md)单独准备；新产品不能继续由这个固定旧安装ZIP验收。
 
+## c7ef候选的日志隔离补验
+
+c7ef02b5产品已通过28正常、18边界、窗口10项和AM前9项。最后PPN4/65536B的MPI退出0，原始OSU行是`65536 1187.29 Pass`；合并REQ日志还产生数字开头的残片，被严格尺寸行解析器误认。
+此数值来自诊断/校验运行，不作为性能对照。该最后任务的数据行可见Pass，但maps、SEND及完整协议证据尚需补验。
+
+修正仅在contrib：`trial_profile`可将UCX日志输出到本任务目录的`ucx_%h_%p.log`；主矩阵与pending候选入口均启用。
+标准OSU stdout和尺寸/列数/Pass/重复行检查保持原样；按实际应用host/PID读取所有进程的完整UCX日志，逐文件保留哈希、检查ERROR/FATAL，再做原请求路径取证。
+只有实际应用PID的日志可以作为证据，wrapper/ucx_info的日志不替代它。对端只取已知文件、限制大小并校验传输哈希，不改原OSU、产品或驱动。
+
+`recheck_last.py --run`固定使用c7ef已构建CASE，先检查原始28/18、15计时及19项矩阵记录，再仅启动一次PPN4/64KB多对任务。
+保持20迭代/2预热、AM阈值16KB、TX/RX/FC预算及240秒超时不变；完整数据/退出/绑核/maps/SEND<=4096及8rank协议证据须通过。
+旧结果目录不写，新结果保存为`am_log_recheck_*`。新入口默认仅计划、无SSH或MPI；不重编译产品，不重跑前面通过的任务。
+生成节点包：`python3 build_recheck_zip.py OUTPUT.zip`。本地解析/证据反例和实际CPU/TCP日志隔离通过，不等于ARM/URMA节点通过。
+
 ## 本轮形成的结果
 
 区分“不断发送eager片段”和“先经RTS/RTR协商，再通过AM发送数据”的两条现有UCP路径。

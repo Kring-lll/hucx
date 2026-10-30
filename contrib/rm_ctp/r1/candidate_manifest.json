@@ -1,9 +1,9 @@
 {
   "base_commit": "990398f43e7b589b4030e45d69b48c1766f5eac3",
-  "scope": "RM默认4KB既有阶段保留；AM rendezvous 16385B pending顺序失败已定位，运行排队修复候选需重新隔离构建与ARM验收",
+  "scope": "c7ef RM pending修复已在ARM通过28正常/18边界/窗口10与AM前9项；最后PPN4/64KB输出解析受REQ混排干扰，产品不改，分进程日志补验待执行",
   "files": {
     "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
-    "contrib/rm_ctp/REQUIREMENTS.md": "971d735c02ca778c31a10a3372a29a79829866c8e2144874a1fc58e8c6688ff7",
+    "contrib/rm_ctp/REQUIREMENTS.md": "6338f5577f672f1e8c1f442cef104c9118fb26036f2dee3833e34497c9c93409",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/README.md": "a3d7d969e9842554eaf283b459c7902a808be2c6fe0df2f24247d27cfa1ca407",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
@@ -68,17 +68,21 @@
     "contrib/rm_ctp/window_matrix/acceptance_20261030.md": "6ce15714cade4cde6e585bb51a98fb06f51d9b74bb9bf9b1982c073ed7e36b11",
     "contrib/rm_ctp/window_matrix/acceptance_summary_20261030.json": "1430f659f07c5fc2dc8de8e5791b324b84f315841cfebe1a2e33c829738b6d05",
     "contrib/rm_ctp/am_rndv/.gitignore": "65c449a9610b8dd8255e76529e5ec9bd335bad7b743b30650a626c55b7b280d1",
-    "contrib/rm_ctp/am_rndv/README.md": "1b346e02c9c5ffc791517af6093e294dd88d2f01454e12b9b88b988b91bd2f06",
-    "contrib/rm_ctp/am_rndv/SOURCE_REVIEW.md": "1fe80e252c41a7f1468fad31e3cd22a6f96bcdf064cc8120a1c1a890792cc8c7",
+    "contrib/rm_ctp/am_rndv/README.md": "34e559daa8ab1caef0fca9f594269f0bf0cbef1c45d85e19295d128820561ddc",
+    "contrib/rm_ctp/am_rndv/SOURCE_REVIEW.md": "b17d8139e7737b861ce083a31c868d1924615edc8ced57607c8392065b4f22fe",
     "contrib/rm_ctp/am_rndv/build_zip.py": "5ea0268d775215277d8cdf48ebcf79a891f491a7c9668c05b08586acc95172eb",
     "contrib/rm_ctp/am_rndv/cpu_ucp_smoke.py": "4285e6ab66e688331be6c55b1b3f33795a99f0659091825f6a903a9fa2e66264",
-    "contrib/rm_ctp/am_rndv/protocol.py": "b6ff51448a766e085bda4672c1556b0c70bd72965e71f6c73dc8d4e865b024db",
-    "contrib/rm_ctp/am_rndv/run_rndv.py": "3e9eb7fc7bf477485aca6d3c513a7ab8c2006cdcdd210b48bb6ca0be0188237a",
+    "contrib/rm_ctp/am_rndv/protocol.py": "4d40e8c15d5b21f730d3ac6545acc8c54cd75f20a531f161929c932ad2f79c61",
+    "contrib/rm_ctp/am_rndv/run_rndv.py": "0d9536067d98fc067f7b99417417de023ad9ee13b013175ead9f194024487496",
     "contrib/rm_ctp/am_rndv/tests/test_protocol.py": "6a6b1b85d4dd56e342f0e3a2b3bf1f1b378bfc102ff4c6c2277e6a748338b247",
     "contrib/rm_ctp/pending_order/.gitignore": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793",
-    "contrib/rm_ctp/pending_order/README.md": "42be579c210bb4ce7632b9046924c98e59d0479e2a1928eae808355dbcf8e00e",
-    "contrib/rm_ctp/pending_order/run_candidate.py": "9f876ad4f5ca121debf287c4580be8e3a3270dffa6aaaf4b1e14502770345bab",
-    "contrib/rm_ctp/pending_order/tests/test_runner.py": "3250951201b07ae6a04334cc2236c2860096bc6e3e6c25f1adf2f1cb63268629"
+    "contrib/rm_ctp/pending_order/README.md": "3458cc4d9a13a50c6e14904ec6029ed5ad09d24d031a5b64159455e41315153c",
+    "contrib/rm_ctp/pending_order/run_candidate.py": "01e608fd2af7dda0f78305a3cfaac59ce295949a57d1abf75c56f3e39c8bba7e",
+    "contrib/rm_ctp/pending_order/tests/test_runner.py": "3250951201b07ae6a04334cc2236c2860096bc6e3e6c25f1adf2f1cb63268629",
+    "contrib/rm_ctp/am_rndv/split_logs.py": "0a02b5986a61bca1a07f865f458edf25251d929ca13ba63d962a20b123e2cfd7",
+    "contrib/rm_ctp/am_rndv/recheck_last.py": "033838a4cd365bfdf9ddd7a783248ccc7e6932d87e6d62a300a619f270b4f381",
+    "contrib/rm_ctp/am_rndv/build_recheck_zip.py": "28da291e18552eda0c9c53a8faa76d36628396115ca02ae86eeec1fbdecea3bc",
+    "contrib/rm_ctp/am_rndv/tests/test_split_logs.py": "a780a72c11f53b28279aa3067bda3aebd1c0b31579038eee3ff978882957ee8b"
   },
   "current_validation": {
     "full_local_build": "Base62fb full x86 build PASS; 2a8e actual object CPU regressions PASS; 2a8e ARM64 isolated full build PASS",
@@ -128,6 +132,21 @@
       "full_B_acceptance": false,
       "cpu_build": "full x86 SDK-stub builds, assertions on and off PASS; not ARM/provider",
       "python_tests": "new candidate orchestration4 + existing AM protocol13 and window10 PASS"
+    },
+    "am_split_logs_20261030": {
+      "source_base": "c7ef02b51d274e4ff3151457b82cc34f493419d5",
+      "product_changed": false,
+      "node_product_commit": "c7ef02b51d274e4ff3151457b82cc34f493419d5",
+      "node_module_sha256": "cc12a6ed9299f87f36f927b9d4f8f8043810ec3273a96a55734a4cc89b2848f2",
+      "prior_node_result": "pending_order_accept_b7mudi0j/results.json",
+      "prior_node_gates": "28 normal,18 boundary,window10,AM first9 PASS; 8B median oldRM/newRM/RC2.22/2.22/2.54us",
+      "last_raw_output": "EXIT0; OSU65536 1187.29 Pass; REQ data_len fragments misclassified as OSU rows; later gates incomplete",
+      "cpu_tests": "9 new log/checkpoint regressions +13 existing AM +4 candidate +10 window PASS",
+      "actual_cpu_logging": "real UCP/TCP64KB AM; actual2process %h/%p files and clean stdout PASS; not OSU/ARM/URMA",
+      "node_recheck": "PENDING,one original osu_multi_lat task PPN4/64KB20iterations2warmup240timeout",
+      "strict_osu_parser": "UNCHANGED",
+      "old_failed_receipts": "PRESERVED",
+      "full_B_acceptance": false
     }
   },
   "product_tested_commit": "2a8e3b771211e5af491c8ca483ebcc01a03c2f01",

@@ -42,3 +42,9 @@ python3 -u "$case_dir/source/contrib/rm_ctp/pending_order/run_candidate.py" "$ca
 
 CPU实际C回归使用真实RM代码、mock URMA：4项资源恢复+两种AM入口的FIFO/入队/排空检查，以及跨EP group隔离。
 另有原有全套C异常/生命周期回归。开启断言与--disable-assertions两种独立x86构建及ASan/UBSan回归均通过；旧代码用同一资源恢复场景实际复现原断言。CPU结果不是ARM或真实网络验证；节点状态仍待执行。
+
+## 2026-10-30 新候选节点回归与补验状态
+
+c7ef02b5 ARM构建通过；本轮28/28正常、18/18边界、窗口10/10和AM前9项通过，8B五轮中位数旧RM/新RM/RC=2.22/2.22/2.54μs，仅本批样本。
+原失败16385B已通过；单对1MiB AM与双向64KB AM通过。最后PPN4/64KB多对用例退出0、OSU结果Pass，但因REQ日志残片被误作结果行而停在解析。
+[日志隔离补验入口](../am_rndv/README.md)只增加一项MPI任务，不改本候选产品或原始失败JSON；完整B和性能结论仍待审阅。
