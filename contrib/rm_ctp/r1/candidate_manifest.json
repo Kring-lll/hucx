@@ -3,7 +3,7 @@
   "scope": "c7ef RM pending顺序修复及所选正常AM大消息阶段验收；保留原轮失败和日志隔离补验，完整B/C/RMA未验收",
   "files": {
     "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
-    "contrib/rm_ctp/REQUIREMENTS.md": "d91234d992f574b8707c8a09ab0fb2e39d50e9daaf6da4c647eb7e4172718fa9",
+    "contrib/rm_ctp/REQUIREMENTS.md": "f4ca7f5035e8809dcbb1fa3d4f1d499f18aea7dbf607c2f460c91b8ad73ffaf4",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/README.md": "a3d7d969e9842554eaf283b459c7902a808be2c6fe0df2f24247d27cfa1ca407",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
@@ -84,7 +84,14 @@
     "contrib/rm_ctp/am_rndv/build_recheck_zip.py": "28da291e18552eda0c9c53a8faa76d36628396115ca02ae86eeec1fbdecea3bc",
     "contrib/rm_ctp/am_rndv/tests/test_split_logs.py": "a780a72c11f53b28279aa3067bda3aebd1c0b31579038eee3ff978882957ee8b",
     "contrib/rm_ctp/pending_order/acceptance_20261030.md": "f2f9afc6d251da36a67b716bf8ddd401aa07de8df015145c56b0bd2fd3565ce6",
-    "contrib/rm_ctp/pending_order/acceptance_summary_20261030.json": "c041877fb6d698bf2a20704f0ae243605a86cb2b897cf776cdb195a49215131e"
+    "contrib/rm_ctp/pending_order/acceptance_summary_20261030.json": "c041877fb6d698bf2a20704f0ae243605a86cb2b897cf776cdb195a49215131e",
+    "contrib/rm_ctp/collective_matrix/.gitignore": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793",
+    "contrib/rm_ctp/collective_matrix/README.md": "1d8e3d8d9b88225497db5ee63e2642b6d4006be21528600c0b889a9cee9c82b1",
+    "contrib/rm_ctp/collective_matrix/SOURCE_REVIEW.md": "22184cfea26f69fb61789d10a754f10d9ffbd1785a62fcd14a444c134857804b",
+    "contrib/rm_ctp/collective_matrix/build_zip.py": "2374e638e1f62791a00aad682ea4edecefd8692e1151ec37b13d69c031c072a1",
+    "contrib/rm_ctp/collective_matrix/coll_matrix.py": "1dcfe245fba605628588bf9c8c0d74550002c066ec4c65e7317145de840f0771",
+    "contrib/rm_ctp/collective_matrix/run_collective.py": "35e3966e945f82192f814725bc5858035e4ec37a79240860b2d0587cff3bf791",
+    "contrib/rm_ctp/collective_matrix/tests/test_collective.py": "7aa2c99a4946cddfc092a342428cdb2441495096ae16f274e2814ecdb7542d2c"
   },
   "current_validation": {
     "full_local_build": "Base62fb full x86 build PASS; 2a8e actual object CPU regressions PASS; 2a8e ARM64 isolated full build PASS",
@@ -489,5 +496,31 @@
     "native_RMA": "DISABLED",
     "C_retry": "DEFERRED",
     "raw_reports": "REMAIN_ON_NODES; operator terminal evidence, not raw report download"
+  },
+  "collective_matrix_20261030": {
+    "source_base": "e272050e17bfcc8923eceaf08f1f3a2747849d12",
+    "product_tested_commit": "c7ef02b51d274e4ff3151457b82cc34f493419d5",
+    "module_sha256": "cc12a6ed9299f87f36f927b9d4f8f8043810ec3273a96a55734a4cc89b2848f2",
+    "product_unchanged": true,
+    "benchmarks": [
+      "osu_alltoall",
+      "osu_allgather"
+    ],
+    "task_count": 10,
+    "size_rows": 36,
+    "max_ppn": 4,
+    "max_message_bytes": 65536,
+    "iterations": 20,
+    "warmup": 2,
+    "new_cpu_tests": 12,
+    "existing_am_and_window_tests": 32,
+    "actual_cpu_info_logging": "2 actual UCP/TCP processes PASS; not MPI/OSU/ARM/URMA acceptance",
+    "node_acceptance": "PENDING",
+    "size_alternation": "NOT_COVERED_ORIGINAL_OSU_ASCENDING_LOOP",
+    "protocol_configuration_not_actual_request_proof": true,
+    "performance_accepted": false,
+    "full_B_acceptance": false,
+    "C_retry": "DEFERRED",
+    "entry": "contrib/rm_ctp/collective_matrix/run_collective.py"
   }
 }
