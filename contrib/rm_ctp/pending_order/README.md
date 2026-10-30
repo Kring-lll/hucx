@@ -41,10 +41,12 @@ python3 -u "$case_dir/source/contrib/rm_ctp/pending_order/run_candidate.py" "$ca
 沿用原runner的launcher/nonce限定清理，不全局pkill、不重启/重置设备。C延期、192暂停，完整B不宣称完成。
 
 CPU实际C回归使用真实RM代码、mock URMA：4项资源恢复+两种AM入口的FIFO/入队/排空检查，以及跨EP group隔离。
-另有原有全套C异常/生命周期回归。开启断言与--disable-assertions两种独立x86构建及ASan/UBSan回归均通过；旧代码用同一资源恢复场景实际复现原断言。CPU结果不是ARM或真实网络验证；节点状态仍待执行。
+另有原有全套C异常/生命周期回归。开启断言与--disable-assertions两种独立x86构建及ASan/UBSan回归均通过；旧代码用同一资源恢复场景实际复现原断言。CPU结果不是ARM或真实网络验证；节点结果见下方已验收记录。
 
-## 2026-10-30 新候选节点回归与补验状态
+## 2026-10-30 阶段验收通过
 
-c7ef02b5 ARM构建通过；本轮28/28正常、18/18边界、窗口10/10和AM前9项通过，8B五轮中位数旧RM/新RM/RC=2.22/2.22/2.54μs，仅本批样本。
-原失败16385B已通过；单对1MiB AM与双向64KB AM通过。最后PPN4/64KB多对用例退出0、OSU结果Pass，但因REQ日志残片被误作结果行而停在解析。
-[日志隔离补验入口](../am_rndv/README.md)只增加一项MPI任务，不改本候选产品或原始失败JSON；完整B和性能结论仍待审阅。
+c7ef产品通过ARM隔离构建、28正常、18边界、窗口10项与AM前9项；原16385B断言用例已通过。
+最后PPN4/64KB初轮因REQ日志混排被解析器拒绝；保持原失败记录，分进程日志后单项补验通过，8个rank数据/maps/退出/AM路径与SEND<=4096均核验。
+五轮8B旧RM/新RM/RC中位数2.22/2.22/2.54μs；新旧RM RSS中位数均88.31MiB，仅本批PPN1/8B未观察到时延及RSS回退。
+见[完整阶段验收](acceptance_20261030.md)及[全部五轮样本](acceptance_summary_20261030.json)。
+严格大小反复交替、原生READ/WRITE和C故障恢复仍未验收，不写成完整B通过。

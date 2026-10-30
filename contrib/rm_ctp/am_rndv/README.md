@@ -3,7 +3,7 @@
 开发起点：GitHub `9e1a3a6b5ed4074ac162258397065fd0f54831e0`。
 固定节点产品：`80b28a25b5ea0e245bca88db44be79d15d06127f`；module SHA256：
 `8d9ed4133c71c4ca77ad900e60433e9781cfef2adf33dc396f3f642b2cc9821c`。
-本包新增标准OSU自动化和请求路径取证，产品源码、原版OSU和既有运行器不变；ARM节点验收待执行。
+本目录保留首次旧产品工作包及后续补验入口。旧80b失败与新c7ef通过分别记录，不混用安装版本。
 
 ## 2026-10-30 节点执行状态
 
@@ -11,10 +11,10 @@
 原始失败目录`b_am_rndv_30dr4_kh`保留；整体状态为未通过。
 [修复候选与重新构建入口](../pending_order/README.md)单独准备；新产品不能继续由这个固定旧安装ZIP验收。
 
-## c7ef候选的日志隔离补验
+## c7ef产品的日志隔离补验（已通过）
 
 c7ef02b5产品已通过28正常、18边界、窗口10项和AM前9项。最后PPN4/65536B的MPI退出0，原始OSU行是`65536 1187.29 Pass`；合并REQ日志还产生数字开头的残片，被严格尺寸行解析器误认。
-此数值来自诊断/校验运行，不作为性能对照。该最后任务的数据行可见Pass，但maps、SEND及完整协议证据尚需补验。
+此数值来自诊断/校验运行，不作为性能对照。该初轮后续门禁当时未完成；现已在`am_log_recheck__um6uyv9`单项补验中完成8rank的数据/maps/退出/SEND与AM路径检查。
 
 修正仅在contrib：`trial_profile`可将UCX日志输出到本任务目录的`ucx_%h_%p.log`；主矩阵与pending候选入口均启用。
 标准OSU stdout和尺寸/列数/Pass/重复行检查保持原样；按实际应用host/PID读取所有进程的完整UCX日志，逐文件保留哈希、检查ERROR/FATAL，再做原请求路径取证。
@@ -23,7 +23,7 @@ c7ef02b5产品已通过28正常、18边界、窗口10项和AM前9项。最后PPN
 `recheck_last.py --run`固定使用c7ef已构建CASE，先检查原始28/18、15计时及19项矩阵记录，再仅启动一次PPN4/64KB多对任务。
 保持20迭代/2预热、AM阈值16KB、TX/RX/FC预算及240秒超时不变；完整数据/退出/绑核/maps/SEND<=4096及8rank协议证据须通过。
 旧结果目录不写，新结果保存为`am_log_recheck_*`。新入口默认仅计划、无SSH或MPI；不重编译产品，不重跑前面通过的任务。
-生成节点包：`python3 build_recheck_zip.py OUTPUT.zip`。本地解析/证据反例和实际CPU/TCP日志隔离通过，不等于ARM/URMA节点通过。
+生成节点包：`python3 build_recheck_zip.py OUTPUT.zip`。本地解析/证据反例和实际CPU/TCP日志隔离通过，不等于ARM/URMA节点通过；真实节点补验结果单列如下。
 
 ## 本轮形成的结果
 
@@ -69,3 +69,10 @@ UCP已有RTS/RTR、请求ID、数据offset、pending及完成处理继续复用�
 失败回传`B_AM_RNDV_STOPPED`和`RESULTS_JSON`，不修改原始结果以绕过门禁。
 
 CPU检查可选入口`cpu_ucp_smoke.py`只用已有CPU构建和TCP，显式关闭TCP PUT以匹配RM无原生RMA能力；不是正式OSU或ARM/URMA验收。
+
+## 最新验收范围
+
+c7ef已测产品的AM原轮前9项与最后多对64KB单项补验共同通过10项正常矩阵；
+保留旧80b断言失败、c7ef日志解析失败及成功补验的独立记录，不把历史目录改为通过。
+五轮8B与RSS也已审阅，见[阶段验收](../pending_order/acceptance_20261030.md)。
+只验收所列正常范围，原生RMA、大小反复交替和完整B/C仍未验收。

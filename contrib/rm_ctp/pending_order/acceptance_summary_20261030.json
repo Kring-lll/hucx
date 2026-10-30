@@ -1,0 +1,114 @@
+{
+  "date": "2026-10-30",
+  "status": "SELECTED_PENDING_AND_AM_NORMAL_SCOPE_ACCEPTED",
+  "evidence_source": "用户实际终端及只读JSON断言输出；本摘要为转录，原始完整报告留在节点，未下载至本工作区",
+  "product_commit": "c7ef02b51d274e4ff3151457b82cc34f493419d5",
+  "module_sha256": "cc12a6ed9299f87f36f927b9d4f8f8043810ec3273a96a55734a4cc89b2848f2",
+  "tool_commit": "deec2880d627532bbee0b91e40beb4f96c4df975",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_c7ef02b51_vkSZ69",
+  "prior_results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_c7ef02b51_vkSZ69/pending_order_accept_b7mudi0j/results.json",
+  "recheck_results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_c7ef02b51_vkSZ69/am_log_recheck__um6uyv9/results.json",
+  "old_failure_results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_80b28a25b_dvKqlu/b_am_rndv_30dr4_kh/results.json",
+  "gates": {
+    "normal_regression": 28,
+    "boundary_matrix": 18,
+    "window_tasks": 10,
+    "am_prior_passes": 9,
+    "am_focused_recheck": 1,
+    "timing_trials": 15
+  },
+  "recheck": {
+    "benchmark": "original OSU7.5.2 osu_multi_lat",
+    "ppn": 4,
+    "message_bytes": 65536,
+    "exit": 0,
+    "data_maps_exit": "PASS",
+    "actual_ranks": 8,
+    "protocol_log_files": 8,
+    "send_observations": 8,
+    "max_send_bytes": 4096,
+    "am_path": "PASS",
+    "original_parser_failure_preserved": true
+  },
+  "timing": {
+    "benchmark": "original osu_multi_lat",
+    "ppn": 1,
+    "message_bytes": 8,
+    "repeats": 5,
+    "old_rm_product": "80b28a25b5ea0e245bca88db44be79d15d06127f",
+    "samples": {
+      "old_rm": {
+        "latency_us": [
+          2.22,
+          2.23,
+          2.21,
+          2.22,
+          2.24
+        ],
+        "rss_sum_mib": [
+          88.30859375,
+          88.3125,
+          88.30078125,
+          88.30859375,
+          88.30078125
+        ],
+        "latency_median_us": 2.22,
+        "rss_sum_mib_median": 88.30859375
+      },
+      "new_rm": {
+        "latency_us": [
+          2.23,
+          2.22,
+          2.22,
+          2.23,
+          2.21
+        ],
+        "rss_sum_mib": [
+          88.2890625,
+          88.30859375,
+          88.3125,
+          88.3125,
+          88.30078125
+        ],
+        "latency_median_us": 2.22,
+        "rss_sum_mib_median": 88.30859375
+      },
+      "rc": {
+        "latency_us": [
+          2.54,
+          2.53,
+          2.54,
+          2.53,
+          2.54
+        ],
+        "rss_sum_mib": [
+          120.34375,
+          120.3203125,
+          116.36328125,
+          122.328125,
+          118.3515625
+        ],
+        "latency_median_us": 2.54,
+        "rss_sum_mib_median": 120.3203125
+      }
+    },
+    "new_vs_rc_reduction_percent": {
+      "latency_median_us": 12.598425196850382,
+      "rss_sum_mib_median": 26.605415232777098
+    },
+    "scope": "本轮PPN1/8B；时延及Finalize前RSS分别按原始字段统计；不代表全部性能/设备内存",
+    "new_vs_old_observation": "本轮时延与RSS中位数相同，未观察到这两项回退"
+  },
+  "cpu_validation": "既有两种断言配置下实际C五项新增及原回归ASan/UBSan通过；不替代ARM/URMA",
+  "limits": {
+    "normal_scope_only": true,
+    "strict_size_alternation": "NOT_COVERED",
+    "native_RMA": "DISABLED_NOT_ACCEPTED",
+    "AM_ZCOPY": "DISABLED",
+    "large_collective_performance": "NOT_ACCEPTED",
+    "C_retry": "DEFERRED",
+    "ppn192": "PAUSED",
+    "full_B_acceptance": false,
+    "full_performance_acceptance": false
+  }
+}

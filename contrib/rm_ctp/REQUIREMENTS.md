@@ -5,7 +5,7 @@
 √表示该条**列明的阶段范围**已完成；□表示尚未完成。原验收要求保留，阶段范围以外的事项单列待补。
 过程记录和历史失败保留在Git历史与对应验收文档中，本页只维护当前状态。
 
-## 当前已测：RM默认4KB片长
+## 当前已测：RM默认4KB片长与pending顺序修复
 
 已测产品`80b28a25b5ea0e245bca88db44be79d15d06127f`在双节点默认4KB下通过28项既有回归和18项标准OSU边界。
 无SEG_SIZE环境覆盖，PPN4全部8rank观测SEND不超过4096B；两种OSU的业务尺寸覆盖至16KB。
@@ -13,10 +13,15 @@
 见[本阶段验收](segment_default/acceptance_20261029.md)。这是默认片长及正常分段子范围，不是完整B或所有性能无回退结论。
 2026-10-30另通过10项原版OSU窗口/递增尺寸任务、54行数据校验和28份RM进程SEND观察，见[窗口验收](window_matrix/acceptance_20261030.md)。本批开启校验及观察器，不作性能对照。
 
+2026-10-30后续c7ef产品通过28项正常、18项边界、窗口10项及AM大消息原轮9项＋最后单项补验；
+AM范围至单对1MiB、双向64KiB及PPN4多对64KiB，所测SEND均不超过4096B。
+原版OSU PPN1/8B五轮中位数旧RM/新RM/RC=2.22/2.22/2.54μs，RSS合计中位数88.31/88.31/120.34MiB。
+这是本轮样本，未扩展为全部性能无回退。见[修复与阶段验收](pending_order/acceptance_20261030.md)。
+
 ## 当前交付与测试基线
 
 - A建链阶段：实现及标准OSU结果已交付AtomGit `957264713cae5999e4e8e658e858cbec2d8459ea`，清单文档修正已追加到同分支`99d3d81b53a52fe553a75e0ab1511c74ce859dd4`。
-- A历史已测产品：`2a8e3b771211e5af491c8ca483ebcc01a03c2f01`；当前B已测产品为`80b28a25b5ea0e245bca88db44be79d15d06127f`。A阶段结论见[A_STAGE_CLOSEOUT_20261028.md](A_STAGE_CLOSEOUT_20261028.md)。
+- A历史已测产品：`2a8e3b771211e5af491c8ca483ebcc01a03c2f01`；当前B已测产品为`c7ef02b51d274e4ff3151457b82cc34f493419d5`。A阶段结论见[A_STAGE_CLOSEOUT_20261028.md](A_STAGE_CLOSEOUT_20261028.md)。
 - 正式测试使用原版OSU 7.5.2，性能和资源观察分轮；方法见[OSU_TEST_POLICY.md](OSU_TEST_POLICY.md)。
 - C重传延期；PPN192定位暂停。保序/去重与超时重发分别属于C4、C3，不能只增加PSN字段便视为完成。
 
@@ -128,6 +133,7 @@
    前置：B2；消息长度按B1确定。
    √ 本阶段：两种原版OSU、PPN4、8项尺寸共16项RM及两项RC门禁，全部8rank数据校验及SEND<=4096通过。
    □ 大小交替及其余必要正常场景待补，完整B3不提前勾选。
+   √ pending顺序修复正常回归：同EP新AM不得越过等待队列，28项正常、18项边界及窗口/AM所选20任务由原轮与补验共同覆盖；两种断言配置CPU检查与真实节点结果分别留档。
    √ 窗口及递增扫描子项：原版osu_bw/bibw窗口8/32、4086/8147B非整片，以及PPN4 multi_lat/alltoall递增扫描，通过10/10任务、54/54行校验与28份RM进程SEND观察；[完整记录](window_matrix/acceptance_20261030.md)。递增扫描不计作大小交替，完整B3仍待补。
 
 4. **□ 贯通大消息协议及项目需要的原生READ/WRITE（B4）**
@@ -135,7 +141,7 @@
    内容：区分AM回退与原生RMA/rendezvous路径；复核已知注册/rkey生命周期风险，逐项恢复并验证需要的PUT/GET能力，再按真实支持范围上报。
    完成标准：READ/WRITE和所用大消息路径的数据、完成、缓冲/注册/rkey回收正确，覆盖大小交替、地址复用及跨阈值；基础sample通过不能代替HUCX验收。
    前置：B1、B3和相关C1契约。当前RMA能力仍屏蔽，本项未完成；不默认扩展到原子操作等未明确目标。
-   □ 下一子项：[AM rendezvous正常大消息](am_rndv/README.md)，保持原生RMA关闭，验证16KB切换边界、64KB/1MiB及真实请求路径；[顺序修复候选](pending_order/README.md)c7ef已通过16385B原失败点及AM前9项（含单对1MiB）；最后PPN4/64KB多对用例退出0且OSU行Pass，但合并诊断日志导致解析未通过，待[分进程日志单项补验](am_rndv/README.md)。本子项仍未收口，不等于恢复原生READ/WRITE。
+   √ AM rendezvous正常子项：c7ef修复后的16KB切换边界、64KB eager/AM、单对1MiB、双向64KB和PPN4多对64KB，原轮9项＋分进程日志补验1项通过；数据、候选maps及实际SEND<=4096均核验。见[阶段验收](pending_order/acceptance_20261030.md)。完整B4仍为□：原生READ/WRITE、注册/rkey复用及严格大小交替尚未闭合。
 
 5. **□ 完成大小消息和MPI目标场景回归对比（B5）**
 
