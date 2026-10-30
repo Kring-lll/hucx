@@ -3,7 +3,7 @@
   "scope": "RM默认4KB正常功能阶段通过：80b28a25 ARM构建、双端默认、28项回归及18项OSU边界；五轮PPN1 8B已核对；完整B、硬件契约与故障恢复未验收",
   "files": {
     "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
-    "contrib/rm_ctp/REQUIREMENTS.md": "d209975e73a3322c2065f680b0a283c0eb2aa61b45371a5722046178cb0fcaee",
+    "contrib/rm_ctp/REQUIREMENTS.md": "119bf13fff67c2a8bb996bd76441cc2d7515041e59d83d6dfed9ea1356993d44",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/README.md": "a3d7d969e9842554eaf283b459c7902a808be2c6fe0df2f24247d27cfa1ca407",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
@@ -57,7 +57,14 @@
     "contrib/rm_ctp/B1_SOURCE_AUDIT_20261028.md": "202b212370f67b3501536154ea9932aa847a06c78c6c0fc8a57ba82e6c154b7e",
     "contrib/rm_ctp/B2_EAGER_REUSE_20261029.md": "12e5a6d984d4f2b68bcd07b751c2d4efd7c5b3cf1d6e5d3ecb960d900fb4d64c",
     "contrib/rm_ctp/segment_default/acceptance_20261029.md": "56b1aee75073bbc49b969f9b13fd9f8a7c8305d49fef1c0476ec8ec2dbaa72c8",
-    "contrib/rm_ctp/segment_default/acceptance_summary_20261029.json": "ef8ee80a469fff6bb092a0aaa7586e1958a53a84f833b3721222711a26ac9a7b"
+    "contrib/rm_ctp/segment_default/acceptance_summary_20261029.json": "ef8ee80a469fff6bb092a0aaa7586e1958a53a84f833b3721222711a26ac9a7b",
+    "contrib/rm_ctp/window_matrix/README.md": "c5c106b55e904d117a652519c6b24556105a4fe4173ce4e5b83507cef3433a74",
+    "contrib/rm_ctp/window_matrix/SOURCE_REVIEW.md": "08e59e9d36890ff563405a2d13e9fc6e677bc95f2f875aa87ef5f47299acdeb8",
+    "contrib/rm_ctp/window_matrix/build_zip.py": "7646f6a299c9fbe9702aec49ada2f1cf214a36a743668e6bea3ac67014ef8565",
+    "contrib/rm_ctp/window_matrix/matrix.py": "fec91059843b24b14499af0af2c7612eef5f98c9d4a9bc1d4ac518070baafc1a",
+    "contrib/rm_ctp/window_matrix/run_window.py": "b679a1fff0ef3cf3bae842e83ccfffda28ef47f599d7dae44e29900562be4e4c",
+    "contrib/rm_ctp/window_matrix/tests/test_window.py": "c3fe92a4206b57881cd0299566a7d37c37af6a6ed517a567ddb042dec645f9ac",
+    "contrib/rm_ctp/window_matrix/.gitignore": "65c449a9610b8dd8255e76529e5ec9bd335bad7b743b30650a626c55b7b280d1"
   },
   "current_validation": {
     "full_local_build": "Base62fb full x86 build PASS; 2a8e actual object CPU regressions PASS; 2a8e ARM64 isolated full build PASS",
@@ -380,5 +387,18 @@
     "record": "contrib/rm_ctp/segment_default/acceptance_20261029.md",
     "summary": "contrib/rm_ctp/segment_default/acceptance_summary_20261029.json"
   },
-  "historical_validation_entries": "早期2a8e/A及其他历史条目保留；当前默认4KB产品以segment_default_candidate_20261029及对应验收记录为准"
+  "historical_validation_entries": "早期2a8e/A及其他历史条目保留；当前默认4KB产品以segment_default_candidate_20261029及对应验收记录为准",
+  "window_matrix_20261029": {
+    "source_base": "4a151952ae070c096ec19d6ac7c843fc9b172b57",
+    "product_commit": "80b28a25b5ea0e245bca88db44be79d15d06127f",
+    "product_unchanged": true,
+    "cases": 10,
+    "size_rows": 54,
+    "max_ppn": 4,
+    "new_cpu_tests": 10,
+    "node_acceptance": "PENDING",
+    "size_alternation": "NOT_COVERED",
+    "performance_acceptance": false,
+    "scope": "原版OSU窗口及同进程递增扫描；不改通信算法，不新增自编demo"
+  }
 }
