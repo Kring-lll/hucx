@@ -1,9 +1,9 @@
 {
   "base_commit": "990398f43e7b589b4030e45d69b48c1766f5eac3",
-  "scope": "c7ef RM pending顺序修复及所选正常AM大消息阶段验收；保留原轮失败和日志隔离补验，完整B/C/RMA未验收",
+  "scope": "c7ef已验收AM正常阶段保留；本候选修复共用rkey身份/生命周期，ARM与AM/RC回归待验，PUT/GET/AM_ZCOPY仍关闭",
   "files": {
     "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
-    "contrib/rm_ctp/REQUIREMENTS.md": "326f5e1e0537b35edd68bdc31ce3a5e4dc71a0c2c4529475d962fedf8b368d74",
+    "contrib/rm_ctp/REQUIREMENTS.md": "bfcd6479969a023c8fc618ef9e13630f2e045ac4e5ec0f354f09275fb8fb88c5",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/README.md": "a3d7d969e9842554eaf283b459c7902a808be2c6fe0df2f24247d27cfa1ca407",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
@@ -93,7 +93,16 @@
     "contrib/rm_ctp/collective_matrix/run_collective.py": "35e3966e945f82192f814725bc5858035e4ec37a79240860b2d0587cff3bf791",
     "contrib/rm_ctp/collective_matrix/tests/test_collective.py": "7aa2c99a4946cddfc092a342428cdb2441495096ae16f274e2814ecdb7542d2c",
     "contrib/rm_ctp/collective_matrix/acceptance_20261030.md": "8733b5b16eb2ffac716016a156bea83cb1df660c53f454d1db13bcc6afbc66bd",
-    "contrib/rm_ctp/collective_matrix/acceptance_summary_20261030.json": "b4fac603a3bff4bd780162e3989a21e61fc08f287df0292bc3e927a61b50cec9"
+    "contrib/rm_ctp/collective_matrix/acceptance_summary_20261030.json": "b4fac603a3bff4bd780162e3989a21e61fc08f287df0292bc3e927a61b50cec9",
+    "src/uct/urma/base/urma_md.c": "44d3ac6beb0efa49807ab5abb97a70be400c704822474af93e1a32f16b211c7e",
+    "src/uct/urma/base/urma_md.h": "676da7577ef35a3a6d45a4b206d763e9fe0f15c9c99ed8d0c5fe8e42736c5976",
+    "contrib/rm_ctp/rkey_lifecycle/cpu_checks_20261030.json": "f6bc8c86814bd4d173633ce36cb8b8229e1797e574db3d7e9c366b737213b383",
+    "contrib/rm_ctp/rkey_lifecycle/run_cpu.sh": "1555eae1f1c6f5b92d0b12c92e6d1c8c533763c3a47ea502e6d97771bfcdf848",
+    "contrib/rm_ctp/rkey_lifecycle/README.md": "fb62996f9e029882df298ba300242fdf8c4ed69285d7232a74fa8a501bddb2e5",
+    "contrib/rm_ctp/rkey_lifecycle/run_candidate.py": "df4b61f2c1d53c1f9d46550f2d2a60df61c0beffc3cb45337b33dd38e731a1a6",
+    "contrib/rm_ctp/rkey_lifecycle/.gitignore": "32dae3052f331ee34d628ef535709b301259a45df7c7522c4d35dcf49873f00b",
+    "contrib/rm_ctp/rkey_lifecycle/test_rkey.c": "b1e77e823ed4e1000f9806389b6931b6169e7af4591043b5bccdc362ae10fdff",
+    "contrib/rm_ctp/rkey_lifecycle/tests/test_runner.py": "ca2c188c5ba5cf4a982dace60d2866b013553d2e5df587c0faf8882e37e5fc4a"
   },
   "current_validation": {
     "full_local_build": "Base62fb full x86 build PASS; 2a8e actual object CPU regressions PASS; 2a8e ARM64 isolated full build PASS",
@@ -158,6 +167,19 @@
       "strict_osu_parser": "UNCHANGED",
       "old_failed_receipts": "PRESERVED",
       "full_B_acceptance": false
+    },
+    "rkey_prerequisite_candidate": {
+      "base_commit": "82cff2375b58768fa02c28ce961cef5d86676158",
+      "product_changed": true,
+      "product_files": 2,
+      "actual_MD_cpu_cases": 5,
+      "full_x86_build": "PASS_WITH_SDK_STUBS_NOT_DEVICE_PROOF",
+      "ASan_UBSan": "PASS",
+      "shared_TX_actual_C": "PASS",
+      "ARM_build": "PENDING",
+      "AM_RC_node_regression": "PENDING",
+      "native_RMA_enabled": false,
+      "native_RMA_accepted": false
     }
   },
   "product_tested_commit": "2a8e3b771211e5af491c8ca483ebcc01a03c2f01",

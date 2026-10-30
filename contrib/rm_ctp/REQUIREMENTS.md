@@ -143,6 +143,8 @@ AM范围至单对1MiB、双向64KiB及PPN4多对64KiB，所测SEND均不超过40
    前置：B1、B3和相关C1契约。当前RMA能力仍屏蔽，本项未完成；不默认扩展到原子操作等未明确目标。
    √ AM rendezvous正常子项：c7ef修复后的16KB切换边界、64KB eager/AM、单对1MiB、双向64KB和PPN4多对64KB，原轮9项＋分进程日志补验1项通过；数据、候选maps及实际SEND<=4096均核验。见[阶段验收](pending_order/acceptance_20261030.md)。完整B4仍为□：原生READ/WRITE、注册/rkey复用及严格大小交替尚未闭合。
 
+   □ 原生RMA前置修复候选：共用MD的完整地址/EID识别、分配回滚、未导入key释放已补源码与CPU测试；ARM构建和现有AM/RC回归待验，不开放PUT/GET/AM_ZCOPY。见[rkey工作包](rkey_lifecycle/README.md)。
+
 5. **□ 完成大小消息和MPI目标场景回归对比（B5）**
 
    内容：从已验收小包逐步扩到确定的大消息范围，使用对应的点对点和集合通信场景，记录实际协议选择；验证新增大包路径没有破坏A。

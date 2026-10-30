@@ -1,0 +1,62 @@
+{
+  "base_commit": "82cff2375b58768fa02c28ce961cef5d86676158",
+  "scope": "ACTUAL_MD_CPU_MOCK_NOT_DEVICE_RMA",
+  "before": [
+    {
+      "case": "unused",
+      "exit": -6,
+      "stdout": "",
+      "stderr": "test_rkey: /workspace/scratch/d925e9bb64c1/b_rma_key_20261030/contrib/rm_ctp/rkey_lifecycle/test_rkey.c:63: release: Assertion `uct_ub_rkey_release(NULL, key, NULL) == UCS_OK' failed.\n"
+    },
+    {
+      "case": "address",
+      "exit": -6,
+      "stdout": "",
+      "stderr": "test_rkey: /workspace/scratch/d925e9bb64c1/b_rma_key_20261030/contrib/rm_ctp/rkey_lifecycle/test_rkey.c:87: test_identity: Assertion `first != second' failed.\n"
+    },
+    {
+      "case": "eid",
+      "exit": -6,
+      "stdout": "",
+      "stderr": "test_rkey: /workspace/scratch/d925e9bb64c1/b_rma_key_20261030/contrib/rm_ctp/rkey_lifecycle/test_rkey.c:87: test_identity: Assertion `first != second' failed.\n"
+    },
+    {
+      "case": "allocation",
+      "exit": -6,
+      "stdout": "[1793350467.641643] [8b7367909d3d:9    :0]         urma_md.c:389  UCX  ERROR Failed to allocate memory for uct_ub_rkey_info_t\n",
+      "stderr": "test_rkey: /workspace/scratch/d925e9bb64c1/b_rma_key_20261030/contrib/rm_ctp/rkey_lifecycle/test_rkey.c:101: test_allocation: Assertion `kh_size(&g_uct_ub_rkey_hash) == 0' failed.\n"
+    },
+    {
+      "case": "shared",
+      "exit": 0,
+      "stdout": "RKEY_CPU_CASE=shared PASS PACKED_BYTES=44 DEVICE_RMA=NOT_TESTED\n",
+      "stderr": ""
+    }
+  ],
+  "after": {
+    "unused": "PASS",
+    "address": "PASS",
+    "eid": "PASS",
+    "allocation": "PASS",
+    "shared": "PASS"
+  },
+  "sanitizers": [
+    "address",
+    "undefined"
+  ],
+  "leak_sanitizer": false,
+  "packed_rkey_bytes": 44,
+  "ARM_build": "PENDING",
+  "node_regression": "PENDING",
+  "native_RMA_enabled": false,
+  "full_x86_build": "PASS; SDK link stubs, not ARM/provider execution",
+  "shared_tx_actual_c_regression": "PASS; ASan/UBSan and address codec",
+  "existing_python_tool_tests": {
+    "pending": 4,
+    "am_and_logs": 22,
+    "collective": 12
+  },
+  "new_controller_tests": 3,
+  "after_fullbuild_log": "RKEY_CPU_CASE=unused PASS PACKED_BYTES=44 DEVICE_RMA=NOT_TESTED\nRKEY_CPU_CASE=address PASS PACKED_BYTES=44 DEVICE_RMA=NOT_TESTED\nRKEY_CPU_CASE=eid PASS PACKED_BYTES=44 DEVICE_RMA=NOT_TESTED\n[1793350848.349487] [8b7367909d3d:22   :0]         urma_md.c:390  UCX  ERROR Failed to allocate memory for uct_ub_rkey_info_t\nRKEY_CPU_CASE=allocation PASS PACKED_BYTES=44 DEVICE_RMA=NOT_TESTED\nRKEY_CPU_CASE=shared PASS PACKED_BYTES=44 DEVICE_RMA=NOT_TESTED\nRKEY_CPU_LOG_DIR=/workspace/scratch/d925e9bb64c1/b_rma_key_build_20261030/rkey_cpu.GA3oYQ\n",
+  "shared_tx_regression_log": "PASS restored SQ/credits: short+bcopy cannot bypass pending; enqueue and drain, 4 cases\nPASS pending callback permission is per EP group; the second queue resumes after scheduling\nPASS shared credit, target routing, cross-EP pending and independent flush\nPASS 32-bit flush sequence, wrap-around and 70000 completions\nPASS destruction requested from completion callback remains deferred\nPASS bcopy post-failure rollback and delayed EP/descriptor retirement\nPASS non-inline FC headers remain distinct until completion\nPASS synthetic CQE isolation and cleanup; MOCK ONLY, no hardware validation\nPASS legacy zero-length iface address through public UCT API: no writes; invalid mode rejected\nPASS late FC, immediate/queued errors, retry, cancel, grant wakeup, OOM and callback destruction/purge (11 CPU cases)\nPASS unchanged 40-byte EP wire address with unaligned export/import and canaries\n[1793350852.972488] [8b7367909d3d:19   :0]      rm_urma_ep.c:1324 UCX  ERROR Failed to import segment\nPASS actual connect: one target import, independent EP/segment ownership, CQE-delayed last release\n[1793350852.972683] [8b7367909d3d:19   :0]      rm_urma_ep.c:1381 UCX  ERROR Failed to acquire RM target: Out of memory, eid=4500:0000:0000:0000:0000:0000:0000:0097, uasid=17, jetty_id=771\n[1793350852.972695] [8b7367909d3d:19   :0]      rm_urma_ep.c:1381 UCX  ERROR Failed to acquire RM target: Input/output error, eid=4500:0000:0000:0000:0000:0000:0000:0097, uasid=17, jetty_id=771\n[1793350852.972704] [8b7367909d3d:19   :0]      rm_urma_ep.c:1324 UCX  ERROR Failed to import segment\nPASS target/segment import failure rollback and retry without a stale cache entry\nPASS full 128-bit EID/import identity, stable targets across rehash and reference overflow guard\nPASS failed iface rejection and failed-unimport quarantine/close retry (CPU injection only)\nPASS actual iface cleanup: stop shared Jetty before releasing retired EP target/segment\nPASS iface control sender: 30 CPU cases, inline/non-inline, no business EP,\n     independent target/CQE lifetime, pending/flush, failure/close and wrap\nPASS iface_v2: 8 actual C cases, four EPs/one account, no reverse EP,\n     inline/non-inline, delayed/replayed grants, retry and EP replacement\nPASS accounted RX: short batch, idle refill after release, partial error,\n     actual AM callback and truncated receive (5 actual C cases)\nPASS iface_v2 bidirectional early requests, shared target and budget drain\nPASS iface_v2 constructor rejects old format, target/segment failures,\n     and missing peer address without publishing a partial peer (4 cases)\nPASS iface_v2 blocked peer does not strand another peer's pending work\nPASS A7 iface_v2: 14 new actual-C lifecycle/error cases, inline/non-inline\n     32 EP generations, late control CQE/grant, K limit, pending OOM,\n     terminal post, queued-grant close and request-ID overflow; CPU ONLY\nRM实际C地址与控制编解码：5组测试通过；未进行网络或性能验证\nMOCK_LOG_DIR=/workspace/scratch/d925e9bb64c1/b_rma_key_build_20261030/r1_mock.wa9dTd\n"
+}

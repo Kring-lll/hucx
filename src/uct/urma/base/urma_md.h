@@ -15,6 +15,7 @@
 #include <ucs/memory/numa.h>
 #include <ucs/memory/rcache.h>
 #include <urma_api.h>
+#include <string.h>
 #ifdef HAVE_URMA_IB
 #include <urma_ib.h>
 #endif
@@ -86,7 +87,7 @@ typedef struct uct_ub_mem {
 typedef struct uct_ub_rkey_hash_key {
     urma_eid_t              deid;
     uint32_t                duasid;
-    uint32_t                va;
+    uint64_t                va;
     uint32_t                token_id;
 } uct_ub_rkey_hash_key_t;
 
@@ -145,13 +146,21 @@ KHASH_TYPE(uct_ub_rkey_hash, uct_ub_rkey_hash_key_t, uct_ub_rkey_info_t*);
 
 static UCS_F_ALWAYS_INLINE khint32_t uct_ub_rkey_hash_func(uct_ub_rkey_hash_key_t key)
 {
-    return kh_int_hash_func(key.deid.in4.addr | key.duasid | key.va | key.token_id);
+    khint32_t hash = 2166136261u;
+    unsigned i;
+
+    for (i = 0; i < sizeof(key.deid.raw); ++i) {
+        hash = (hash ^ key.deid.raw[i]) * 16777619u;
+    }
+    return hash ^ kh_int64_hash_func(key.va) ^
+           kh_int_hash_func(key.duasid) ^ kh_int_hash_func(key.token_id);
 }
 
 static UCS_F_ALWAYS_INLINE int uct_ub_rkey_hash_equal(uct_ub_rkey_hash_key_t a,
                                                       uct_ub_rkey_hash_key_t b)
 {
-    return ((a.deid.in4.addr == b.deid.in4.addr) && (a.duasid == b.duasid) &&
+    return ((memcmp(a.deid.raw, b.deid.raw, sizeof(a.deid.raw)) == 0) &&
+            (a.duasid == b.duasid) &&
             (a.va == b.va) && (a.token_id == b.token_id));
 }
 

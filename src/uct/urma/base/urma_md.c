@@ -374,7 +374,8 @@ static ucs_status_t uct_ub_rkey_unpack(uct_component_t *component,
     key.token_id = rkey_info->seg_token_id;
     iter = kh_put(uct_ub_rkey_hash, &g_uct_ub_rkey_hash, key, &ret);
     if (ret == UCS_KH_PUT_FAILED) {
-        ucs_error("Put hash error, deid = "EID_FMT", duasid:%u, va:%u.", EID_ARGS(key.deid), key.duasid, key.va);
+        ucs_error("Put hash error, deid = "EID_FMT", duasid:%u, va:0x%"PRIx64".",
+                  EID_ARGS(key.deid), key.duasid, key.va);
         status = UCS_ERR_NO_MEMORY;
         goto out;
     }
@@ -387,6 +388,7 @@ static ucs_status_t uct_ub_rkey_unpack(uct_component_t *component,
         elem = (uct_ub_rkey_info_t *)ucs_calloc(1, sizeof(uct_ub_rkey_info_t), "uct_ub_rkey_info_t");
         if (elem == NULL) {
             ucs_error("Failed to allocate memory for uct_ub_rkey_info_t");
+            kh_del(uct_ub_rkey_hash, &g_uct_ub_rkey_hash, iter);
             status = UCS_ERR_NO_MEMORY;
             goto out;
         }
@@ -436,18 +438,15 @@ static ucs_status_t uct_ub_rkey_release(uct_component_t *component,
     elem = *entry;
     elem->ref_cnt--;
 
-    /* Performance optimization temporarily adopts the solution of avoiding this interface */
     if (elem->ref_cnt == 0) {
-        if (rkey_info->import_tseg == NULL) {
-            ucs_debug("Rkey_info->import_tseg is NULL");
-            status = UCS_ERR_NO_RESOURCE;
-            goto out;
-        }
-        ret = urma_unimport_seg(rkey_info->import_tseg);
-        if (ret != URMA_SUCCESS) {
-            ucs_warn("Failed to urma_unimport_seg, ret = %d", ret);
-            status = UCS_ERR_IO_ERROR;
-            goto out;
+        /* Unpacked keys need not have been used by an RMA operation. */
+        if (rkey_info->import_tseg != NULL) {
+            ret = urma_unimport_seg(rkey_info->import_tseg);
+            if (ret != URMA_SUCCESS) {
+                ucs_warn("Failed to urma_unimport_seg, ret = %d", ret);
+                status = UCS_ERR_IO_ERROR;
+                goto out;
+            }
         }
         rkey_info->import_tseg = NULL;
         pthread_rwlock_destroy(&rkey_info->import_tseg_lock);
