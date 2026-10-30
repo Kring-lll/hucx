@@ -901,9 +901,7 @@ static UCS_F_ALWAYS_INLINE ucs_status_t uct_rm_urma_init_iface_attr(uct_rm_urma_
     char *dev_name = NULL;
     ucs_status_t status;
 
-#if UCS_ENABLE_ASSERT
-    iface->tx.in_pending = 0;
-#endif
+    iface->tx.pending_group = NULL;
 
     uct_rm_urma_link_init(iface, config);
     iface->progress = uct_rm_urma_iface_progress;

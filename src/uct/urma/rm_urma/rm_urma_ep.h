@@ -186,6 +186,12 @@ static UCS_F_ALWAYS_INLINE uint8_t uct_rm_urma_fc_get_fc_hdr(uint8_t id)
 
 #define UCT_RM_URMA_CHECK_RES_AND_FC(_iface, _ep, _am_id) \
     UCT_RM_URMA_CHECK_RES(_iface, _ep) \
+    /* Restored shared credits do not let a new AM bypass queued requests. */ \
+    if (ucs_unlikely(!uct_rm_urma_iface_pending_can_send( \
+                         _iface, &(_ep)->arb_group))) { \
+        UCS_STATS_UPDATE_COUNTER((_ep)->super.super.stats, UCT_EP_STAT_NO_RES, 1); \
+        return UCS_ERR_NO_RESOURCE; \
+    } \
     if ((_iface)->link.mode == UCT_RM_URMA_LINK_IFACE_V2) { \
         ucs_status_t _link_status = uct_rm_urma_link_check(_ep); \
         if (_link_status != UCS_OK) { \

@@ -1329,6 +1329,135 @@ static void test_iface_v2_pending_other_peer(void)
     puts("PASS iface_v2 blocked peer does not strand another peer's pending work");
 }
 
+static void complete_ep_posts(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep)
+{
+    while (ep->super.status.ci != ep->super.status.pi) {
+        uint64_t context = ((uint64_t)ep->super.ep_id << UCT_UB_EP_ID_OFFSET) |
+                           (ep->super.status.ci + 1);
+        complete(iface, context);
+        assert(iface->tx.error == UCS_OK);
+    }
+}
+
+/* Model credits/SQ becoming available during an RX batch, before the pending
+ * arbiter runs. A new RTR-like AM must join the existing EP queue. */
+static void test_pending_restored_resources(void)
+{
+    unsigned mode, bcopy;
+    char payload[32] = "new AM must not overtake pending";
+
+    for (mode = 0; mode < 2; ++mode) {
+        for (bcopy = 0; bcopy < 2; ++bcopy) {
+            control_fixture_t a, b;
+            uct_rm_urma_ep_t *ep;
+            pending_t first = { .req.func = pending_send };
+            pending_t second = { .req.func = pending_send };
+            unsigned before;
+            unsigned i;
+
+            if (mode) {
+                iface_v2_fixture_init(&a, 1, 128);
+                iface_v2_fixture_init(&b, 2, 128);
+                ep = iface_v2_new_ep(&a, &b);
+            } else {
+                control_fixture_init(&a, 128);
+                ep = new_ep(&a.iface, 17);
+            }
+            first.ep = ep;
+            second.ep = ep;
+            a.iface.rm_urma_jetty.available = 0;
+            assert(uct_rm_urma_ep_pending_add(&ep->super.super.super,
+                                             &first.req, 0) == UCS_OK);
+            /* Resource restoration must not implicitly clear pending order. */
+            a.iface.rm_urma_jetty.available = 8;
+            before = mock.posts;
+            if (bcopy) {
+                assert(uct_rm_urma_ep_am_bcopy(&ep->super.super.super, 0,
+                                               pack, payload, 0) == UCS_ERR_NO_RESOURCE);
+            } else {
+                assert(send_short(ep) == UCS_ERR_NO_RESOURCE);
+            }
+            assert(mock.posts == before && first.called == 0);
+            /* UCP must be allowed to enqueue the new request, rather than get
+             * BUSY and immediately retry the same blocked direct send. */
+            assert(uct_rm_urma_ep_pending_add(&ep->super.super.super,
+                                             &second.req, 0) == UCS_OK);
+            for (i = 0; i < 4 && !second.called; ++i) {
+                uct_rm_urma_iface_progress_pending(&a.iface);
+                complete_ep_posts(&a.iface, ep);
+                assert(!second.called || first.called == 1);
+                assert(a.iface.tx.pending_group == NULL);
+            }
+            assert(first.called == 1 && second.called == 1);
+            assert(ucs_arbiter_group_is_empty(&ep->arb_group));
+            assert(send_short(ep) == UCS_OK);
+            complete_ep_posts(&a.iface, ep);
+            control_fixture_cleanup(&a);
+            if (mode) {
+                control_fixture_cleanup(&b);
+            }
+        }
+    }
+    puts("PASS restored SQ/credits: short+bcopy cannot bypass pending; enqueue and drain, 4 cases");
+}
+
+static uct_rm_urma_ep_t *pending_other_ep;
+static unsigned pending_cross_calls;
+
+static ucs_status_t pending_check_other_group(uct_pending_req_t *req)
+{
+    pending_t *p = ucs_container_of(req, pending_t, req);
+
+    ++pending_cross_calls;
+    assert(send_short(pending_other_ep) == UCS_ERR_NO_RESOURCE);
+    return pending_send(&p->req);
+}
+
+static void test_pending_group_isolation(void)
+{
+    control_fixture_t a, b;
+    uct_rm_urma_ep_t *first_ep, *second_ep;
+    pending_t first = { .req.func = pending_check_other_group };
+    pending_t second = { .req.func = pending_send };
+    unsigned i;
+
+    iface_v2_fixture_init(&a, 1, 128);
+    iface_v2_fixture_init(&b, 2, 128);
+    first_ep = iface_v2_new_ep(&a, &b);
+    second_ep = iface_v2_new_ep(&a, &b);
+    assert(first_ep->peer == second_ep->peer);
+    first.ep = first_ep;
+    second.ep = second_ep;
+    pending_other_ep = second_ep;
+    pending_cross_calls = 0;
+    a.iface.rm_urma_jetty.available = 0;
+    assert(uct_rm_urma_ep_pending_add(&first_ep->super.super.super,
+                                     &first.req, 0) == UCS_OK);
+    assert(uct_rm_urma_ep_pending_add(&second_ep->super.super.super,
+                                     &second.req, 0) == UCS_OK);
+    /* Hold the second group off the runnable list, while leaving its request
+     * queued. This makes the cross-group permission check deterministic. */
+    ucs_arbiter_group_desched(&a.iface.tx.arbiter, &second_ep->arb_group);
+    a.iface.rm_urma_jetty.available = 8;
+    uct_rm_urma_iface_progress_pending(&a.iface);
+    complete_ep_posts(&a.iface, first_ep);
+    assert(pending_cross_calls == 1 && first.called == 1 && second.called == 0);
+    ucs_arbiter_group_schedule(&a.iface.tx.arbiter, &second_ep->arb_group);
+    for (i = 0; i < 8 && !second.called; ++i) {
+        uct_rm_urma_iface_progress_pending(&a.iface);
+        complete_ep_posts(&a.iface, first_ep);
+        complete_ep_posts(&a.iface, second_ep);
+        assert(a.iface.tx.pending_group == NULL);
+    }
+    assert(pending_cross_calls == 1 && first.called == 1 && second.called == 1);
+    assert(ucs_arbiter_group_is_empty(&first_ep->arb_group));
+    assert(ucs_arbiter_group_is_empty(&second_ep->arb_group));
+    control_fixture_cleanup(&a);
+    control_fixture_cleanup(&b);
+    pending_other_ep = NULL;
+    puts("PASS pending callback permission is per EP group; the second queue resumes after scheduling");
+}
+
 static void test_iface_v2_constructor_failures(void)
 {
     control_fixture_t a, b;
@@ -1674,6 +1803,10 @@ int main(void)
     char data[32] = "bcopy payload";
     unsigned i, destroyed_id, before;
     pending_t p = { .req.func = pending_send };
+
+    test_pending_restored_resources();
+    test_pending_group_isolation();
+    memset(&mock, 0, sizeof(mock));
 
     assert(ucs_callbackq_init(&worker.super.progress_q) == UCS_OK);
     iface.super.super.worker = &worker;

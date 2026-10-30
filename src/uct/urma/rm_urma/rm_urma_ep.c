@@ -785,11 +785,11 @@ ucs_status_t uct_rm_urma_ep_pending_add(uct_ep_h tl_ep, uct_pending_req_t *r, un
     uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
 
-    /* ep can tx if
-     * - iface has resources: cqe and tx skb
-     * - jfs has resources
-     */
-    if (uct_ub_iface_has_tx_resources(&iface->super) &&
+    /* BUSY asks UCP to retry immediately. That is only safe with an empty
+     * pending queue, even when shared credits or SQ resources have returned.
+     * Otherwise preserve the existing queue and append the new request. */
+    if (ucs_arbiter_group_is_empty(&ep->arb_group) &&
+        uct_ub_iface_has_tx_resources(&iface->super) &&
         uct_rm_urma_ep_can_send(ep) && iface->super.tx.jfc_available > 0) {
         return UCS_ERR_BUSY;
     }
@@ -1152,7 +1152,7 @@ ucs_arbiter_cb_result_t uct_rm_urma_ep_process_pending(ucs_arbiter_t *arbiter, u
     if (*dispatch_status != UCS_OK) {
         return UCS_ARBITER_CB_RESULT_STOP;
     }
-    status = uct_rm_urma_iface_invoke_pending_cb(iface, req);
+    status = uct_rm_urma_iface_invoke_pending_cb(iface, group, req);
     if (status == UCS_OK) {
         return UCS_ARBITER_CB_RESULT_REMOVE_ELEM;
     } else if (status == UCS_INPROGRESS) {

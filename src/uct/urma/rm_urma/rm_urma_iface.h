@@ -162,9 +162,8 @@ struct uct_rm_urma_iface {
         ucs_list_link_t        retired_eps;
         ucs_status_t          error;
         unsigned              progress_depth;
-#if UCS_ENABLE_ASSERT
-        int                    in_pending;
-#endif
+        /* Only this group may send past its own queued head callback. */
+        ucs_arbiter_group_t   *pending_group;
     } tx;
 
     struct {
@@ -203,30 +202,35 @@ uct_rm_urma_have_jfc_avail(uct_rm_urma_iface_t* iface)
 }
 
 static UCS_F_ALWAYS_INLINE ucs_status_t
-uct_rm_urma_iface_invoke_pending_cb(uct_rm_urma_iface_t *iface, uct_pending_req_t *req)
+uct_rm_urma_iface_invoke_pending_cb(uct_rm_urma_iface_t *iface,
+                                    ucs_arbiter_group_t *group,
+                                    uct_pending_req_t *req)
 {
+    ucs_arbiter_group_t *previous_group = iface->tx.pending_group;
     ucs_status_t status;
 
     ucs_trace_data("Progressing pending request");
-#if UCS_ENABLE_ASSERT
-    iface->tx.in_pending = 1;
-#endif
-
+    iface->tx.pending_group = group;
     status = req->func(req);
-
-#if UCS_ENABLE_ASSERT
-    iface->tx.in_pending = 0;
-#endif
+    iface->tx.pending_group = previous_group;
     ucs_trace_data("Status returned from progress pending: %s",
                    ucs_status_string(status));
 
     return status;
 }
 
+static UCS_F_ALWAYS_INLINE int
+uct_rm_urma_iface_pending_can_send(uct_rm_urma_iface_t *iface,
+                                    ucs_arbiter_group_t *group)
+{
+    return (iface->tx.pending_group == group) ||
+           ucs_arbiter_group_is_empty(group);
+}
+
 static UCS_F_ALWAYS_INLINE void
 uct_rm_urma_iface_check_pending(uct_rm_urma_iface_t *iface, ucs_arbiter_group_t *arb_group)
 {
-    ucs_assert(iface->tx.in_pending || ucs_arbiter_group_is_empty(arb_group));
+    ucs_assert(uct_rm_urma_iface_pending_can_send(iface, arb_group));
 }
 
 void uct_rm_urma_available_set(uct_rm_urma_iface_t *iface, uint8_t jfs_idx, int16_t val);
