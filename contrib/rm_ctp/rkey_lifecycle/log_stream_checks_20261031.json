@@ -1,0 +1,29 @@
+{
+  "source_base": "5e0b3727a1720e068bdee54f218ce540cc2f360a",
+  "product_changed": false,
+  "node_1MiB": {
+    "exit": 0,
+    "OSU_validation": "Pass",
+    "sender_log_mib": 142.02,
+    "peer_log_mib": 74.59,
+    "old_receipt": "PRESERVED_FAILED_LOG_GATE",
+    "full_protocol_recheck": "PENDING"
+  },
+  "CPU_tests": {
+    "am_stream": 26,
+    "rkey_resume": 15,
+    "collective": 12,
+    "pending": 4
+  },
+  "CPU_status": "PASS",
+  "synthetic_142MiB": {
+    "old_128MiB_gate": "REPRODUCED",
+    "synthetic_log_bytes": 148898031,
+    "streamed_protocol": "PASS",
+    "tracked_python_peak_bytes": 12987,
+    "limit_bytes": 268435456,
+    "device_RMA": "NOT_TESTED"
+  },
+  "new_MPI_tasks": 12,
+  "node_resume": "PENDING"
+}

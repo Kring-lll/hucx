@@ -95,6 +95,62 @@ class SplitLogTests(unittest.TestCase):
             logs.log_identities('/new', row, ev)
 
 
+    def streaming_fixture(self, root, trailing='', peer_mismatch=False):
+        run = root / 'trial'
+        run.mkdir()
+        local = trace(0, size=1048576) + trailing
+        peer = trace(1, size=1048576)
+        (run / 'ucx_node89_123.log').write_text(local)
+        (run / 'ucx_node97_456.log').write_text(peer)
+        row = {'name': 'trial', 'ppn': 1, 'configuration': {'environment': {
+            'UCX_LOG_FILE': logs.log_pattern(run)}}, 'rank_evidence': {'pids': {0:123, 1:456}}}
+        evidence = {'inventory': [{'hostname':'node89'}, {'hostname':'node97'}]}
+        manifest = {'ucx_node97_456.log': {'size':len(peer.encode()),
+            'sha256':'0'*64 if peer_mismatch else logs.hashlib.sha256(peer.encode()).hexdigest()}}
+        def no_copy(*args):
+            self.fail('existing checkpoint logs must not be overwritten')
+        base = SimpleNamespace(PEER='root@9.88.43.97', run_logged=no_copy,
+                               ssh=lambda *a, **k: json.dumps(manifest))
+        return row, evidence, base, run
+
+    def test_streamed_actual_protocol_and_explicit_existing_log_review(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            row, ev, base, run = self.streaming_fixture(root)
+            result, receipts = logs.collect(root, row, ev, base, reuse_existing=True,
+                parse_lines=lambda lines: p.inspect_trace(lines, p.cases()[7], IDENTITIES))
+            self.assertEqual(result['path'], 'am_rndv')
+            self.assertEqual(len(receipts), 2)
+            self.assertEqual(receipts[0]['sha256'], logs.hashlib.sha256(
+                (run / 'ucx_node89_123.log').read_bytes()).hexdigest())
+
+    def test_early_parser_cannot_hide_trailing_runtime_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            row, ev, base, _ = self.streaming_fixture(root, trailing='UCX ERROR device failed\n')
+            with self.assertRaisesRegex(ValueError, 'runtime error'):
+                logs.collect(root, row, ev, base, parse_lines=lambda lines: next(lines), reuse_existing=True)
+
+    def test_streamed_peer_hash_mismatch_is_rejected_even_after_parser_returns(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            row, ev, base, _ = self.streaming_fixture(root, peer_mismatch=True)
+            with self.assertRaisesRegex(ValueError, 'hash mismatch'):
+                logs.collect(root, row, ev, base, parse_lines=lambda lines: next(lines), reuse_existing=True)
+
+    def test_streaming_keeps_finite_limit_and_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            row, ev, base, run = self.streaming_fixture(root)
+            with patch.object(logs, 'MAX_LOG', 64), self.assertRaisesRegex(ValueError, 'oversized'):
+                logs.collect(root, row, ev, base, parse_lines=lambda lines: next(lines), reuse_existing=True)
+            target = run / 'ucx_node89_123.log'
+            target.rename(run / 'original.log')
+            target.symlink_to(run / 'original.log')
+            with self.assertRaisesRegex(ValueError, 'nonregular'):
+                logs.collect(root, row, ev, base, parse_lines=lambda lines: next(lines), reuse_existing=True)
+
+
 class CheckpointTests(unittest.TestCase):
     def fixture(self):
         case = Path('/candidate')

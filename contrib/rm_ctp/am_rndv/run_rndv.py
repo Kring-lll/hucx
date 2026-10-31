@@ -57,8 +57,11 @@ def finish_protocol(out, row, case, evidence):
                       for rank in range(2 * case['ppn'])}
         text = (run / 'launcher.log').read_text(errors='replace')
         if row.get('configuration', {}).get('environment', {}).get('UCX_LOG_FILE'):
-            text, row['protocol_log_files'] = collect_split_logs(out, row, evidence, osu.base)
-        row['protocol_path'] = inspect_trace(text, case, identities)
+            row['protocol_path'], row['protocol_log_files'] = collect_split_logs(
+                out, row, evidence, osu.base,
+                parse_lines=lambda lines: inspect_trace(lines, case, identities))
+        else:
+            row['protocol_path'] = inspect_trace(text, case, identities)
     except Exception as exc:
         row['passed'] = False
         row['error'] = type(exc).__name__ + ': ' + str(exc)

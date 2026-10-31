@@ -107,7 +107,8 @@ def inspect_trace(text, case, identities):
     size = case['sizes'][0]
     threshold = case['threshold']
     examples = []
-    for line_number, line in enumerate(text.splitlines(), 1):
+    lines = text.splitlines() if isinstance(text, str) else text
+    for line_number, line in enumerate(lines, 1):
         identity = IDENTITY.search(line)
         if identity is None:
             continue
