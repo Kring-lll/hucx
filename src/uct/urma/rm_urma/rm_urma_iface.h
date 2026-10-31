@@ -154,6 +154,7 @@ struct uct_rm_urma_iface {
          * piggy-back credits grant to the counter AM, if any. */
         int16_t                fc_soft_thresh;
         uint8_t                flush_by_fc;
+        unsigned               native_write;
     } config;
     struct {
         ucs_mpool_t            pending_mp; /* pool for FC grant and keepalive pending requests */
@@ -193,6 +194,7 @@ typedef struct uct_rm_urma_iface_config {
     double                     soft_thresh;
     unsigned                   link_mode;
     unsigned                   max_peers;
+    unsigned                   native_write;
 } uct_rm_urma_iface_config_t;
 
 static UCS_F_ALWAYS_INLINE int

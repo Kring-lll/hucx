@@ -1,0 +1,15 @@
+{
+  "scope": "CPU_ONLY_NOT_ARM_OR_HARDWARE",
+  "full_x86_sdk_stub_build": "PASS",
+  "actual_rm_ASAN_UBSAN_and_existing_regressions": "PASS",
+  "direct_probe_c_compile": "PASS",
+  "python_default_plan_and_syntax": "PASS",
+  "native_write_default": "OFF",
+  "node_WRITE": "PENDING",
+  "node_normal_regression_new_product": "PENDING",
+  "native_READ": "DISABLED",
+  "logs": {
+    "b_native_write_build.log": "dbff8170428af6ee3983f2d2a6a4b66e4b6878a3b2f4c88f83e40bbd43554df1",
+    "b_native_write_cpu.log": "563cf4d34b672402f000137cbad76f992d4958a947816a5476edd6242b5c57e9"
+  }
+}

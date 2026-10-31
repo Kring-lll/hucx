@@ -85,6 +85,11 @@ ucs_config_field_t uct_rm_urma_iface_config_table[] = {
      "Required for iface_v2; every participant must honor the job bound.",
      ucs_offsetof(uct_rm_urma_iface_config_t, max_peers), UCS_CONFIG_TYPE_UINT},
 
+    {"NATIVE_WRITE", "n",
+     "Enable the candidate single-IOV PUT_ZCOPY path (up to 4096 bytes).\n"
+     "Default off until device WRITE acceptance; GET and other RMA stay off.",
+     ucs_offsetof(uct_rm_urma_iface_config_t, native_write), UCS_CONFIG_TYPE_BOOL},
+
     {NULL}
 };
 
@@ -176,6 +181,12 @@ static ucs_status_t uct_rm_urma_iface_query(uct_iface_h tl_iface, uct_iface_attr
     } else {
         iface_attr->iface_addr_len = 0;
         iface_attr->cap.flags |= UCT_IFACE_FLAG_CONNECT_TO_EP;
+    }
+    if (iface->config.native_write) {
+        iface_attr->cap.flags |= UCT_IFACE_FLAG_PUT_ZCOPY;
+        iface_attr->cap.put.min_zcopy = 1;
+        iface_attr->cap.put.max_zcopy = ucs_min(4096, iface_attr->cap.put.max_zcopy);
+        iface_attr->cap.put.max_iov = 1;
     }
     iface_attr->cap.atomic32.op_flags = 0;
     iface_attr->cap.atomic32.fop_flags = 0;
@@ -901,6 +912,7 @@ static UCS_F_ALWAYS_INLINE ucs_status_t uct_rm_urma_init_iface_attr(uct_rm_urma_
     char *dev_name = NULL;
     ucs_status_t status;
 
+    iface->config.native_write = config->native_write;
     iface->tx.pending_group = NULL;
 
     uct_rm_urma_link_init(iface, config);

@@ -332,62 +332,104 @@ err_free_desc:
     return ret;
 }
 
-ucs_status_t uct_rm_urma_ep_put_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov, size_t iovcnt,
-                                      uint64_t remote_addr, uct_rkey_t rkey,
-                                      uct_completion_t *comp)
+/* WRITE does not consume a remote receive WQE or AM credit. The caller keeps
+ * the local registration and rkey alive through completion (or local flush).
+ * Device delivery is verified independently by the receiving test process. */
+ucs_status_t uct_rm_urma_ep_put_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov,
+                                      size_t iovcnt, uint64_t remote_addr,
+                                      uct_rkey_t rkey, uct_completion_t *comp)
 {
     uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    size_t total_length = uct_iov_total_length(iov, iovcnt);
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_sge_t src_sge_buf[UCT_UB_MAX_IOV] = {0};
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    urma_target_seg_t *target_seg = NULL;
+    uct_ub_rkey_info_t *key = (uct_ub_rkey_info_t *)rkey;
+    uct_urma_iface_send_op_t *op = NULL;
+    urma_target_seg_t *target_seg;
+    urma_target_seg_t *local_seg;
+    urma_jfs_wr_t wr = {0};
     urma_jfs_wr_t *bad_wr = NULL;
-    urma_status_t status;
-    urma_sge_t dst_sge;
-    ucs_status_t ret;
-    size_t sge_cnt;
+    urma_sge_t src, dst;
+    ucs_status_t status;
+    urma_status_t posted;
+    uint64_t saved_fence;
+    size_t length;
 
-    ucs_trace_func("");
-
-    UCT_CHECK_IOV_SIZE(iovcnt, iface->super.config.max_send_sge, "uct_rm_urma_ep_put_zcopy");
-    UCT_CHECK_LENGTH(total_length, 0, UCT_UB_MAX_MESSAGE_SIZE, "put_zcopy");
+    if (!iface->config.native_write) {
+        return UCS_ERR_UNSUPPORTED;
+    }
+    /* Check unconditionally, including release builds. No strided/multi-IOV
+     * support is advertised in this first native WRITE work package. */
+    if ((iov == NULL) || (iovcnt != 1) || (iov[0].count != 1)) {
+        return UCS_ERR_INVALID_PARAM;
+    }
+    length = iov[0].length;
+    if (length == 0) {
+        return UCS_OK;
+    }
+    if ((length > 4096) || (iov[0].memh == UCT_MEM_HANDLE_NULL) ||
+        (iov[0].buffer == NULL) || (key == NULL)) {
+        return UCS_ERR_INVALID_PARAM;
+    }
+    if ((remote_addr < key->remote_seg.ubva.va) ||
+        (length > key->remote_seg.len) ||
+        (remote_addr - key->remote_seg.ubva.va > key->remote_seg.len - length)) {
+        return UCS_ERR_INVALID_PARAM;
+    }
+    local_seg = uct_ub_memh_get_tseg(iov[0].memh);
+    if (local_seg == NULL) {
+        return UCS_ERR_INVALID_PARAM;
+    }
+    if (((uint64_t)iov[0].buffer < local_seg->seg.ubva.va) ||
+        (length > local_seg->seg.len) ||
+        ((uint64_t)iov[0].buffer - local_seg->seg.ubva.va > local_seg->seg.len - length)) {
+        return UCS_ERR_INVALID_PARAM;
+    }
     UCT_RM_URMA_CHECK_RES(iface, ep);
-    UCT_SKIP_ZERO_LENGTH(total_length);
-    UCT_TL_EP_STAT_OP(&ep->super.super, PUT, ZCOPY, total_length);
-
-    ret = uct_ub_ep_get_tseg(&iface->super, rkey, &target_seg);
-    if (ucs_unlikely(ret != UCS_OK)) {
-        ucs_error("In function ep put zcopy, get target tseg failed");
-        goto out;
+    if (!uct_rm_urma_iface_pending_can_send(iface, &ep->arb_group)) {
+        return UCS_ERR_NO_RESOURCE;
     }
-
-    sge_cnt = uct_ub_sge_fill_iov(src_sge_buf, iov, iovcnt);
-
-    UCT_UB_FILL_SRC_SGL_BUF(&wr->rw.src, src_sge_buf, sge_cnt);
-    UCT_UB_FILL_WR_SG_BUF(&wr->rw.dst, remote_addr, total_length, target_seg, 1, &dst_sge);
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_WRITE, ep, 1, URMA_INLINE_DISABLE, URMA_SOLICITED_DISABLE);
-    uct_ub_ep_fm(&iface->super, &ep->super, wr);
-
-    status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (ucs_unlikely(status != URMA_SUCCESS)) {
-        /* if status is URMA_ENOMEM, This error occurs in the following two scenarios:
-            1.the status of qp is incorrect(only for 1822 card)
-            2. the sq/cq queue overflows(1822 card and Mellanox card ) */
-        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-        ucs_fatal("In function ep put zcopy, urma_post_jetty_send_wr() failed, status:0x%x.\n", status);
+    /* Reserve completion state before posting. A successful DMA must never
+     * depend on a later allocation succeeding. */
+    if (comp != NULL) {
+        op = uct_ub_iface_get_send_op(&iface->super);
+        if (op == NULL) {
+            return UCS_ERR_NO_RESOURCE;
+        }
     }
+    status = uct_ub_ep_get_tseg(&iface->super, rkey, &target_seg);
+    if (status != UCS_OK) {
+        goto release_op;
+    }
+    UCT_UB_FILL_WR_SG_BUF(&wr.rw.src, (uint64_t)iov[0].buffer,
+                         length, local_seg, 1, &src);
+    UCT_UB_FILL_WR_SG_BUF(&wr.rw.dst, remote_addr, length, target_seg, 1, &dst);
+    uct_rm_urma_init_base_wr(&wr, iface, URMA_OPC_WRITE, ep, 1,
+                              URMA_INLINE_DISABLE, URMA_SOLICITED_DISABLE);
+    saved_fence = ep->super.fi.fence_beat;
+    uct_ub_ep_fm(&iface->super, &ep->super, &wr);
+    posted = urma_post_jetty_send_wr(ep->rm_urma_jetty->jetty, &wr, &bad_wr);
+    if (posted != URMA_SUCCESS) {
+        ep->super.fi.fence_beat = saved_fence;
+        status = ((posted == URMA_ENOMEM) || (posted == URMA_EAGAIN)) ?
+                 UCS_ERR_NO_RESOURCE : UCS_ERR_IO_ERROR;
+        goto release_op;
+    }
+    uct_rm_urma_update_tx_resources_status(ep, iface, 1);
+    if (op != NULL) {
+        op->handler = uct_ub_send_op_completion_handler;
+        op->user_comp = comp;
+        op->length = length;
+        op->flags |= UCT_UB_IFACE_SEND_OP_FLAG_ZCOPY;
+        uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, op,
+                                               ep->super.status.pi);
+    }
+    UCT_TL_EP_STAT_OP(&ep->super.super, PUT, ZCOPY, length);
+    return UCS_INPROGRESS;
 
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    uct_ub_tx_outstanding_queue_add_send_comp(&iface->super, &ep->super.txqp, uct_ub_send_op_completion_handler,
-                                              comp, ep->super.status.pi,
-                                              0 | UCT_UB_IFACE_SEND_OP_FLAG_ZCOPY, total_length);
-    ret = UCS_INPROGRESS;
-
-out:
-    return ret;
+release_op:
+    if (op != NULL) {
+        uct_ub_iface_put_send_op(op);
+    }
+    return status;
 }
 
 ucs_status_t uct_rm_urma_ep_get_zero_bytes(uct_rm_urma_ep_t *ep, uct_rm_urma_iface_t *iface,
@@ -799,9 +841,10 @@ ucs_status_t uct_rm_urma_ep_pending_add(uct_ep_h tl_ep, uct_pending_req_t *r, un
     uct_pending_req_arb_group_push(&ep->arb_group, r);
     UCT_TL_EP_STAT_PEND(&ep->super.super);
 
-    if ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) ?
-        ((ep->peer != NULL) && (ep->peer->credits > 0)) :
-        uct_ub_fc_has_resources(&iface->super, &ep->super.fc)) {
+    if (iface->config.native_write ||
+        ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) ?
+         ((ep->peer != NULL) && (ep->peer->credits > 0)) :
+         uct_ub_fc_has_resources(&iface->super, &ep->super.fc))) {
         /* Shared-SQ waiters stay scheduled, even if this EP has no CQE. */
         ucs_arbiter_group_schedule(&iface->tx.arbiter, &ep->arb_group);
     }
@@ -1174,9 +1217,15 @@ ucs_arbiter_cb_result_t uct_rm_urma_ep_process_pending(ucs_arbiter_t *arbiter, u
     ucs_assert(!(ep->super.flags & UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL));
 
     /* No ep resources */
-    if ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) ?
-        ((ep->peer != NULL) && (ep->peer->credits > 0)) :
-        uct_ub_fc_has_resources(&iface->super, &ep->super.fc)) {
+    if (iface->config.native_write ||
+        ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) ?
+         ((ep->peer != NULL) && (ep->peer->credits > 0)) :
+         uct_ub_fc_has_resources(&iface->super, &ep->super.fc))) {
+        if (iface->config.native_write) {
+            /* Pending callbacks are opaque: retry the FIFO head even without
+             * AM credits, since it may be a WRITE. Rotate fairly per progress. */
+            return UCS_ARBITER_CB_RESULT_NEXT_GROUP;
+        }
         /* A provider can report a full shared SQ even before the software WR
          * budget reaches zero. Keep this group scheduled for any TX CQE. */
         return UCS_ARBITER_CB_RESULT_STOP;

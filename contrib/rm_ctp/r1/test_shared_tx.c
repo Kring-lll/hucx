@@ -107,6 +107,15 @@ urma_status_t urma_post_jetty_send_wr(urma_jetty_t *j, urma_jfs_wr_t *wr,
         *bad = wr;
         return mock.fail_status ? mock.fail_status : URMA_ENOMEM;
     }
+    if (wr->opcode == URMA_OPC_WRITE) {
+        assert(wr->rw.src.num_sge == 1 && wr->rw.dst.num_sge == 1);
+        assert(wr->rw.src.sge[0].len == wr->rw.dst.sge[0].len);
+        memcpy((void *)wr->rw.dst.sge[0].addr,
+               (void *)wr->rw.src.sge[0].addr, wr->rw.src.sge[0].len);
+        mock.ctx = wr->user_ctx;
+        ++mock.posts;
+        return URMA_SUCCESS;
+    }
     mock.frame_length = 0;
     for (unsigned i = 0; i < wr->send.src.num_sge; ++i) {
         urma_sge_t *sge = &wr->send.src.sge[i];
@@ -1792,6 +1801,139 @@ static void test_iface_v2_lifecycle_failures(void)
     puts("     terminal post, queued-grant close and request-ID overflow; CPU ONLY");
 }
 
+typedef struct {
+    uct_pending_req_t req;
+    uct_ep_h ep;
+    uct_iov_t *iov;
+    uint64_t address;
+    uct_rkey_t key;
+    unsigned calls;
+} write_pending_t;
+
+static ucs_status_t native_write_pending(uct_pending_req_t *req)
+{
+    write_pending_t *p = ucs_container_of(req, write_pending_t, req);
+    ucs_status_t status;
+    ++p->calls;
+    status = uct_rm_urma_ep_put_zcopy(p->ep, p->iov, 1, p->address, p->key, NULL);
+    return status == UCS_INPROGRESS ? UCS_OK : status;
+}
+
+static void test_native_write(void)
+{
+    control_fixture_t f;
+    uct_rm_urma_ep_t *ep;
+    uct_ub_mem_t mem = {0};
+    uct_ub_rkey_info_t key = {0};
+    urma_target_seg_t local = {0}, remote = {0};
+    uct_urma_iface_send_op_t op = {0};
+    uct_completion_t done = { .func = on_complete, .count = 1, .status = UCS_OK };
+    char src[64], dst[64];
+    uct_iov_t iov = { .buffer = src, .length = 64, .count = 1, .memh = &mem };
+    uct_ep_h tl;
+    unsigned before;
+
+    control_fixture_init(&f, 128);
+    ep = new_ep(&f.iface, 7);
+    tl = &ep->super.super.super;
+    memset(src, 0x5a, sizeof(src));
+    memset(dst, 0, sizeof(dst));
+    local.seg.ubva.va = (uint64_t)src;
+    local.seg.len = sizeof(src);
+    remote.seg.ubva.va = (uint64_t)dst;
+    remote.seg.len = sizeof(dst);
+    key.remote_seg = remote.seg;
+    key.import_tseg = &remote;
+    mem.tseg = &local;
+    op.flags = UCT_UB_IFACE_SEND_OP_FLAG_IFACE;
+    op.iface = &f.iface.super;
+    f.iface.super.tx.zcopy_free_ops = &op;
+    assert(uct_rm_urma_ep_put_zcopy(tl, &iov, 1, (uint64_t)dst,
+                                   (uct_rkey_t)&key, &done) == UCS_ERR_UNSUPPORTED);
+    f.iface.config.native_write = 1;
+    /* Native WRITE must work without any AM receive credit. */
+    ep->super.fc.fc_wnd = 0;
+    assert(uct_rm_urma_ep_put_zcopy(tl, &iov, 1, (uint64_t)dst,
+                                   (uct_rkey_t)&key, &done) == UCS_INPROGRESS);
+    assert(memcmp(src, dst, sizeof(src)) == 0);
+    assert(done.count == 1 && ep->super.fc.fc_wnd == 0);
+    assert(uct_rm_urma_ep_flush(tl, 0, NULL) == UCS_INPROGRESS);
+    complete(&f.iface, mock.ctx);
+    assert(done.count == 0 && done.status == UCS_OK);
+    assert(uct_rm_urma_ep_flush(tl, 0, NULL) == UCS_OK);
+    assert(f.iface.super.tx.zcopy_free_ops == &op);
+    before = mock.posts;
+    done.count = 1;
+    mock.fail_next = 1;
+    mock.fail_status = URMA_EAGAIN;
+    assert(uct_rm_urma_ep_put_zcopy(tl, &iov, 1, (uint64_t)dst,
+                                   (uct_rkey_t)&key, &done) == UCS_ERR_NO_RESOURCE);
+    assert(mock.posts == before && done.count == 1);
+    assert(f.iface.super.tx.zcopy_free_ops == &op);
+    assert(ep->super.status.pi == ep->super.status.ci);
+    mock.fail_next = 1;
+    mock.fail_status = URMA_EINVAL;
+    assert(uct_rm_urma_ep_put_zcopy(tl, &iov, 1, (uint64_t)dst,
+                                   (uct_rkey_t)&key, &done) == UCS_ERR_IO_ERROR);
+    assert(f.iface.super.tx.zcopy_free_ops == &op && done.count == 1);
+    f.iface.super.tx.zcopy_free_ops = NULL;
+    assert(uct_rm_urma_ep_put_zcopy(tl, &iov, 1, (uint64_t)dst,
+                                   (uct_rkey_t)&key, &done) == UCS_ERR_NO_RESOURCE);
+    f.iface.super.tx.zcopy_free_ops = &op;
+    assert(uct_rm_urma_ep_put_zcopy(tl, &iov, 1, (uint64_t)dst+1,
+                                   (uct_rkey_t)&key, &done) == UCS_ERR_INVALID_PARAM);
+    {
+        pending_t waiting = { .req.func = pending_send, .ep = ep };
+        uct_pending_req_arb_group_push(&ep->arb_group, &waiting.req);
+        assert(uct_rm_urma_ep_put_zcopy(tl, &iov, 1, (uint64_t)dst,
+                                       (uct_rkey_t)&key, &done) == UCS_ERR_NO_RESOURCE);
+        uct_rm_urma_ep_pending_purge(tl, on_purge, NULL);
+    }
+    {
+        write_pending_t pending = { .req.func = native_write_pending,
+                                    .ep = tl, .iov = &iov, .address = (uint64_t)dst,
+                                    .key = (uct_rkey_t)&key };
+        f.iface.rm_urma_jetty.available = 0;
+        assert(uct_rm_urma_ep_put_zcopy(tl, &iov, 1, (uint64_t)dst,
+                                       (uct_rkey_t)&key, NULL) == UCS_ERR_NO_RESOURCE);
+        assert(uct_rm_urma_ep_pending_add(tl, &pending.req, 0) == UCS_OK);
+        f.iface.rm_urma_jetty.available = 2;
+        uct_rm_urma_iface_progress_pending(&f.iface);
+        assert(pending.calls == 1);
+        complete(&f.iface, mock.ctx);
+        assert(ucs_arbiter_group_is_empty(&ep->arb_group));
+    }
+    key.import_tseg = NULL;
+    assert(pthread_rwlock_init(&key.import_tseg_lock, NULL) == 0);
+    mock.fail_seg_import = 1;
+    assert(uct_rm_urma_ep_put_zcopy(tl, &iov, 1, (uint64_t)dst,
+                                   (uct_rkey_t)&key, &done) == UCS_ERR_IO_ERROR);
+    assert(f.iface.super.tx.zcopy_free_ops == &op && done.count == 1);
+    assert(uct_rm_urma_ep_put_zcopy(tl, &iov, 1, (uint64_t)dst,
+                                   (uct_rkey_t)&key, &done) == UCS_INPROGRESS);
+    assert(uct_rm_urma_ep_flush(tl, UCT_FLUSH_FLAG_CANCEL, NULL) == UCS_INPROGRESS);
+    assert(done.count == 1);
+    complete(&f.iface, mock.ctx);
+    assert(done.count == 0 && done.status == UCS_ERR_CANCELED);
+    assert(urma_unimport_seg(key.import_tseg) == URMA_SUCCESS);
+    key.import_tseg = &remote;
+    pthread_rwlock_destroy(&key.import_tseg_lock);
+    done.count = 1;
+    iov.buffer = src + 1;
+    assert(uct_rm_urma_ep_put_zcopy(tl, &iov, 1, (uint64_t)dst,
+                                   (uct_rkey_t)&key, &done) == UCS_ERR_INVALID_PARAM);
+    iov.buffer = src;
+    iov.count = 2;
+    assert(uct_rm_urma_ep_put_zcopy(tl, &iov, 1, (uint64_t)dst,
+                                   (uct_rkey_t)&key, &done) == UCS_ERR_INVALID_PARAM);
+    iov.count = 1;
+    iov.length = 0;
+    assert(uct_rm_urma_ep_put_zcopy(tl, &iov, 1, 0, 0, &done) == UCS_OK);
+    assert(done.count == 1);
+    control_fixture_cleanup(&f);
+    puts("PASS native WRITE actual RM: disabled/default, data, completion/flush, zero AM credit, EAGAIN/terminal post rollback, missing completion slot, bounds/stride/zero");
+}
+
 int main(void)
 {
     uct_rm_urma_iface_t iface = {};
@@ -1804,6 +1946,8 @@ int main(void)
     unsigned i, destroyed_id, before;
     pending_t p = { .req.func = pending_send };
 
+    test_native_write();
+    callbacks = 0;
     test_pending_restored_resources();
     test_pending_group_isolation();
     memset(&mock, 0, sizeof(mock));

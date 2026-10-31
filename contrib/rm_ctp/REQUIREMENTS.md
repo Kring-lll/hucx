@@ -145,6 +145,8 @@ AM范围至单对1MiB、双向64KiB及PPN4多对64KiB，所测SEND均不超过40
 
    √ 原生RMA前置修复子项：共用MD完整地址/EID识别、分配回滚、未导入key释放的真实源码CPU检查及ARM构建通过；ac4146054的28正常/18边界/10窗口/10AM/10集合回归已跑齐，15轮8B样本已审阅。本批旧RM/新RM/RC中位数为2.23/2.22/2.51μs，不外推全部性能。见[rkey前置验收](rkey_lifecycle/acceptance_20261031.md)。PUT/GET/AM_ZCOPY仍关闭，设备rkey导入/原生READ/WRITE及完整B4未验收；下一项产品实现为原生WRITE。
 
+   □ 原生WRITE首条路径候选：已适配PUT_ZCOPY的资源、FIFO、提交错误和完成记录，默认NATIVE_WRITE=n，显式开启时仅单IOV/1～4096B；x86构建与真实RM源码CPU检查通过。ARM构建、双节点注册/写入/数据/释放及新产品正常回归待验；READ仍关闭。见[WRITE候选](native_write/README.md)。
+
 5. **□ 完成大小消息和MPI目标场景回归对比（B5）**
 
    内容：从已验收小包逐步扩到确定的大消息范围，使用对应的点对点和集合通信场景，记录实际协议选择；验证新增大包路径没有破坏A。
