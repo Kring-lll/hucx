@@ -4,6 +4,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+import subprocess
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -141,6 +142,35 @@ class WindowTests(unittest.TestCase):
             (out / 'osu_bibw_help.txt').write_text('--window-size')
             with self.assertRaises(ValueError):
                 runner.check_help(out)
+
+
+    def test_helper_directory_creates_missing_peer_parents_with_real_shell(self):
+        class DirectoryReady(Exception):
+            pass
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary) / 'missing parent' / 'remaining_am'
+            def remote(script, *args, **kwargs):
+                subprocess.run(['bash','-s','--',*map(str,args)],input=script,
+                               text=True,capture_output=True,check=True)
+                raise DirectoryReady()
+            with patch.object(runner.osu.base,'ssh',side_effect=remote):
+                with self.assertRaises(DirectoryReady):
+                    runner.prepare_helpers(out,{})
+            self.assertTrue(out.is_dir())
+
+    def test_helper_directory_refuses_existing_target_with_real_shell(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary) / 'existing'
+            out.mkdir()
+            marker = out / 'keep.txt'
+            marker.write_text('keep')
+            def remote(script, *args, **kwargs):
+                subprocess.run(['bash','-s','--',*map(str,args)],input=script,
+                               text=True,capture_output=True,check=True)
+            with patch.object(runner.osu.base,'ssh',side_effect=remote):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    runner.prepare_helpers(out,{})
+            self.assertEqual(marker.read_text(),'keep')
 
 
 if __name__ == '__main__':

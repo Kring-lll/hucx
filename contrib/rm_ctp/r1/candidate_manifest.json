@@ -3,7 +3,7 @@
   "scope": "c7ef已验收AM正常阶段保留；本候选修复共用rkey身份/生命周期，ARM与AM/RC回归待验，PUT/GET/AM_ZCOPY仍关闭",
   "files": {
     "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
-    "contrib/rm_ctp/REQUIREMENTS.md": "fb4c9c2f516e31a48e38e2d458387e9d1d0783bebe81f8b431774a8de73c6805",
+    "contrib/rm_ctp/REQUIREMENTS.md": "e6d9b53a7129fe4dd1239eacae47300b5f8acb25d73e7af162fd2f1c2760529b",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/README.md": "a3d7d969e9842554eaf283b459c7902a808be2c6fe0df2f24247d27cfa1ca407",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
@@ -62,8 +62,8 @@
     "contrib/rm_ctp/window_matrix/SOURCE_REVIEW.md": "08e59e9d36890ff563405a2d13e9fc6e677bc95f2f875aa87ef5f47299acdeb8",
     "contrib/rm_ctp/window_matrix/build_zip.py": "7646f6a299c9fbe9702aec49ada2f1cf214a36a743668e6bea3ac67014ef8565",
     "contrib/rm_ctp/window_matrix/matrix.py": "fec91059843b24b14499af0af2c7612eef5f98c9d4a9bc1d4ac518070baafc1a",
-    "contrib/rm_ctp/window_matrix/run_window.py": "b679a1fff0ef3cf3bae842e83ccfffda28ef47f599d7dae44e29900562be4e4c",
-    "contrib/rm_ctp/window_matrix/tests/test_window.py": "c3fe92a4206b57881cd0299566a7d37c37af6a6ed517a567ddb042dec645f9ac",
+    "contrib/rm_ctp/window_matrix/run_window.py": "4cb14713b2182e86dbd9f078cf358c9f904d260fa65260a84b0e985793fc4094",
+    "contrib/rm_ctp/window_matrix/tests/test_window.py": "3907e950d26a57c76bdd21d5b8e3a747a1b0e276f513c2b751723d8cf85a9296",
     "contrib/rm_ctp/window_matrix/.gitignore": "65c449a9610b8dd8255e76529e5ec9bd335bad7b743b30650a626c55b7b280d1",
     "contrib/rm_ctp/window_matrix/acceptance_20261030.md": "6ce15714cade4cde6e585bb51a98fb06f51d9b74bb9bf9b1982c073ed7e36b11",
     "contrib/rm_ctp/window_matrix/acceptance_summary_20261030.json": "1430f659f07c5fc2dc8de8e5791b324b84f315841cfebe1a2e33c829738b6d05",
@@ -98,7 +98,7 @@
     "src/uct/urma/base/urma_md.h": "676da7577ef35a3a6d45a4b206d763e9fe0f15c9c99ed8d0c5fe8e42736c5976",
     "contrib/rm_ctp/rkey_lifecycle/cpu_checks_20261030.json": "f6bc8c86814bd4d173633ce36cb8b8229e1797e574db3d7e9c366b737213b383",
     "contrib/rm_ctp/rkey_lifecycle/run_cpu.sh": "1555eae1f1c6f5b92d0b12c92e6d1c8c533763c3a47ea502e6d97771bfcdf848",
-    "contrib/rm_ctp/rkey_lifecycle/README.md": "192c8eed1028643807c8599f3addc00a2e7c3c6e003956c989f25e18cd200fc0",
+    "contrib/rm_ctp/rkey_lifecycle/README.md": "150f65367c88c32df0e7eb9b835bd0111463268c60ee68dbd19138488d4d768e",
     "contrib/rm_ctp/rkey_lifecycle/run_candidate.py": "c738ec3ecf23fce0409dcd3447f7de952e9be8ea912c63ae158a1920eb114ab8",
     "contrib/rm_ctp/rkey_lifecycle/.gitignore": "32dae3052f331ee34d628ef535709b301259a45df7c7522c4d35dcf49873f00b",
     "contrib/rm_ctp/rkey_lifecycle/test_rkey.c": "b1e77e823ed4e1000f9806389b6931b6169e7af4591043b5bccdc362ae10fdff",
@@ -106,10 +106,11 @@
     "contrib/rm_ctp/rkey_lifecycle/resume.py": "0eb58e38f73f4f23d7bfb9f4a9d07330eeef999dea3b07d619c686dae9ad2ec4",
     "contrib/rm_ctp/rkey_lifecycle/tests/test_resume.py": "1c0e581717b123d2c3be7bc79aabd0a9edb866dc9c002018b43ad7f34107e6a0",
     "contrib/rm_ctp/rkey_lifecycle/controller_checks_20261031.json": "946940c452844fc895187ba177ba96f683b1a64753e548d0a68303f513c4ba8e",
-    "contrib/rm_ctp/rkey_lifecycle/resume_large_log.py": "1b637c07f51a8462f17bbfa5311a6a5e110a0680e15fd31eaefd84b81c28b133",
-    "contrib/rm_ctp/rkey_lifecycle/build_log_review_zip.py": "1b8a7dc285818c23eb3abe3859090c6553792e604eaaba75ee7c76475d4a0040",
-    "contrib/rm_ctp/rkey_lifecycle/tests/test_large_log_resume.py": "13a2fecca680425ea4e0f8c0322da938b3ef0a6cd1cbfb717c0eef16b9ff68bf",
-    "contrib/rm_ctp/rkey_lifecycle/log_stream_checks_20261031.json": "d1f96372668f05be9699fbdba79c55719413b89925dac5a45bf600f55db614b5"
+    "contrib/rm_ctp/rkey_lifecycle/resume_large_log.py": "e8ab7158526fc48044ea583117abf1d5a88209c8e7e0457799dcacd4135cc6ba",
+    "contrib/rm_ctp/rkey_lifecycle/build_log_review_zip.py": "4247b753d1b73413730c6ac76eb44979db35432baf454f2ecda6a4f9e49f1145",
+    "contrib/rm_ctp/rkey_lifecycle/tests/test_large_log_resume.py": "b5f3feaa1923e4a10892bd2036f920470045e119e9edbafac0c043fb6a53fb31",
+    "contrib/rm_ctp/rkey_lifecycle/log_stream_checks_20261031.json": "d1f96372668f05be9699fbdba79c55719413b89925dac5a45bf600f55db614b5",
+    "contrib/rm_ctp/rkey_lifecycle/parent_checks_20261031.json": "307c4b1b5500dacd6aea95dd5853cf1ca0cb4d9afb08f28387acff838c4783ff"
   },
   "current_validation": {
     "full_local_build": "Base62fb full x86 build PASS; 2a8e actual object CPU regressions PASS; 2a8e ARM64 isolated full build PASS",
@@ -206,6 +207,14 @@
       "streamed_log_limit_mib": 256,
       "CPU_tests": 57,
       "node_remaining_MPI_tasks": 12,
+      "node_status": "PENDING"
+    },
+    "rkey_peer_parent_fix": {
+      "product_changed": false,
+      "node_1MiB_log_review": "PASS",
+      "peer_parent_fix": "CPU_REAL_SHELL_PASS",
+      "CPU_tests": 71,
+      "remaining_MPI_tasks": 12,
       "node_status": "PENDING"
     }
   },

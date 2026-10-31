@@ -50,7 +50,7 @@ def check_help(out):
 
 def prepare_helpers(out, report):
     """Use the already validated local-load forwarding probe and symbol smoke."""
-    osu.base.ssh('set -eu\ntest ! -e "$1"\nmkdir "$1"\n', out)
+    osu.base.ssh('set -eu\nmkdir -p "$2"\ntest ! -e "$1"\nmkdir "$1"\n', out, out.parent)
     files = ((osu.ROOT / 'osu_rank.py', 'osu_rank.py'),
              (osu.A89 / 'rank_exec.py', 'a89_rank_exec.py'),
              (wr.ROOT / 'send_probe.c', 'send_probe.c'),

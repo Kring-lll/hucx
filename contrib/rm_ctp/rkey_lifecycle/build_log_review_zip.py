@@ -45,7 +45,7 @@ def main():
         if hashlib.sha256(data).hexdigest() != expected:
             raise ValueError('shared A89 file changed: ' + name)
         paths['a89/' + name] = data
-    manifest = {'source_base': '5e0b3727a1720e068bdee54f218ce540cc2f360a',
+    manifest = {'source_base': '5148bd0ccd932e3fedebf730758bc2310d806312',
                 'product_commit': 'ac4146054b0e1364d0ea691b37b9f14238a43bb0',
                 'product_unchanged': True, 'node_acceptance': 'PENDING',
                 'files': {name: hashlib.sha256(data).hexdigest() for name, data in paths.items()}}

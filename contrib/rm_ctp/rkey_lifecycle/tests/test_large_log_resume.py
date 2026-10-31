@@ -163,5 +163,52 @@ class LargeLogResumeTests(unittest.TestCase):
             self.assertTrue(destination.is_file())
 
 
+    def cached_review(self, root):
+        case = root / 'case'
+        review = case / 'rkey_log_review'
+        review.mkdir(parents=True)
+        receipt = {'source_sha256':'a'*64}
+        trial = {'passed':True,'exit':0,'matrix_case':r.normalized(r.am.cases()[7]),
+                 'recheck_scope':'EXISTING_DATA_MAPS_WR_FULL_STREAMED_LOGS_NO_NEW_MPI',
+                 'protocol_path':{'status':'PASS','path':'am_rndv'},
+                 'protocol_log_files':[{},{}],
+                 'send_observations':[{'max_send_bytes':4096}]*2}
+        report = {'source_commit':r.prior.COMMIT,'module_sha256':r.prior.MODULE,
+                  'status':'STOPPED_INCOMPLETE','checkpoint':receipt,
+                  'large_log_review':trial,'error':'RuntimeError: SSH失败：mkdir: '+str(review/'remaining_am')+': No such file or directory'}
+        (review/'results.json').write_text(json.dumps(report))
+        (review/'large_log_trial.json').write_text(json.dumps(trial))
+        remaining = review / 'remaining_am'
+        remaining.mkdir()
+        (remaining/'results.json').write_text(json.dumps({'source_commit':r.prior.COMMIT,
+            'module_sha256':r.prior.MODULE,'status':'STOPPED_INCOMPLETE','cases':[]}))
+        return case, review, receipt, report
+
+    def test_reuse_successful_review_without_touching_original_results(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            case,root,receipt,report = self.cached_review(Path(temporary))
+            before = (root/'results.json').read_bytes()
+            trial,proof = r.reuse_review(receipt,root,case)
+            self.assertTrue(trial['passed'])
+            self.assertTrue(proof['reused_successful_1MiB_review'])
+            self.assertEqual(before,(root/'results.json').read_bytes())
+
+    def test_reuse_rejects_different_failure_or_missing_protocol_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            case,root,receipt,original = self.cached_review(Path(temporary))
+            for defect in ('failure','protocol','checkpoint'):
+                bad = json.loads(json.dumps(original))
+                if defect == 'failure':
+                    bad['error'] = 'MPI failed'
+                elif defect == 'protocol':
+                    bad['large_log_review']['protocol_path']['status'] = 'FAIL'
+                    (root/'large_log_trial.json').write_text(json.dumps(bad['large_log_review']))
+                else:
+                    bad['checkpoint'] = {}
+                (root/'results.json').write_text(json.dumps(bad))
+                with self.subTest(defect=defect), self.assertRaises(ValueError):
+                    r.reuse_review(receipt,root,case)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -22,6 +22,7 @@ prior = load('rkey_prior_checkpoint', ROOT / 'resume.py')
 am, window, candidate, osu = r.pending.am, r.pending.window, r.candidate, r.osu
 CASE = prior.CASE
 CHECKPOINT = CASE / 'rkey_resume_j6c51b_5'
+PROVEN_REVIEW = CASE / 'rkey_log_review_g8q_c8y3'
 
 
 def read(path):
@@ -147,6 +148,42 @@ def review_large(matrix, destination, root=CHECKPOINT, case=CASE):
     return row
 
 
+def reuse_review(receipt, root=PROVEN_REVIEW, case=CASE):
+    """Reuse only the successful log review stopped before any remaining MPI task."""
+    root = Path(root).resolve()
+    if root.parent != Path(case).resolve():
+        raise ValueError('proven review is outside this CASE')
+    result = read(root / 'results.json')
+    prior.identity(result)
+    error = result.get('error', '')
+    if (result.get('status') != 'STOPPED_INCOMPLETE' or
+            not error.startswith('RuntimeError: SSH失败：') or
+            str(root / 'remaining_am') not in error or
+            'No such file or directory' not in error):
+        raise ValueError('previous review was not the selected parent-directory interruption')
+    if normalized(result.get('checkpoint')) != normalized(receipt):
+        raise ValueError('proven review checkpoint changed')
+    trial_path = root / 'large_log_trial.json'
+    trial = read(trial_path)
+    if (trial != result.get('large_log_review') or trial.get('passed') is not True or
+            trial.get('exit') != 0 or trial.get('matrix_case') != normalized(am.cases()[7]) or
+            trial.get('recheck_scope') != 'EXISTING_DATA_MAPS_WR_FULL_STREAMED_LOGS_NO_NEW_MPI' or
+            trial.get('protocol_path', {}).get('status') != 'PASS' or
+            trial.get('protocol_path', {}).get('path') != 'am_rndv' or
+            len(trial.get('protocol_log_files', [])) != 2 or
+            len(trial.get('send_observations', [])) != 2 or
+            not all(row['max_send_bytes'] <= 4096 for row in trial['send_observations'])):
+        raise ValueError('previous successful 1MiB review is incomplete')
+    remaining = read(root / 'remaining_am/results.json')
+    prior.identity(remaining)
+    if remaining.get('cases') != [] or 'remaining_am' in result or 'collective' in result:
+        raise ValueError('unexpected completed/pending MPI stages in proven review')
+    return trial, {'results_json': str(root / 'results.json'),
+                   'result_sha256': osu.digest(root / 'results.json'),
+                   'trial_json': str(trial_path), 'trial_sha256': osu.digest(trial_path),
+                   'reused_successful_1MiB_review': True}
+
+
 def remaining_am(out, case, build):
     out.mkdir()
     report = {'source_commit': build['source_commit'], 'module_sha256': build['module_sha256'],
@@ -196,7 +233,8 @@ def main():
     if not args.run:
         print(json.dumps({'case': str(CASE), 'checkpoint': str(CHECKPOINT),
                           'new_mpi_tasks': 12, 'max_ppn': 4, 'new_1MiB_tasks': 0,
-                          'log_limit_mib': 256, 'product_rebuild': False,
+                          'log_limit_mib': 256, 'reuse_review': str(PROVEN_REVIEW),
+                          'product_rebuild': False,
                           'native_RMA_enabled': False}, ensure_ascii=False, indent=2))
         return
     if os.geteuid() != 0 or socket.gethostname() != 'node89':
@@ -211,8 +249,9 @@ def main():
     print('RKEY_LOG_REVIEW_DIR=' + str(out), flush=True)
     try:
         report['deployment'] = candidate.deploy(CASE, build, out)
-        report['large_log_review'] = review_large(matrix, out / 'large_log_trial.json')
-        print('1MiB既有任务补验=DATA/MAPS/WR/AM_PATH/FULL_LOGS/EXIT PASS；未重跑MPI', flush=True)
+        report['large_log_review'], report['log_review_checkpoint'] = reuse_review(receipt)
+        osu.base.write_json(out / 'large_log_trial.json', report['large_log_review'])
+        print('既有1MiB完整日志补验=复核PASS；本轮不重读大日志、不重跑1MiB', flush=True)
         report['remaining_am'] = remaining_am(out / 'remaining_am', CASE, build)
         report['collective'] = r.collective_matrix(out / 'collective', CASE, build)
         report['status'] = 'RKEY_FIX_PRIOR_GATES_LOG_REVIEW_AND_REMAINING_TASKS_PASS_PERFORMANCE_REVIEW_REQUIRED'
