@@ -1,9 +1,9 @@
 {
   "base_commit": "990398f43e7b589b4030e45d69b48c1766f5eac3",
-  "scope": "原生UCT READ六轮、WRITE六轮及双开关28正常回归通过；单IOV/1～4096B、默认关闭；MPI单边/正式OSU/完整B/C待验",
+  "scope": "基础PUT_SHORT/PUT_BCOPY/GET_BCOPY及普通UCP原生RMA候选；默认关闭；CPU/x86已查，ARM/节点/MPI单边OSU待验",
   "files": {
     "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
-    "contrib/rm_ctp/REQUIREMENTS.md": "e71349be679967a6ab8aa8686b8d500f24c25d10727abfcfc29b20e79159c162",
+    "contrib/rm_ctp/REQUIREMENTS.md": "0eb1af38cc62adafd6e7f3b9db7b57876de2567241c5fa45beb8c7119bdae0de",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/README.md": "a3d7d969e9842554eaf283b459c7902a808be2c6fe0df2f24247d27cfa1ca407",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
@@ -24,10 +24,10 @@
     "src/uct/urma/base/urma_iface.h": "9c1002be4e66ccce0ce1a7690d0864781d6b25e7da7c6b1e84b66d644b2e59af",
     "src/uct/urma/rm_urma/rm_urma_addr.c": "109a554ca40b88d0c9824634fe172eb51c6496a32cabb480e518aead6d2d0162",
     "src/uct/urma/rm_urma/rm_urma_addr.h": "d3f127384282707dab9f5626961e7f02dd2df0177246d99f95fe170703281250",
-    "src/uct/urma/rm_urma/rm_urma_ep.c": "c2f9947baf5884c409689ea222d7ff1ba39d9da0f8c29b613a86ddd66a16e537",
+    "src/uct/urma/rm_urma/rm_urma_ep.c": "8dbc38c18e01a99379612490f12f577ddcc7afc751301e942c6e26062704f095",
     "src/uct/urma/rm_urma/rm_urma_ep.h": "bdec39f96c418f3b80b7b3a560cb439cb0be0b94599e066481a16b5886c8a151",
-    "src/uct/urma/rm_urma/rm_urma_iface.c": "025479ac19cccdc6f23f4c7a6dc45382459e6dc4e084c06f417e17c571228a17",
-    "src/uct/urma/rm_urma/rm_urma_iface.h": "7bf2d974c6ef45ab9f9262367214ace8e127c12bddb42cd7a9f31153e22ed147",
+    "src/uct/urma/rm_urma/rm_urma_iface.c": "195c3788a5dc3431b0daebae69c6f59aa7a2cdeaae725c1f5a50c106ec45232e",
+    "src/uct/urma/rm_urma/rm_urma_iface.h": "5ae113d640227407c88decee7bed7109928574a7908cdad13c3e8ddf165e03a0",
     "src/uct/urma/rm_urma/rm_urma_link.c": "4ebaa108828ec072720b5d2387ac585644517de52c92232c4e8d0780e83c01ee",
     "src/uct/urma/rm_urma/rm_urma_link.h": "517ea4683cae82ec05511b9c1416b53d63df80b11db66d031e6de109f236eced",
     "contrib/rm_ctp/r1/acceptance_iface_20261026.md": "d604b70b5f15d96bf1464fc1ac16ac8c7cece18f848db594587e7f05eed425a6",
@@ -146,7 +146,16 @@
     "contrib/rm_ctp/native_read/tests/test_accept.py": "7839acf3f5d0eec0239ebdb9cdc21f84c1b22f4862cb4b42216d8d9b62a6d287",
     "contrib/rm_ctp/native_read/tests/test_controller.py": "ace73811aeb84b2229c8ee2b8f94dd6fafe30862d2d2d371c69d08cc4e033022",
     "contrib/rm_ctp/native_read/acceptance_20261031.json": "8a5ab30d8f32bbc7547fffbc2cc19ca0998da404d39839aedc47f219e010f685",
-    "contrib/rm_ctp/native_read/acceptance_20261031.md": "0f2abea17a56576057d89e8c37ec63d29d18e1a9be9f6672798b7fba8ab746fd"
+    "contrib/rm_ctp/native_read/acceptance_20261031.md": "0f2abea17a56576057d89e8c37ec63d29d18e1a9be9f6672798b7fba8ab746fd",
+    "contrib/rm_ctp/native_rma/README.md": "e719c00affafec4f3d757d10c80fda84cd7531d8ab88c71ebe0129fc68e8eaca",
+    "contrib/rm_ctp/native_rma/basic_probe.c": "b85d30446abc3bdc33c5978b2ea8689d53ce367704a9a975f017cd489e45f3f9",
+    "contrib/rm_ctp/native_rma/cpu_checks_20261031.json": "55d843b16552823f4480d864fcbb670f9be9add1b2859d1101e163ad74e60703",
+    "contrib/rm_ctp/native_rma/run_candidate.py": "3e80ebeaeaf5ea867df664c1f239d96de25f223e607f6fc8ae389c595b88dc78",
+    "contrib/rm_ctp/native_rma/run_cpu.sh": "ce2787969c915a68ad3bb84ed68c043a5779f0e52918da19acd9d82d646acfb9",
+    "contrib/rm_ctp/native_rma/source_review_20261031.json": "ab1cf13b91e729e6e741376c3d17f1d175d67df9d200f4b5dc2aeede9823966c",
+    "contrib/rm_ctp/native_rma/test_native_rma.c": "eea0a1fc69ee4025293d3e1320a5b328209b216cb84b9b44d2be57a00ef464ab",
+    "contrib/rm_ctp/native_rma/tests/test_controller.py": "e0f644cb951f7b5ce8f24e332c8d2c88fafc51efd95c9a4123d58d977381face",
+    "contrib/rm_ctp/native_rma/ucp_probe.c": "00f778d0e8ec2c94d3dc51aae14608e236ed835716169f72adfd687234a9c6d2"
   },
   "current_validation": {
     "full_local_build": "Base62fb full x86 build PASS; 2a8e actual object CPU regressions PASS; 2a8e ARM64 isolated full build PASS",
@@ -626,5 +635,6 @@
     "record": "contrib/rm_ctp/collective_matrix/acceptance_20261030.md",
     "summary": "contrib/rm_ctp/collective_matrix/acceptance_summary_20261030.json",
     "raw_evidence": "USER_TERMINAL_AND_JSON_ASSERTIONS; raw reports remain on nodes, not downloaded"
-  }
+  },
+  "candidate_base_commit": "6ba7250595a58266b8276e0f5c7a9d35c116996b"
 }

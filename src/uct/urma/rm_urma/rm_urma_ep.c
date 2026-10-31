@@ -232,54 +232,89 @@ ucs_status_t uct_rm_urma_ep_put_0bytes(uct_rm_urma_ep_t *ep, uct_rm_urma_iface_t
     return ret;
 }
 
+/* Validate the wire rkey range before importing or posting. Subtraction avoids
+ * wrapping remote_addr + length at the end of the address space. */
+static int uct_rm_urma_rma_range(uct_rkey_t rkey, uint64_t remote_addr,
+                                size_t length)
+{
+    uct_ub_rkey_info_t *key = (uct_ub_rkey_info_t *)rkey;
+
+    return (key != NULL) && (remote_addr >= key->remote_seg.ubva.va) &&
+           (length <= key->remote_seg.len) &&
+           (remote_addr - key->remote_seg.ubva.va <= key->remote_seg.len - length);
+}
+
+/* Each invocation owns its WR and SGEs. Failed posts leave sequence numbers,
+ * fence state and SQ/CQE budgets unchanged; callers still own their descriptor. */
+static ucs_status_t
+uct_rm_urma_rma_post(uct_rm_urma_ep_t *ep, uint64_t local_addr,
+                     urma_target_seg_t *local_seg, size_t length,
+                     uint64_t remote_addr, uct_rkey_t rkey, int read,
+                     int inline_write)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface,
+                                               uct_rm_urma_iface_t);
+    urma_target_seg_t *remote_seg;
+    urma_jfs_wr_t wr = {0};
+    urma_jfs_wr_t *bad_wr = NULL;
+    urma_sge_t local, remote;
+    uint64_t saved_fence;
+    urma_status_t posted;
+    ucs_status_t status;
+
+    status = uct_ub_ep_get_tseg(&iface->super, rkey, &remote_seg);
+    if (status != UCS_OK) {
+        return status;
+    }
+    UCT_UB_FILL_WR_SG_BUF(read ? &wr.rw.dst : &wr.rw.src, local_addr,
+                         length, local_seg, 1, &local);
+    UCT_UB_FILL_WR_SG_BUF(read ? &wr.rw.src : &wr.rw.dst, remote_addr,
+                         length, remote_seg, 1, &remote);
+    uct_rm_urma_init_base_wr(&wr, iface, read ? URMA_OPC_READ : URMA_OPC_WRITE,
+                              ep, 1, inline_write ? URMA_INLINE_ENABLE :
+                              URMA_INLINE_DISABLE, URMA_SOLICITED_DISABLE);
+    saved_fence = ep->super.fi.fence_beat;
+    uct_ub_ep_fm(&iface->super, &ep->super, &wr);
+    posted = urma_post_jetty_send_wr(ep->rm_urma_jetty->jetty, &wr, &bad_wr);
+    if (posted != URMA_SUCCESS) {
+        ep->super.fi.fence_beat = saved_fence;
+        return ((posted == URMA_ENOMEM) || (posted == URMA_EAGAIN)) ?
+               UCS_ERR_NO_RESOURCE : UCS_ERR_IO_ERROR;
+    }
+    uct_rm_urma_update_tx_resources_status(ep, iface, 1);
+    ucs_trace("RM native RMA post kind=%s length=%zu",
+              read ? "get_bcopy" : (inline_write ? "put_short" : "put_bcopy"), length);
+    return UCS_OK;
+}
+
 ucs_status_t uct_rm_urma_ep_put_short(uct_ep_h tl_ep, const void *payload,
                                       unsigned length, uint64_t remote_addr,
                                       uct_rkey_t rkey)
 {
     uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    urma_target_seg_t *target_seg = NULL;
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_status_t status;
-    urma_sge_t dst_sge;
-    urma_sge_t src_sge;
-    ucs_status_t ret;
+    ucs_status_t status;
 
-    UCT_CHECK_LENGTH(length, 0, iface->super.config.max_inline, "put_short");
+    if (!iface->config.native_rma) {
+        return UCS_ERR_UNSUPPORTED;
+    }
+    if (length == 0) {
+        return UCS_OK;
+    }
+    if ((payload == NULL) || (length > ucs_min(4096, iface->super.config.max_inline)) ||
+        !uct_rm_urma_rma_range(rkey, remote_addr, length)) {
+        return UCS_ERR_INVALID_PARAM;
+    }
     UCT_RM_URMA_CHECK_RES(iface, ep);
-    UCT_TL_EP_STAT_OP(&ep->super.super, PUT, SHORT, length);
-
-    if (ucs_unlikely(length == 0)) {
-        ret = uct_rm_urma_ep_put_0bytes(ep, iface);
-        goto out;
+    if (!uct_rm_urma_iface_pending_can_send(iface, &ep->arb_group)) {
+        return UCS_ERR_NO_RESOURCE;
     }
-
-    ret = uct_ub_ep_get_tseg(&iface->super, rkey, &target_seg);
-    if (ucs_unlikely(ret != UCS_OK)) {
-        ucs_error("In function ep put short, get target seg failed");
-        goto out;
+    status = uct_rm_urma_rma_post(ep, (uint64_t)payload, NULL, length,
+                                  remote_addr, rkey, 0, 1);
+    if (status == UCS_OK) {
+        UCT_TL_EP_STAT_OP(&ep->super.super, PUT, SHORT, length);
     }
-
-    UCT_UB_FILL_WR_SG_BUF(&wr->rw.src, (uint64_t)payload, length, NULL, 1, &src_sge);
-    UCT_UB_FILL_WR_SG_BUF(&wr->rw.dst, remote_addr, length, target_seg, 1, &dst_sge);
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_WRITE, ep, 1, URMA_INLINE_ENABLE, URMA_SOLICITED_DISABLE);
-    uct_ub_ep_fm(&iface->super, &ep->super, wr);
-
-    status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (ucs_unlikely(status != URMA_SUCCESS)) {
-        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-        ucs_fatal("In function ep put short, urma_post_jetty_send_wr() failed, status:0x%x.\n", status);
-    }
-
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    ret = UCS_OK;
-
-out:
-    (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-    return ret;
+    return status;
 }
 
 ssize_t uct_rm_urma_ep_put_bcopy(uct_ep_h tl_ep, uct_pack_callback_t pack_cb,
@@ -287,49 +322,44 @@ ssize_t uct_rm_urma_ep_put_bcopy(uct_ep_h tl_ep, uct_pack_callback_t pack_cb,
 {
     uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    uct_ub_iface_send_desc_t *desc = NULL;
-    urma_target_seg_t *target_seg = NULL;
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_status_t status;
-    urma_sge_t dst_sge;
-    urma_sge_t src_sge;
-    ucs_status_t ret;
+    uct_ub_iface_send_desc_t *desc;
+    ucs_status_t status;
     size_t length;
 
+    if (!iface->config.native_rma) {
+        return UCS_ERR_UNSUPPORTED;
+    }
+    if (pack_cb == NULL) {
+        return UCS_ERR_INVALID_PARAM;
+    }
     UCT_RM_URMA_CHECK_RES(iface, ep);
-    UCT_UB_IFACE_GET_TX_PUT_BCOPY_DESC(&iface->super, &iface->super.tx.mp,
-                                       desc, pack_cb, arg, length);
+    if (!uct_rm_urma_iface_pending_can_send(iface, &ep->arb_group)) {
+        return UCS_ERR_NO_RESOURCE;
+    }
+    UCT_UB_IFACE_GET_TX_DESC(&iface->super, &iface->super.tx.mp, desc);
+    /* The callback must honor advertised max_bcopy, as for other UCTs. Check
+     * its returned size too, including in release builds. */
+    length = pack_cb(desc + 1, arg);
+    if (length == 0) {
+        ucs_mpool_put(desc);
+        return 0;
+    }
+    if ((length > ucs_min(4096, iface->super.config.seg_size)) ||
+        !uct_rm_urma_rma_range(rkey, remote_addr, length)) {
+        ucs_mpool_put(desc);
+        return UCS_ERR_INVALID_PARAM;
+    }
+    status = uct_rm_urma_rma_post(ep, (uint64_t)(desc + 1), desc->tseg,
+                                  length, remote_addr, rkey, 0, 0);
+    if (status != UCS_OK) {
+        ucs_mpool_put(desc);
+        return status;
+    }
+    desc->super.handler = (uct_ub_send_handler_t)ucs_mpool_put;
+    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &desc->super,
+                                           ep->super.status.pi);
     UCT_TL_EP_STAT_OP(&ep->super.super, PUT, BCOPY, length);
-
-    ret = uct_ub_ep_get_tseg(&iface->super, rkey, &target_seg);
-    if (ucs_unlikely(ret != UCS_OK)) {
-        ucs_error("In function ep put bcopy, get target seg failed");
-        goto err_free_desc;
-    }
-
-    UCT_UB_FILL_WR_SG_BUF(&(wr->rw.src), (uint64_t)(desc + 1), length, desc->tseg, 1, &src_sge);
-    UCT_UB_FILL_WR_SG_BUF(&(wr->rw.dst), remote_addr, length, target_seg, 1, &dst_sge);
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_WRITE, ep, 1, URMA_INLINE_DISABLE, URMA_SOLICITED_DISABLE);
-    uct_ub_ep_fm(&iface->super, &ep->super, wr);
-
-    status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (ucs_unlikely(status != URMA_SUCCESS)) {
-        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-        ucs_fatal("In function ep put bcopy, urma_post_jetty_send_wr() failed, status:0x%x.\n", status);
-    }
-
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &desc->super, ep->super.status.pi);
-
-    (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
     return length;
-
-err_free_desc:
-    _UCT_RELEASE_DESC(_, desc);
-    return ret;
 }
 
 /* WRITE does not consume a remote receive WQE or AM credit. The caller keeps
@@ -353,7 +383,7 @@ ucs_status_t uct_rm_urma_ep_put_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov,
     uint64_t saved_fence;
     size_t length;
 
-    if (!iface->config.native_write) {
+    if (!iface->config.native_write && !iface->config.native_rma) {
         return UCS_ERR_UNSUPPORTED;
     }
     /* Check unconditionally, including release builds. No strided/multi-IOV
@@ -422,6 +452,7 @@ ucs_status_t uct_rm_urma_ep_put_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov,
         uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, op,
                                                ep->super.status.pi);
     }
+    ucs_trace("RM native RMA post kind=put_zcopy length=%zu", length);
     UCT_TL_EP_STAT_OP(&ep->super.super, PUT, ZCOPY, length);
     return UCS_INPROGRESS;
 
@@ -469,57 +500,45 @@ ucs_status_t uct_rm_urma_ep_get_bcopy(uct_ep_h tl_ep,
 {
     uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    uct_ub_iface_send_desc_t *desc = NULL;
-    urma_target_seg_t *target_seg = NULL;
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_status_t status;
-    urma_sge_t dst_sge;
-    urma_sge_t src_sge;
-    ucs_status_t ret;
+    uct_ub_iface_send_desc_t *desc;
+    ucs_status_t status;
 
-    UCT_CHECK_LENGTH(length, 0, iface->super.config.seg_size, "get_bcopy");
+    if (!iface->config.native_rma) {
+        return UCS_ERR_UNSUPPORTED;
+    }
+    if (length == 0) {
+        return UCS_OK;
+    }
+    if ((unpack_cb == NULL) ||
+        (length > ucs_min(4096, iface->super.config.seg_size)) ||
+        !uct_rm_urma_rma_range(rkey, remote_addr, length)) {
+        return UCS_ERR_INVALID_PARAM;
+    }
     UCT_RM_URMA_CHECK_RES(iface, ep);
-    UCT_UB_IFACE_GET_TX_GET_BCOPY_DESC(iface, &iface->super.tx.mp,
-                                       desc, unpack_cb, comp, arg, length);
-    UCT_TL_EP_STAT_OP(&ep->super.super, GET, BCOPY, length);
-
-    if (ucs_unlikely(length == 0)) {
-        ret = uct_rm_urma_ep_get_zero_bytes(ep, iface, desc);
-        if (ret != UCS_INPROGRESS) {
-            goto err_free_desc;
-        }
-        return ret;
+    if (!uct_rm_urma_iface_pending_can_send(iface, &ep->arb_group) ||
+        (iface->super.tx.reads_available < (ssize_t)length)) {
+        return UCS_ERR_NO_RESOURCE;
     }
-
-    ret = uct_ub_ep_get_tseg(&iface->super, rkey, &target_seg);
-    if (ucs_unlikely(ret != UCS_OK)) {
-        ucs_error("In function ep get bcopy, get target seg failed");
-        goto err_free_desc;
+    UCT_UB_IFACE_GET_TX_DESC(&iface->super, &iface->super.tx.mp, desc);
+    status = uct_rm_urma_rma_post(ep, (uint64_t)(desc + 1), desc->tseg,
+                                  length, remote_addr, rkey, 1, 0);
+    if (status != UCS_OK) {
+        ucs_mpool_put(desc);
+        return status;
     }
-
-    UCT_UB_FILL_WR_SG_BUF(&wr->rw.dst, (uint64_t)(desc + 1), length, desc->tseg, 1, &src_sge);
-    UCT_UB_FILL_WR_SG_BUF(&wr->rw.src, remote_addr, length, target_seg, 1, &dst_sge);
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_READ, ep, 1, URMA_INLINE_DISABLE, URMA_SOLICITED_DISABLE);
-
-    status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (ucs_unlikely(status != URMA_SUCCESS)) {
-        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-        ucs_fatal("In function ep get bcopy, urma_post_jetty_send_wr() failed, status:0x%x.\n", status);
-    }
-
+    /* Exact base handlers are also recognized by error/cancel purge. Never
+     * unpack a failed READ; return its read-byte budget exactly once. */
+    desc->super.handler = (comp == NULL) ? uct_ub_ep_get_bcopy_handler_no_completion :
+                                          uct_ub_ep_get_bcopy_handler;
+    desc->super.unpack_arg = arg;
+    desc->super.user_comp = comp;
+    desc->super.length = length;
+    desc->unpack_cb = unpack_cb;
     UCT_UB_READ_POSTED(iface, length);
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &desc->super, ep->super.status.pi);
-
-    (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
+    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &desc->super,
+                                           ep->super.status.pi);
+    UCT_TL_EP_STAT_OP(&ep->super.super, GET, BCOPY, length);
     return UCS_INPROGRESS;
-
-err_free_desc:
-    _UCT_RELEASE_DESC(_, desc);
-    return ret;
 }
 
 /* Native READ keeps local destination memory and the remote rkey alive until
@@ -542,7 +561,7 @@ ucs_status_t uct_rm_urma_ep_get_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov,
     uint64_t saved_fence;
     size_t length;
 
-    if (!iface->config.native_read) {
+    if (!iface->config.native_read && !iface->config.native_rma) {
         return UCS_ERR_UNSUPPORTED;
     }
     /* Check unconditionally, including release builds. No strided/multi-IOV
@@ -612,6 +631,7 @@ ucs_status_t uct_rm_urma_ep_get_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov,
     UCT_UB_READ_POSTED(iface, length);
     uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, op,
                                            ep->super.status.pi);
+    ucs_trace("RM native RMA post kind=get_zcopy length=%zu", length);
     UCT_TL_EP_STAT_OP(&ep->super.super, GET, ZCOPY, length);
     return UCS_INPROGRESS;
 
@@ -889,6 +909,7 @@ ucs_status_t uct_rm_urma_ep_pending_add(uct_ep_h tl_ep, uct_pending_req_t *r, un
     UCT_TL_EP_STAT_PEND(&ep->super.super);
 
     if (iface->config.native_write || iface->config.native_read ||
+        iface->config.native_rma ||
         ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) ?
          ((ep->peer != NULL) && (ep->peer->credits > 0)) :
          uct_ub_fc_has_resources(&iface->super, &ep->super.fc))) {
@@ -1265,10 +1286,12 @@ ucs_arbiter_cb_result_t uct_rm_urma_ep_process_pending(ucs_arbiter_t *arbiter, u
 
     /* No ep resources */
     if (iface->config.native_write || iface->config.native_read ||
+        iface->config.native_rma ||
         ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) ?
          ((ep->peer != NULL) && (ep->peer->credits > 0)) :
          uct_ub_fc_has_resources(&iface->super, &ep->super.fc))) {
-        if (iface->config.native_write || iface->config.native_read) {
+        if (iface->config.native_write || iface->config.native_read ||
+            iface->config.native_rma) {
             /* Pending callbacks are opaque: the head may be a READ/WRITE even
              * without AM credits. Retry on the NEXT progress call. NEXT_GROUP
              * requeues on the active list and can spin forever before CQ/RX

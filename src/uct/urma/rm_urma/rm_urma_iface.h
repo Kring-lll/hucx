@@ -156,6 +156,7 @@ struct uct_rm_urma_iface {
         uint8_t                flush_by_fc;
         unsigned               native_write;
         unsigned               native_read;
+        unsigned               native_rma;
     } config;
     struct {
         ucs_mpool_t            pending_mp; /* pool for FC grant and keepalive pending requests */
@@ -197,6 +198,7 @@ typedef struct uct_rm_urma_iface_config {
     unsigned                   max_peers;
     unsigned                   native_write;
     unsigned                   native_read;
+    unsigned                   native_rma;
 } uct_rm_urma_iface_config_t;
 
 static UCS_F_ALWAYS_INLINE int

@@ -1,0 +1,28 @@
+{
+  "base_commit": "6ba7250595a58266b8276e0f5c7a9d35c116996b",
+  "product_files": 3,
+  "full_x86_configure_build_install": "PASS",
+  "sdk_is_link_stub_not_device": true,
+  "actual_RM_source_ASAN_UBSAN": {
+    "assert_and_parameter_checks_on": "PASS",
+    "assert_and_parameter_checks_off": "PASS",
+    "groups": [
+      "GET_BCOPY completion/NULL/cancel/destroy/error/read budget",
+      "PUT_SHORT/PUT_BCOPY data/guards/flush/no AM credit",
+      "three basic operations reject disabled/range/post errors and restore fence/resources",
+      "4096B fragment/descriptor exhaustion/FIFO/dispatch bound",
+      "shared Jetty opposite EP completion attribution"
+    ]
+  },
+  "prior_actual_C_regression": "PASS including native WRITE and A7",
+  "prior_native_READ_CPU": "PASS",
+  "probe_compile_with_new_headers_and_libraries": "PASS basic UCT and public UCP",
+  "controller_unit_tests": 6,
+  "controller_unit_tests_status": "PASS",
+  "optional_local_two_process_UCP_run": "NOT_ACCEPTED: local AF_UNIX signaling socket denied by runtime; not a native RM run",
+  "ARM_build": "PENDING",
+  "real_node_communication": "PENDING",
+  "MPI_OSU": "NOT_ACCEPTED: OSC atomic prerequisites pending",
+  "performance": "NOT_ACCEPTED",
+  "PowerShell": "static checks only; Windows execution pending"
+}

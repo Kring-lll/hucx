@@ -95,6 +95,11 @@ ucs_config_field_t uct_rm_urma_iface_config_table[] = {
      "Default off; this does not enable GET_BCOPY or MPI RMA.",
      ucs_offsetof(uct_rm_urma_iface_config_t, native_read), UCS_CONFIG_TYPE_BOOL},
 
+    {"NATIVE_RMA", "n",
+     "Enable bounded native PUT_SHORT/PUT_BCOPY/GET_BCOPY and zcopy.\n"
+     "Default off; host RMA integration candidate, not atomic support.",
+     ucs_offsetof(uct_rm_urma_iface_config_t, native_rma), UCS_CONFIG_TYPE_BOOL},
+
     {NULL}
 };
 
@@ -187,17 +192,27 @@ static ucs_status_t uct_rm_urma_iface_query(uct_iface_h tl_iface, uct_iface_attr
         iface_attr->iface_addr_len = 0;
         iface_attr->cap.flags |= UCT_IFACE_FLAG_CONNECT_TO_EP;
     }
-    if (iface->config.native_write) {
+    if (iface->config.native_write || iface->config.native_rma) {
         iface_attr->cap.flags |= UCT_IFACE_FLAG_PUT_ZCOPY;
         iface_attr->cap.put.min_zcopy = 1;
         iface_attr->cap.put.max_zcopy = ucs_min(4096, iface_attr->cap.put.max_zcopy);
         iface_attr->cap.put.max_iov = 1;
     }
-    if (iface->config.native_read) {
+    if (iface->config.native_read || iface->config.native_rma) {
         iface_attr->cap.flags |= UCT_IFACE_FLAG_GET_ZCOPY;
         iface_attr->cap.get.min_zcopy = 1;
         iface_attr->cap.get.max_zcopy = ucs_min(4096, iface_attr->cap.get.max_zcopy);
         iface_attr->cap.get.max_iov = 1;
+    }
+    if (iface->config.native_rma) {
+        iface_attr->cap.flags |= UCT_IFACE_FLAG_PUT_BCOPY |
+                                 UCT_IFACE_FLAG_GET_BCOPY;
+        iface_attr->cap.put.max_short = ucs_min(4096, iface->super.config.max_inline);
+        if (iface_attr->cap.put.max_short > 0) {
+            iface_attr->cap.flags |= UCT_IFACE_FLAG_PUT_SHORT;
+        }
+        iface_attr->cap.put.max_bcopy = ucs_min(4096, iface->super.config.seg_size);
+        iface_attr->cap.get.max_bcopy = ucs_min(4096, iface->super.config.seg_size);
     }
     iface_attr->cap.atomic32.op_flags = 0;
     iface_attr->cap.atomic32.fop_flags = 0;
@@ -928,6 +943,7 @@ static UCS_F_ALWAYS_INLINE ucs_status_t uct_rm_urma_init_iface_attr(uct_rm_urma_
 
     iface->config.native_write = config->native_write;
     iface->config.native_read = config->native_read;
+    iface->config.native_rma = config->native_rma;
     iface->tx.pending_group = NULL;
 
     uct_rm_urma_link_init(iface, config);

@@ -1,0 +1,20 @@
+{
+  "reference_repository": "https://atomgit.com/kunpengcompute/hmpi.git",
+  "reference_commit": "52d943345a85efc10de2d59311eb4bd4fa94444e",
+  "node_binary_source_identity_verified": false,
+  "files": {
+    "ompi/mca/osc/ucx/osc_ucx_component.c": "3eaee0901bf24534a8c5d95b36a5b104241cf2914dcfec127e2d1efae631f07e",
+    "ompi/mca/osc/ucx/osc_ucx_active_target.c": "8d976605466e061649456e352e589ce6be6a4a52341b2a06b2e24c8f86f71584",
+    "ompi/mca/osc/ucx/osc_ucx_passive_target.c": "5c8cc55bcf67c477a1cb6b4ae9d3cfdd85c03ef0303be17c38f7b7495d93a8b5",
+    "ompi/mca/osc/ucx/osc_ucx_comm.c": "6f19297923dcdbdbd106e9336f34ac6a7a141615343aa09ec3cc7142e0abf4fd"
+  },
+  "findings": {
+    "osc_context_features": "UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64",
+    "fence": "worker flush + communicator barrier; not all OSC operations are atomic-free",
+    "pscW_and_passive_target": "atomic post/fetch/CAS used; not enabled in RM by this change",
+    "ucp_host_rma_selector": "src/ucp/wireup/select.c: requires local PUT_SHORT | PUT_BCOPY | GET_BCOPY | PENDING and remote PUT | GET",
+    "ordinary_protocol": "src/ucp/rma/rma_basic.c: short/bcopy/zcopy advance existing request fragments",
+    "RC_and_common": "RC bcopy descriptor and common completion/purge handlers reused; shared RM SQ ownership and failed-post rollback retained"
+  },
+  "scope": "RMA UCT+UCP candidate; MPI OSC/OSU and atomics not accepted"
+}

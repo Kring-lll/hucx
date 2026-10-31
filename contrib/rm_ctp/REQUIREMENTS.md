@@ -13,6 +13,13 @@ READ校验本地目标、远端源和完整guard，WRITE校验接收内存；双
 本轮8B中位数同库legacy/iface/RC为2.25/2.21/2.54μs，仅为本批功能样本。
 见[READ及读写阶段验收](native_read/acceptance_20261031.md)。下列大消息及规模结果属于对应历史产品，不自动扩大为新库全部重验结论。
 
+## 下一候选：基础RMA入口及普通UCP单边读写
+
+新增默认关闭的NATIVE_RMA，按现有UCP选路补齐PUT_SHORT/PUT_BCOPY/GET_BCOPY，复用已验PUT/GET_ZCOPY及共享完成机制。
+真实源码CPU检查和x86构建单列于[native_rma](native_rma/README.md)；ARM构建、基础UCT8轮、UCP严格交替读写两轮及开启后的28正常回归待节点执行。
+公开HMPI的OSC UCX还申请AMO32/AMO64，当前RM原子能力未验；MPI单边OSU保持待验，不虚报能力或替换后端取得结论。
+这批候选不改变以上9e75真实节点结果，也不扩大B3/B4的完成范围。
+
 ## 历史已测：RM默认4KB片长与pending顺序修复
 
 已测产品`80b28a25b5ea0e245bca88db44be79d15d06127f`在双节点默认4KB下通过28项既有回归和18项标准OSU边界。
