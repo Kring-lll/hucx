@@ -21,14 +21,16 @@ for name in ('ENABLE_ASSERT', 'ENABLE_PARAMS_CHECK'):
 Path(sys.argv[2]).write_text(text)
 PYCODE
     fi
-    ${CC:-gcc} -std=gnu99 -O1 -g -DHAVE_CONFIG_H -fsanitize=address,undefined \
-        -fno-omit-frame-pointer -I"$headers" -I"$build" -I"$build/src" -I"$src/src" -I"$sdk" \
-        "$src/contrib/rm_ctp/native_rma/test_native_rma.c" "$out/weak.c" \
-        "$build/src/uct/urma/.libs/libuct_ub.a" \
-        -L"$build/src/uct/.libs" -L"$build/src/ucs/.libs" -L"$build/src/ucm/.libs" \
-        -luct -lucs -lucm -lpthread -ldl -lrt -lm \
-        -Wl,-rpath,"$build/src/uct/.libs:$build/src/ucs/.libs:$build/src/ucm/.libs" \
-        -o "$out/test_native_rma_$checks"
-    UCX_LOG_LEVEL=error ASAN_OPTIONS=${ASAN_OPTIONS:-detect_leaks=0} "$out/test_native_rma_$checks"
-    printf 'ACTUAL_RM_SOURCE_ASSERT_PARAMS=%s ASAN_UBSAN=PASS\n' "$checks"
+    for unit in native_rma flush_pending; do
+        ${CC:-gcc} -std=gnu99 -O1 -g -DHAVE_CONFIG_H -fsanitize=address,undefined \
+            -fno-omit-frame-pointer -I"$headers" -I"$build" -I"$build/src" -I"$src/src" -I"$sdk" \
+            "$src/contrib/rm_ctp/native_rma/test_${unit}.c" "$out/weak.c" \
+            "$build/src/uct/urma/.libs/libuct_ub.a" \
+            -L"$build/src/uct/.libs" -L"$build/src/ucs/.libs" -L"$build/src/ucm/.libs" \
+            -luct -lucs -lucm -lpthread -ldl -lrt -lm \
+            -Wl,-rpath,"$build/src/uct/.libs:$build/src/ucs/.libs:$build/src/ucm/.libs" \
+            -o "$out/test_${unit}_$checks"
+        UCX_LOG_LEVEL=error ASAN_OPTIONS=${ASAN_OPTIONS:-detect_leaks=0} "$out/test_${unit}_$checks"
+        printf 'ACTUAL_RM_SOURCE_UNIT=%s ASSERT_PARAMS=%s ASAN_UBSAN=PASS\n' "$unit" "$checks"
+    done
 done

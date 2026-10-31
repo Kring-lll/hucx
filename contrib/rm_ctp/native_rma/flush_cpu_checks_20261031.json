@@ -1,0 +1,31 @@
+{
+  "base_commit": "b1895ec77e3098cb710c15a09ca222bea8af4873",
+  "base_tree": "fe87d1996edec716e6e739ddeea27d33c2f4eac1",
+  "product_change": "one RM ep_flush function, nine added lines",
+  "old_actual_source_reproduction": {
+    "status": "PASS_BUG_REPRODUCED",
+    "posted_at_flush_completion": 3,
+    "required_fragments": 16,
+    "URMA": "mocked"
+  },
+  "new_actual_source_ASAN_UBSAN": {
+    "assert_params_on": "PASS",
+    "assert_params_off": "PASS",
+    "cases": [
+      "queued GET with in-flight WRs",
+      "queued GET with idle hardware queue",
+      "other EP not blocked and CANCEL unchanged"
+    ],
+    "data": "65536B, 16 fragments, full guards; all unpacks before flush callback"
+  },
+  "prior_C_and_native_RMA_regression": "PASS",
+  "full_x86_build": "PASS_LINK_STUB_NOT_DEVICE",
+  "UCP_and_UCT_probe_compile": "PASS",
+  "controller_tests": 6,
+  "controller_tests_status": "PASS",
+  "ARM_build": "PENDING",
+  "node_RMA_and_normal_matrix": "PENDING",
+  "PowerShell": "static only",
+  "MPI_OSU_and_full_B4": "NOT_ACCEPTED",
+  "prior_native_READ_CPU": "PASS"
+}

@@ -1229,6 +1229,15 @@ ucs_status_t uct_rm_urma_ep_flush(uct_ep_h tl_ep, unsigned flags,
         ep->super.flags |= UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL;
         uct_rm_urma_ep_purge_legacy_grants(iface, ep);
     }
+    /* PI covers posted WRs only. An earlier pending RMA request can still
+     * have unsent fragments: registering a flush at the current PI would let
+     * UCP complete while that request is unfinished. Queue flush behind it.
+     * The pending head itself may retry flush; CANCEL preserves its existing
+     * semantics and does not wait for unsent user requests. */
+    if (!(flags & UCT_FLUSH_FLAG_CANCEL) &&
+        !uct_rm_urma_iface_pending_can_send(iface, &ep->arb_group)) {
+        return UCS_ERR_NO_RESOURCE;
+    }
     if (ep->super.status.pi == ep->super.status.ci) {
         UCT_TL_EP_STAT_FLUSH(&ep->super.super);
         return UCS_OK;

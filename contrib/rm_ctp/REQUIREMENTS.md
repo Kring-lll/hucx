@@ -20,6 +20,9 @@ READ校验本地目标、远端源和完整guard，WRITE校验接收内存；双
 公开HMPI的OSC UCX还申请AMO32/AMO64，当前RM原子能力未验；MPI单边OSU保持待验，不虚报能力或替换后端取得结论。
 这批候选不改变以上9e75真实节点结果，也不扩大B3/B4的完成范围。
 
+b189候选已在ARM构建，READ6/WRITE6/基础UCT8通过；UCP BCOPY的64KiB GET数据校验失败，本轮后续任务未执行。
+已在实际RM源码复现flush越过pending分片：旧实现提前回调；最小修复让正常flush排在未提交分片之后。修复后的ARM和节点回归待执行，见[记录](native_rma/flush_fix_20261031.md)。B3/B4状态不因此提前改变。
+
 ## 历史已测：RM默认4KB片长与pending顺序修复
 
 已测产品`80b28a25b5ea0e245bca88db44be79d15d06127f`在双节点默认4KB下通过28项既有回归和18项标准OSU边界。

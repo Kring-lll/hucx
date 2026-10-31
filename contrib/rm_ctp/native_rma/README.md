@@ -4,6 +4,12 @@
 该起点的READ六轮、WRITE六轮及双开关28正常已在节点通过，阶段交付为AtomGit B分支 `f1bcd0103713d887b0e29c0b108960e28039f5a5`。
 本目录是下一候选；本地检查不替代ARM构建和真实设备结果。
 
+## 当前flush修复候选
+
+基于b1895ec77继续，只改RM ep_flush的一处pending顺序检查；[定位与修复记录](flush_fix_20261031.md)。
+b189节点READ6/WRITE6/基础UCT8已通过，但UCP BCOPY的64KiB GET缺少提交片段并校验失败。
+旧实现提前flush已用实际源码CPU复现；修复后CPU回调须等16片读回及unpack。新产品仍须重新隔离构建和节点回归，不能复用旧库通过项为新库放行。
+
 ## 本次产品改动
 
 只改RM的ep.c、iface.c、iface.h。保留原READ/WRITE开关及默认关闭行为，新增默认关闭的 `UCX_RM_URMA_NATIVE_RMA`。

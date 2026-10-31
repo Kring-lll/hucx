@@ -155,7 +155,15 @@ int main(int argc, char **argv)
         for (size_t i = 0; i < ALLOCATION; ++i) {
             unsigned char expected = (i >= GUARD && i < GUARD + n) ?
                                      value(round, i - GUARD) : 0xa5;
-            require(buffer[i] == expected, "UCP full data and guards");
+            if (buffer[i] != expected) {
+                fprintf(stderr, "UCP_RMA_MISMATCH round=%u op=%s bytes=%zu role=%s "
+                        "index=%zu region=%s expected=%u actual=%u\n",
+                        round, read ? "GET" : "PUT", n,
+                        provider ? "provider" : "initiator", i,
+                        (i >= GUARD && i < GUARD + n) ? "payload" : "guard",
+                        (unsigned)expected, (unsigned)buffer[i]);
+                require(0, "UCP full data and guards");
+            }
         }
         if (provider) {
             ack = 'V';
