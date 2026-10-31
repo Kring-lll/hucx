@@ -1,4 +1,4 @@
-# 原生WRITE首条路径候选
+# 原生WRITE定向路径与阶段验收
 
 起点：GitHub `1c9bae2e7b7351feab4b83d0eb8150880c3d0d4c`，产品前置修复已在AtomGit `d1156b6b753f8392448a82aae6fdd5091cb3ff6c`交付。
 本轮实际修改RM的PUT_ZCOPY入口及其等待队列适配；不是继续扩写AM测试。READ、PUT_SHORT/BCOPY、AM_ZCOPY和重传不开放。
@@ -8,7 +8,7 @@
 `UCX_RM_URMA_NATIVE_WRITE=n`为默认值，保留原有能力边界。设置为y才上报和接受PUT_ZCOPY。
 本候选只接受一个连续IOV、单次1～4096B，不将4096解释成设备通用WRITE上限。
 先验证当前节点能否实际执行WRITE，再决定默认能力与UCP/MPI RMA集成；不能仅凭URMA有WRITE枚举便宣称设备支持。
-这不是完整B4交付，也不表示性能无回退。节点验收前不推AtomGit。
+本路径已完成下述定向阶段验收；这不是完整B4交付，也不表示所有尺寸和性能无回退。
 
 ## 相对RC派生入口的实际修正
 
@@ -67,3 +67,11 @@ normal_validation.py复核并复用此结果，仅新跑一组开启WRITE的28�
 
 旧343d直接UCT六轮通过不变；随后MPI门禁120秒超时。已实际复现native_write分支NEXT_GROUP会在一次arbiter dispatch中持续重试无信用请求；最小修复为RESCHED_GROUP，把重试放到下一次progress。详见[pending修复](PENDING_PROGRESS_FIX_20261031.md)。
 该修复涉及产品，必须隔离重建。运行新CASE中的accept_pending_fix.py CASE --run，会先新跑6轮WRITE，再基于新CASE/commit/module运行28正常矩阵；不复用旧产品通过记录为新库放行。ARM与节点待验，不提前推AtomGit。
+
+## 2026-10-31 当前验收结果
+
+118ab374ba40c2849f1de74dd0c9c29e72e1ebe3隔离构建后，新库6轮WRITE及显式开启WRITE的28项正常矩阵全部通过。
+原生WRITE的接收端内存、双端maps、注册释放均通过；本轮8B中位数legacy/iface/RC=2.27/2.21/2.52μs，不外推完整性能。
+legacy是同一新库旧建链模式。新库的六轮WRITE先执行，normal仅复用这次新证据；不把旧343d通过记录当新库放行。
+原生MPI RMA未运行，OSU文件和OSC只做安装核查。当前默认关闭、READ未开放，完整B4待补。
+详见[节点阶段验收](acceptance_enabled_20261031.md)。此前“待验”段落为历史过程，不代表当前仍未做定向WRITE。

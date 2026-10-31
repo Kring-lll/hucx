@@ -1,9 +1,9 @@
 {
   "base_commit": "990398f43e7b589b4030e45d69b48c1766f5eac3",
-  "scope": "原生WRITE首条路径候选：默认关闭，显式开启仅PUT_ZCOPY；CPU/x86通过，ARM/设备/新产品回归待验；READ与完整B/C未验收",
+  "scope": "原生UCT WRITE定向阶段及开启后的28正常回归通过；默认关闭，单IOV/1～4096B；READ、原生MPI RMA性能及完整B/C待验",
   "files": {
     "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
-    "contrib/rm_ctp/REQUIREMENTS.md": "f3a569f500a367ff90704726391fcccc3933b24e7db3c78a7079df137e70e926",
+    "contrib/rm_ctp/REQUIREMENTS.md": "a7cea03b829284526bc69322bf2105eea9315e0c04273a860db4ae1032dc94a2",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/README.md": "a3d7d969e9842554eaf283b459c7902a808be2c6fe0df2f24247d27cfa1ca407",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
@@ -116,7 +116,7 @@
     "contrib/rm_ctp/native_write/cpu_checks_20261031.json": "518c3aecf1ff89e78580848a0376c8563ac92684df93edd7b86a349bea52907d",
     "contrib/rm_ctp/native_write/run_candidate.py": "c551b31387a5355d8b1ab15d684bd2ad9fece16c2b3775539ca88b0dd4fcd924",
     "contrib/rm_ctp/native_write/write_probe.c": "09f5687ec6412a9a5e67fc1efcf49a3dc175094e0530f7a6612476b258d7b027",
-    "contrib/rm_ctp/native_write/README.md": "a16b0029420985077cd84af867cf35e2bac6aeee5e1f38811e08fa670ca6df00",
+    "contrib/rm_ctp/native_write/README.md": "7a4edc9f5c5eac74d522addbccd75a8aefbd5af4c78b2add1e7ef771ae14142d",
     "contrib/rm_ctp/native_write/.gitignore": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793",
     "contrib/rm_ctp/native_write/build_envfix_zip.py": "4e6b67b6a151f56ce27744611596f02ae700aa84d9fa686ce3c6d4865573ef82",
     "contrib/rm_ctp/native_write/test_iface_config.c": "42dea665457541f6927a849ecd9940f950c6ac3f97488ee758e008451e91a50c",
@@ -131,8 +131,10 @@
     "contrib/rm_ctp/native_write/test_pending_progress.c": "068334c96d500e24d7462fa91ad9cf675ece5de9c1e643dad7ef58f2d175255c",
     "contrib/rm_ctp/native_write/accept_pending_fix.py": "517f207f63cf160c154c8fe4ca2bcdc43823494ad4295a49d5daa53aea1f604e",
     "contrib/rm_ctp/native_write/tests/test_pending_accept.py": "4e6475f3464c57569214d058c099cc603533eb1b0c9c80b31dca1f1228871b9a",
-    "contrib/rm_ctp/native_write/PENDING_PROGRESS_FIX_20261031.md": "65ef067a126b9b5f935123f25366b74838c00c3a2209663f7cd78e26e0ca0464",
-    "contrib/rm_ctp/native_write/pending_progress_cpu_checks_20261031.json": "f0a30957cf114240cf3f759e397811dc6d07afebc7b2181cb775a400b00ca298"
+    "contrib/rm_ctp/native_write/PENDING_PROGRESS_FIX_20261031.md": "4d78c00209f92807938f319e1b58982d37a730f64f614df759cf52d6f39cc033",
+    "contrib/rm_ctp/native_write/pending_progress_cpu_checks_20261031.json": "f0a30957cf114240cf3f759e397811dc6d07afebc7b2181cb775a400b00ca298",
+    "contrib/rm_ctp/native_write/acceptance_enabled_20261031.json": "c9118487df30ca494a1e7b30ba2f0ff8e54e0e0e05a69a9f363d5647718d459d",
+    "contrib/rm_ctp/native_write/acceptance_enabled_20261031.md": "ad3d1d8648f843c4d121f56fda02f55ab747ab7206dc8bf82d52f7bf0c39a28c"
   },
   "current_validation": {
     "full_local_build": "Base62fb full x86 build PASS; 2a8e actual object CPU regressions PASS; 2a8e ARM64 isolated full build PASS",

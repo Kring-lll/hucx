@@ -11,3 +11,8 @@
 新产品必须隔离重建。accept_pending_fix.py先在新库执行6轮WRITE，成功才将normal_validation绑定到本次CASE/commit/module/刚生成的证明，再做开启WRITE的28正常矩阵和RMA只读inventory。不能硬编码343d旧CASE/旧成功结果为新库放行。默认只计划；失败停止留档，最高1+4rank，不跑高规模或RMA性能。
 
 Windows基线兼容：GitHub当前实查98e24；用户未回传上轮normal包的Windows提交，因此不假设它已应用。应用脚本只允许98e24原树，或父为98e24且tree精确等于已审查cb3f806c正常工具树的单提交，分别应用对应补丁；其他状态停止，不覆盖现场、不重写历史、不强推。产品修复未节点验收前不推AtomGit。
+
+## 修复后的节点结果
+
+118ab374b ARM隔离构建通过，新库6轮WRITE及开启WRITE的28项正常矩阵均通过，原初始8B门禁已恢复。
+对应产品与结果路径见[阶段验收](acceptance_enabled_20261031.md)。本次结果支持此修复解决已复现的推进问题；未扩展为所有资源不足、网络故障或任意消息路径保证。

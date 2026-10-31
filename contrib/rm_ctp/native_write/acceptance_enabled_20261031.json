@@ -1,0 +1,50 @@
+{
+  "evidence_type": "USER_PROVIDED_TERMINAL_TRANSCRIPT_NOT_DOWNLOADED_NODE_JSON",
+  "source_commit": "118ab374ba40c2849f1de74dd0c9c29e72e1ebe3",
+  "module_sha256": "b487b4ae22126a9a9b51d8589fadc6d6f3cfbea982965a9df92d329c1e48778a",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_118ab374b_SDOex6",
+  "build": "PASS",
+  "native_write": {
+    "result": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_118ab374b_SDOex6/native_write_83gewlos/results.json",
+    "rounds": 6,
+    "sizes_bytes": [
+      8,
+      64,
+      4096
+    ],
+    "rounds_per_size": 2,
+    "receiver_memory_validation": "PASS",
+    "both_candidate_maps": "PASS",
+    "registration_release": "PASS"
+  },
+  "enabled_normal": {
+    "result": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_118ab374b_SDOex6/write_normal_t7vj8di6/results.json",
+    "cases_passed": 28,
+    "native_write": "y",
+    "median_8B_us": {
+      "legacy": 2.27,
+      "iface": 2.21,
+      "rc": 2.52
+    },
+    "legacy_definition": "SAME_NEW_LIBRARY_LEGACY_CONNECTION_MODE_NOT_PRECHANGE_PRODUCT"
+  },
+  "combined_result": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_118ab374b_SDOex6/pending_progress_accept_xnvqs9ml/results.json",
+  "rma_inventory": {
+    "osu_put_latency": 1,
+    "osu_put_bw": 1,
+    "osu_put_bibw": 1,
+    "osc_ucx_reported": true,
+    "RMA_benchmark_run": false
+  },
+  "native_write_default": false,
+  "READ_accepted": false,
+  "full_B4_accepted": false,
+  "full_B_accepted": false,
+  "performance_accepted": false,
+  "previous_failure_retained": {
+    "source_commit": "343d934fea013fb98c4bb5465b6eeb8aef39ac44",
+    "initial_gate": "TIMEOUT_120S",
+    "directory": "write_normal_pws3h7lb/iface_accept_ysojer_l"
+  },
+  "scope": "NATIVE_UCT_WRITE_FOCUSED_AND_ENABLED_NORMAL_28_PASS"
+}

@@ -5,7 +5,14 @@
 √表示该条**列明的阶段范围**已完成；□表示尚未完成。原验收要求保留，阶段范围以外的事项单列待补。
 过程记录和历史失败保留在Git历史与对应验收文档中，本页只维护当前状态。
 
-## 当前已测：RM默认4KB片长与pending顺序修复
+## 当前已测：原生WRITE定向功能及开启后的正常回归
+
+产品`118ab374ba40c2849f1de74dd0c9c29e72e1ebe3`已在ARM隔离构建，双节点6轮原生UCT WRITE及开启WRITE后的28项正常矩阵通过。
+WRITE范围为单连续IOV、单次1～4096B，默认开关仍关闭；READ及原生MPI RMA尚未验收。
+本轮8B中位数同库legacy/iface/RC为2.27/2.21/2.52μs，仅为本批功能样本。
+见[WRITE阶段验收](native_write/acceptance_enabled_20261031.md)。下列大消息及规模结果属于对应历史产品，不自动扩大为新库全部重验结论。
+
+## 历史已测：RM默认4KB片长与pending顺序修复
 
 已测产品`80b28a25b5ea0e245bca88db44be79d15d06127f`在双节点默认4KB下通过28项既有回归和18项标准OSU边界。
 无SEG_SIZE环境覆盖，PPN4全部8rank观测SEND不超过4096B；两种OSU的业务尺寸覆盖至16KB。
@@ -21,7 +28,7 @@ AM范围至单对1MiB、双向64KiB及PPN4多对64KiB，所测SEND均不超过40
 ## 当前交付与测试基线
 
 - A建链阶段：实现及标准OSU结果已交付AtomGit `957264713cae5999e4e8e658e858cbec2d8459ea`，清单文档修正已追加到同分支`99d3d81b53a52fe553a75e0ab1511c74ce859dd4`。
-- A历史已测产品：`2a8e3b771211e5af491c8ca483ebcc01a03c2f01`；当前B已测产品为`ac4146054b0e1364d0ea691b37b9f14238a43bb0`。A阶段结论见[A_STAGE_CLOSEOUT_20261028.md](A_STAGE_CLOSEOUT_20261028.md)。
+- A历史已测产品：`2a8e3b771211e5af491c8ca483ebcc01a03c2f01`；当前B已测产品为`118ab374ba40c2849f1de74dd0c9c29e72e1ebe3`（六轮WRITE＋28正常；完整历史大消息矩阵已测于ac414前置版本）。A阶段结论见[A_STAGE_CLOSEOUT_20261028.md](A_STAGE_CLOSEOUT_20261028.md)。
 - 正式测试使用原版OSU 7.5.2，性能和资源观察分轮；方法见[OSU_TEST_POLICY.md](OSU_TEST_POLICY.md)。
 - C重传延期；PPN192定位暂停。保序/去重与超时重发分别属于C4、C3，不能只增加PSN字段便视为完成。
 
@@ -140,12 +147,12 @@ AM范围至单对1MiB、双向64KiB及PPN4多对64KiB，所测SEND均不超过40
 
    内容：区分AM回退与原生RMA/rendezvous路径；复核已知注册/rkey生命周期风险，逐项恢复并验证需要的PUT/GET能力，再按真实支持范围上报。
    完成标准：READ/WRITE和所用大消息路径的数据、完成、缓冲/注册/rkey回收正确，覆盖大小交替、地址复用及跨阈值；基础sample通过不能代替HUCX验收。
-   前置：B1、B3和相关C1契约。当前RMA能力仍屏蔽，本项未完成；不默认扩展到原子操作等未明确目标。
+   前置：B1、B3和相关C1契约。原生WRITE目前仅显式开关下接受PUT_ZCOPY，默认仍关闭；READ未开放，本项未完成，不默认扩展到原子操作等未明确目标。
    √ AM rendezvous正常子项：c7ef修复后的16KB切换边界、64KB eager/AM、单对1MiB、双向64KB和PPN4多对64KB，原轮9项＋分进程日志补验1项通过；数据、候选maps及实际SEND<=4096均核验。见[阶段验收](pending_order/acceptance_20261030.md)。完整B4仍为□：原生READ/WRITE、注册/rkey复用及严格大小交替尚未闭合。
 
-   √ 原生RMA前置修复子项：共用MD完整地址/EID识别、分配回滚、未导入key释放的真实源码CPU检查及ARM构建通过；ac4146054的28正常/18边界/10窗口/10AM/10集合回归已跑齐，15轮8B样本已审阅。本批旧RM/新RM/RC中位数为2.23/2.22/2.51μs，不外推全部性能。见[rkey前置验收](rkey_lifecycle/acceptance_20261031.md)。PUT/GET/AM_ZCOPY仍关闭，设备rkey导入/原生READ/WRITE及完整B4未验收；下一项产品实现为原生WRITE。
+   √ 原生RMA前置修复子项：共用MD完整地址/EID识别、分配回滚、未导入key释放的真实源码CPU检查及ARM构建通过；ac4146054的28正常/18边界/10窗口/10AM/10集合回归已跑齐，15轮8B样本已审阅。本批旧RM/新RM/RC中位数为2.23/2.22/2.51μs，不外推全部性能。见[rkey前置验收](rkey_lifecycle/acceptance_20261031.md)。该前置版本的PUT/GET/AM_ZCOPY仍关闭；后续WRITE定向阶段结果单列如下，READ及完整B4仍未验收。
 
-   □ 原生WRITE首条路径候选：已适配PUT_ZCOPY的资源、FIFO、提交错误和完成记录，默认NATIVE_WRITE=n，显式开启时仅单IOV/1～4096B；x86构建与真实RM源码CPU检查通过。343d ARM构建通过；98e24工具补齐FC后，双节点原生UCT WRITE的8/64/4096B各两轮、接收内存数据/双端maps/注册释放通过。343d开启WRITE后的MPI初始门禁超时，已实际复现并修正pending调度自旋；新产品WRITE与正常回归待验。原生MPI RMA仍待验，默认开关关闭，READ关闭。见[WRITE候选](native_write/README.md)。
+   √ 原生WRITE定向路径及开启后的正常回归：118ab374b在ARM构建后，通过双节点8/64/4096B各两轮WRITE，接收内存、双端候选maps和注册释放均通过；随后开启WRITE的28项正常矩阵通过。343d初始门禁超时及pending自旋CPU复现保留，修复后节点门禁已恢复。当前仅单连续IOV/1～4096B，默认NATIVE_WRITE=n，READ关闭；原生MPI RMA、正式单边OSU及完整B4仍待验。见[WRITE阶段验收](native_write/acceptance_enabled_20261031.md)。
 
 5. **□ 完成大小消息和MPI目标场景回归对比（B5）**
 
