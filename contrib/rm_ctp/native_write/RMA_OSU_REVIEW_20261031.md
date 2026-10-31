@@ -1,0 +1,13 @@
+# 原生WRITE专项与MPI RMA的阶段边界
+
+343d产品、98e24工具在两节点完成6轮UCT WRITE，8/64/4096B各两轮，接收注册内存检查、候选maps及注册释放通过。完整JSON和日志在原CASE/native_write_0e8m3w04，摘要为用户实际终端转录，不是下载的原始文件。此前配置失败记录保留。
+
+本轮只追加一组既有28项正常矩阵，全部实际命令显式NATIVE_WRITE=y，回归同一新库的iface/legacy以及RC模式；前6轮WRITE复用且不重跑。校验源/模块/检查点、实际命令中的WRITE开关，保存全部结果和三轮8B样本。legacy是同一新产品的旧建链模式，不是旧产品，不能将其标成改造前RM。
+
+当前默认PROTO_ENABLE=n的普通RMA路径不能仅凭PUT_ZCOPY就宣称MPI_Put走原生WRITE。当前src/ucp/wireup/select.c中ucp_wireup_add_rma_lanes的host分支要求远端PUT/GET，且本地PUT_SHORT、PUT_BCOPY、GET_BCOPY、PENDING；仅恢复PUT_ZCOPY不足以满足这些条件。rma_send.c的请求还使用rkey->cache.rma_lane。不能为获得性能数字随意修改UCP选路，或虚报未验证的GET能力。其他协议模式需另行确认，不能把本结论推广为所有UCX版本。
+
+原版OSU7.5.2的c/mpi/one-sided/osu_put_latency.c与osu_put_bw.c均在options.validate为真时直接报Benchmark does not support validation。它们的-c不能按双边OSU那样用；正式性能要与独立数据正确性验证配套，不修改OSU主体。MPI_Put性能还经过OSC组件和UCX协议选择，仅设PML=ucx不证明OSC或底层WRITE路径。
+
+因此本工具只列两端已安装osu_put_latency/put_bw/put_bibw的路径/哈希及ompi_info的OSC组件，不执行单边OSU或MPI_Win，不宣称原生MPI RMA验收。后续依照最小改动原则逐项补齐/验证普通RMA所需能力及完成语义，明确OSC选择并增加真实WRITE路径取证，再进行原版OSU对照。READ保持未开放，不能因WRITE专项通过提前勾选B4。
+
+参考：当前GitHub98e24源码，与产品343d一致；本地已存官方OSU7.5.2源码。节点HMPI OSC可用组件本轮只做inventory，未读取平台未提供的OSC实现，不假称完成HMPI原生RMA审查。

@@ -1,0 +1,24 @@
+{
+  "date": "2026-10-31",
+  "evidence_source": "用户实际终端转录；原始报告及日志在节点，未下载",
+  "product_commit": "343d934fea013fb98c4bb5465b6eeb8aef39ac44",
+  "tool_commit": "98e24f6a0daa22b9b309a7202020f4be2967a55f",
+  "module_sha256": "5373b75bbfc7429ba34f9f84191886ba1eaaf0b0bde2308a76ab5ed7e8b0122c",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_343d934fe_vpkpQc",
+  "result_suffix": "native_write_0e8m3w04/results.json",
+  "status": "DIRECT_NATIVE_WRITE_DATA_MAPS_REGISTRATION_RELEASE_PASS",
+  "rounds": 6,
+  "sizes_bytes": [
+    8,
+    64,
+    4096
+  ],
+  "repeats_per_size": 2,
+  "candidate_maps_both": "PASS",
+  "registration_release": "PASS",
+  "normal_regression_new_product": "PENDING",
+  "native_write_default": "OFF",
+  "READ": "DISABLED",
+  "OSU_RMA_native_path": "NOT_ACCEPTED",
+  "full_B4": "NOT_ACCEPTED"
+}

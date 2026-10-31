@@ -56,3 +56,14 @@ python3 -u "$case_dir/source/contrib/rm_ctp/native_write/run_candidate.py" "$cas
 工具现补齐已验证的FC=y/W8/TX8/RX64/K5与阈值，接收日志先取，非零退出直接报告原始错误，不再强取成功阶段maps；终端自动提取两端错误。产品不变，原CASE/source/install与失败结果不改写。
 真实RM link_ready CPU检查复现FC关闭拒绝，FC开启且R64/K5/W8通过；另5项Python检查覆盖与A7配置一致、预算、失败不取maps、成功必须取maps及错误打印。节点仍待执行。
 独立hucx_b_write_envfix_20261031.zip固定已构建CASE/commit/module，验证原116文件源清单和模块，在内存中执行修正控制器，ROOT仍引用原CASE工具/探针；不覆盖旧源码，不重编译传输库。只重编译小型探针并重跑6次WRITE。默认仅计划，--run才操作双端，失败停止留档。不推AtomGit。
+
+## 2026-10-31 原生WRITE专项通过，下一轮正常回归
+
+用户实际native_write_0e8m3w04通过6轮8/64/4096B及接收内存、maps、注册释放检查，产品343d/module5373不变，GitHub工具已到98e24。默认开关仍n，READ未开放。
+normal_validation.py复核并复用此结果，仅新跑一组开启WRITE的28项既有矩阵，最高1+4rank；RMA仅文件/OSC组件核查，不启动单边OSU。默认仅计划。独立ZIP保持原CASE/source/install只读，新增结果另存，产品不重编。工具CPU检查不替代节点回归。
+详见[RMA选路与OSU边界](RMA_OSU_REVIEW_20261031.md)。不伪报GET、不为凑性能修改UCP或OSU。
+
+## 2026-10-31 WRITE开启后正常门禁超时与pending产品修复
+
+旧343d直接UCT六轮通过不变；随后MPI门禁120秒超时。已实际复现native_write分支NEXT_GROUP会在一次arbiter dispatch中持续重试无信用请求；最小修复为RESCHED_GROUP，把重试放到下一次progress。详见[pending修复](PENDING_PROGRESS_FIX_20261031.md)。
+该修复涉及产品，必须隔离重建。运行新CASE中的accept_pending_fix.py CASE --run，会先新跑6轮WRITE，再基于新CASE/commit/module运行28正常矩阵；不复用旧产品通过记录为新库放行。ARM与节点待验，不提前推AtomGit。

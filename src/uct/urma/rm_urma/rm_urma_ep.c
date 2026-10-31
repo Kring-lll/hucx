@@ -1222,9 +1222,11 @@ ucs_arbiter_cb_result_t uct_rm_urma_ep_process_pending(ucs_arbiter_t *arbiter, u
          ((ep->peer != NULL) && (ep->peer->credits > 0)) :
          uct_ub_fc_has_resources(&iface->super, &ep->super.fc))) {
         if (iface->config.native_write) {
-            /* Pending callbacks are opaque: retry the FIFO head even without
-             * AM credits, since it may be a WRITE. Rotate fairly per progress. */
-            return UCS_ARBITER_CB_RESULT_NEXT_GROUP;
+            /* Pending callbacks are opaque: the head may be a WRITE even
+             * without AM credits. Retry on the NEXT progress call. NEXT_GROUP
+             * requeues on the active list and can spin forever before CQ/RX
+             * polling; RESCHED_GROUP defers it until dispatch returns. */
+            return UCS_ARBITER_CB_RESULT_RESCHED_GROUP;
         }
         /* A provider can report a full shared SQ even before the software WR
          * budget reaches zero. Keep this group scheduled for any TX CQE. */

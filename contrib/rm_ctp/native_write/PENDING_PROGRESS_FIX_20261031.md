@@ -1,0 +1,13 @@
+# WRITE开启后pending轮询自旋修复
+
+节点343d的直接UCT WRITE六轮已通过，但开启WRITE后MPI 8B初始门禁120秒超时，无Pass行。地址导出4、connect4、FC request/grant各8，不据此认定完整握手或数据已成功。原记录在343d CASE/write_normal_pws3h7lb及iface_accept_ysojer_l，保留不改。
+
+源码定位：uct_rm_urma_ep_process_pending的native_write分支在无资源时返回NEXT_GROUP；ucs_arbiter_dispatch_nonempty把它重新放入当前arbiter活动list，外循环直到活动list为空才返回。如果AM信用持续为0，该请求会在同一次progress中重复执行，无法返回RX/CQE轮询。不是NEXT_GROUP这个名称看起来所说的“下一轮worker progress”。
+
+实际C复现：同一RM源码、URMA为mock，开启native_write，排入无AM信用的pending；旧代码2秒alarm触发，退出142，只打印BEFORE_DISPATCH，dispatch不返回。改后使用RESCHED_GROUP，把组放到resched_list，本轮所有活动组处理后拼回，下一次progress再试；dispatch返回且回调只调用1次。补回信用后同一队列头完成，数据发送和CQE回收通过。ASan/UBSan通过；该源码bug与节点现象吻合，节点本次超时全部原因仍须修复后复验。
+
+产品行为只改上述一行返回值，附注释，不改UCP/URMA/RC/UM、wire格式、默认开关或能力。默认native_write=n路径不变。已有真实RM共享发送/FC/生命周期与WRITE CPU回归、地址编解码继续通过。原生WRITE能力本身不撤回，但旧产品的六轮结果不能替代新产品回归。
+
+新产品必须隔离重建。accept_pending_fix.py先在新库执行6轮WRITE，成功才将normal_validation绑定到本次CASE/commit/module/刚生成的证明，再做开启WRITE的28正常矩阵和RMA只读inventory。不能硬编码343d旧CASE/旧成功结果为新库放行。默认只计划；失败停止留档，最高1+4rank，不跑高规模或RMA性能。
+
+Windows基线兼容：GitHub当前实查98e24；用户未回传上轮normal包的Windows提交，因此不假设它已应用。应用脚本只允许98e24原树，或父为98e24且tree精确等于已审查cb3f806c正常工具树的单提交，分别应用对应补丁；其他状态停止，不覆盖现场、不重写历史、不强推。产品修复未节点验收前不推AtomGit。
