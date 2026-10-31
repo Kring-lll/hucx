@@ -1,0 +1,60 @@
+{
+  "evidence_type": "USER_PROVIDED_TERMINAL_TRANSCRIPT_NOT_DOWNLOADED_NODE_JSON",
+  "source_commit": "9e75fa386fdfe430399ac7d27b71088ed2baf1e6",
+  "source_tree": "6834a58e90463d33366129f41e59cdd15b3aefe1",
+  "module_sha256": "3caa5f9e4eaeccf3dc99c2a28e1fda73ba600d1f82849fd978223c56d7a52dcf",
+  "source_archive_sha256": "9f317d5b1d5d81317482030849a595dc89b1d10e3d0f50edae6f4ec874ff977a",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_9e75fa386_hEZeFr",
+  "build": "ARM_PASS",
+  "read": {
+    "result": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_9e75fa386_hEZeFr/native_read_lz4qjznk/results.json",
+    "rounds": 6,
+    "sizes_bytes": [
+      8,
+      64,
+      4096
+    ],
+    "rounds_per_size": 2,
+    "local_destination_remote_source_and_guards": "PASS",
+    "both_candidate_maps": "PASS",
+    "registration_release": "PASS",
+    "mode": "READ_y_WRITE_n"
+  },
+  "write": {
+    "result": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_9e75fa386_hEZeFr/native_write_b12zir2m/results.json",
+    "rounds": 6,
+    "sizes_bytes": [
+      8,
+      64,
+      4096
+    ],
+    "receiver_memory_maps_registration_release": "PASS",
+    "mode": "READ_n_WRITE_y"
+  },
+  "normal": {
+    "result": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_9e75fa386_hEZeFr/write_normal_djtz_j73/results.json",
+    "cases_passed": 28,
+    "mode": "READ_y_WRITE_y",
+    "median_8B_us": {
+      "legacy": 2.25,
+      "iface": 2.21,
+      "rc": 2.54
+    },
+    "legacy_definition": "SAME_NEW_LIBRARY_LEGACY_CONNECTION_MODE_NOT_PRECHANGE_PRODUCT"
+  },
+  "combined_result": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_9e75fa386_hEZeFr/native_read_accept_lzoi_m1q/results.json",
+  "combined_terminal_status": "READ_6_WRITE_6_NORMAL_28=PASS",
+  "rma_inventory": {
+    "osu_put_latency": 1,
+    "osu_put_bw": 1,
+    "osu_put_bibw": 1,
+    "osc_ucx_reported": true,
+    "RMA_benchmark_run": false
+  },
+  "default_read": false,
+  "default_write": false,
+  "native_MPI_RMA_accepted": false,
+  "performance_accepted": false,
+  "full_B4_accepted": false,
+  "full_B_accepted": false
+}
