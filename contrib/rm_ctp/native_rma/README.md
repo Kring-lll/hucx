@@ -1,14 +1,14 @@
-# 基础原生RMA与普通UCP读写候选
+# 基础原生RMA与普通UCP读写
 
 起点为个人GitHub B开发分支 `6ba7250595a58266b8276e0f5c7a9d35c116996b`。
 该起点的READ六轮、WRITE六轮及双开关28正常已在节点通过，阶段交付为AtomGit B分支 `f1bcd0103713d887b0e29c0b108960e28039f5a5`。
-本目录是下一候选；本地检查不替代ARM构建和真实设备结果。
+当前989fd7186已完成本目录所列ARM节点验收，见[阶段记录](acceptance_20261031.md)；MPI单边OSU、完整B4和性能仍待验。
 
-## 当前flush修复候选
+## flush修复与节点结果
 
 基于b1895ec77继续，只改RM ep_flush的一处pending顺序检查；[定位与修复记录](flush_fix_20261031.md)。
 b189节点READ6/WRITE6/基础UCT8已通过，但UCP BCOPY的64KiB GET缺少提交片段并校验失败。
-旧实现提前flush已用实际源码CPU复现；修复后CPU回调须等16片读回及unpack。新产品仍须重新隔离构建和节点回归，不能复用旧库通过项为新库放行。
+旧实现提前flush已用实际源码CPU复现；修复后CPU回调须等16片读回及unpack。989fd7186已重新隔离构建，READ6/WRITE6/UCT8/UCP16×2/开启后28正常全部通过；b189失败记录保留。
 
 ## 本次产品改动
 
@@ -21,7 +21,7 @@ b189节点READ6/WRITE6/基础UCT8已通过，但UCP BCOPY的64KiB GET缺少提�
 - BCOPY使用现有注册描述符池；GET完成前不调用unpack，沿用公共完成/取消回收处理，准确归还读字节预算。
 - 独立WR/SGE，检查远端rkey范围、共享SQ及pending顺序；临时post失败返回NO_RESOURCE，永久post错误返回IO_ERROR；失败不推进序号、不消费完成额度，恢复fence状态并释放描述符。
 - WRITE不消耗AM接收信用，GET使用独立读字节额度。未新增网络超时重传。
-- AM_ZCOPY、硬件原子操作、故障恢复仍未开放。公开API和配置都不代表已完成节点验收。
+- AM_ZCOPY、硬件原子操作、故障恢复仍未开放。本轮只接受阶段记录列出的正常节点范围。
 
 ## 验证顺序
 
@@ -48,4 +48,4 @@ fence使用worker_flush和collective barrier，但PSCW和lock等路径还直接�
 
 本地执行真实RM源码的ASan/UBSan测试，覆盖断言/参数检查开关、4096B边界、描述符不足、pending FIFO、回调、取消/销毁、错误与回滚；完整x86构建只使用URMA链接桩，不代表硬件工作。
 基础UCT与UCP程序已用当前头文件和库实际编译；本环境双进程共享内存运行遇到AF_UNIX socket权限限制，未计入通过项目。
-节点需要重新隔离编译，直接运行本目录run_candidate.py CASE --run。当前不提前声称节点通过、性能无回退或B整体完成。
+989fd7186的ARM新库与所列节点检查已通过；本次仅归档记录，不要求重新编译或重跑。其他版本仍须隔离构建并按本目录入口验收，不据此宣称性能无回退或B整体完成。

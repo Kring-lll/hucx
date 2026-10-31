@@ -1,0 +1,102 @@
+{
+  "evidence_origin": "用户终端输出及用户执行结果JSON断言后的回传；未直接下载节点原始日志",
+  "raw_node_results_retrieved": false,
+  "source_commit": "989fd71865046bde988603c97416dc133c582e88",
+  "tested_tree": "4f7774ef8224365baf641288d48b0dc2934ffa70",
+  "module_sha256": "7b08a804a02d67fdc965b0055a55459ebf0dc4af198cbe4096ccf91019fb2530",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_989fd7186_xncBHX",
+  "results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_989fd7186_xncBHX/native_rma_accept_7ssm55bv/results.json",
+  "node_status": "BASIC_UCT_AND_PUBLIC_UCP_RMA_NORMAL_PASS_MPI_OSU_PENDING",
+  "source_and_module_identity_checked": true,
+  "prior": {
+    "read": {
+      "rounds": 6,
+      "result": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_989fd7186_xncBHX/native_read__1mgoiq4/results.json",
+      "sizes_bytes": [
+        8,
+        64,
+        4096
+      ],
+      "data_guards_maps_registration_release": "PASS"
+    },
+    "write": {
+      "rounds": 6,
+      "result": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_989fd7186_xncBHX/native_write_6rm7pe1s/results.json",
+      "sizes_bytes": [
+        8,
+        64,
+        4096
+      ],
+      "data_maps_registration_release": "PASS"
+    }
+  },
+  "trials": [
+    {
+      "name": "basic_uct",
+      "rounds_per_role": 8,
+      "native_successful_posts": {
+        "get_bcopy": 4,
+        "put_bcopy": 2,
+        "put_short": 2
+      }
+    },
+    {
+      "name": "ucp_bcopy",
+      "rounds_per_role": 16,
+      "native_successful_posts": {
+        "get_bcopy": 44,
+        "put_bcopy": 39,
+        "put_short": 5
+      }
+    },
+    {
+      "name": "ucp_zcopy",
+      "rounds_per_role": 16,
+      "native_successful_posts": {
+        "get_bcopy": 5,
+        "get_zcopy": 39,
+        "put_short": 5,
+        "put_zcopy": 39
+      }
+    }
+  ],
+  "trial_data_guards_maps_path_exit": "PASS",
+  "counts_scope": "传输入口的成功post计数，不能当网络报文、MPI片数或重传次数",
+  "ucp_size_sequence_per_operation": [
+    8,
+    65536,
+    64,
+    16385,
+    4096,
+    8193,
+    8,
+    65536
+  ],
+  "ucp_operations": [
+    "PUT",
+    "GET"
+  ],
+  "normal_cases": 28,
+  "normal_cases_passed": 28,
+  "normal_actual_receipts_NATIVE_RMA": "y",
+  "defaults": {
+    "NATIVE_READ": "n",
+    "NATIVE_WRITE": "n",
+    "NATIVE_RMA": "n"
+  },
+  "failure_retained": {
+    "source_commit": "b1895ec77e3098cb710c15a09ca222bea8af4873",
+    "results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_b1895ec77_QFv5b8/native_rma_accept_npd2y_ru/results.json",
+    "case": "ucp_bcopy GET64KiB data/guard failure before pending-aware flush fix"
+  },
+  "accepted_scope": "所列双节点正常UCT与普通UCP原生RMA；含严格尺寸交替及新能力开启的28正常回归",
+  "not_accepted": [
+    "MPI单边OSU与MPI_Win同步",
+    "原子能力与OSC接入依赖",
+    "本版本完整大消息/高规模矩阵",
+    "性能与资源收益",
+    "C重传/完整故障恢复",
+    "完整B4及完整B"
+  ],
+  "node_rerun_for_record": false
+}

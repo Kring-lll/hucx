@@ -5,23 +5,13 @@
 √表示该条**列明的阶段范围**已完成；□表示尚未完成。原验收要求保留，阶段范围以外的事项单列待补。
 过程记录和历史失败保留在Git历史与对应验收文档中，本页只维护当前状态。
 
-## 当前已测：原生READ/WRITE定向功能与双开关正常回归
+## 当前已测：基础原生RMA与普通UCP读写
 
-产品`9e75fa386fdfe430399ac7d27b71088ed2baf1e6`已在ARM隔离构建，双节点6轮原生UCT READ、6轮WRITE及双开关28项正常矩阵通过。
-READ校验本地目标、远端源和完整guard，WRITE校验接收内存；双端候选maps和注册释放均通过。
-两个能力均为单连续IOV、单次1～4096B，默认开关保持关闭；原生MPI RMA与正式单边OSU未验收。
-本轮8B中位数同库legacy/iface/RC为2.25/2.21/2.54μs，仅为本批功能样本。
-见[READ及读写阶段验收](native_read/acceptance_20261031.md)。下列大消息及规模结果属于对应历史产品，不自动扩大为新库全部重验结论。
-
-## 下一候选：基础RMA入口及普通UCP单边读写
-
-新增默认关闭的NATIVE_RMA，按现有UCP选路补齐PUT_SHORT/PUT_BCOPY/GET_BCOPY，复用已验PUT/GET_ZCOPY及共享完成机制。
-真实源码CPU检查和x86构建单列于[native_rma](native_rma/README.md)；ARM构建、基础UCT8轮、UCP严格交替读写两轮及开启后的28正常回归待节点执行。
-公开HMPI的OSC UCX还申请AMO32/AMO64，当前RM原子能力未验；MPI单边OSU保持待验，不虚报能力或替换后端取得结论。
-这批候选不改变以上9e75真实节点结果，也不扩大B3/B4的完成范围。
-
-b189候选已在ARM构建，READ6/WRITE6/基础UCT8通过；UCP BCOPY的64KiB GET数据校验失败，本轮后续任务未执行。
-已在实际RM源码复现flush越过pending分片：旧实现提前回调；最小修复让正常flush排在未提交分片之后。修复后的ARM和节点回归待执行，见[记录](native_rma/flush_fix_20261031.md)。B3/B4状态不因此提前改变。
+产品`989fd71865046bde988603c97416dc133c582e88`在ARM隔离构建后，通过READ6、WRITE6、基础UCT8、普通UCP16×2及NATIVE_RMA开启后的28项正常回归。
+实际PUT_SHORT/PUT_BCOPY/PUT_ZCOPY/GET_BCOPY/GET_ZCOPY均有成功post记录；两组UCP按8B～64KiB严格交替，数据、完整guard、候选maps、实际路径与退出通过。
+本轮修复flush越过pending中未提交分片的问题，旧失败和CPU复现保留。见[阶段验收](native_rma/acceptance_20261031.md)。
+三个原生开关仍默认关闭；单次操作保持已上报的inline、4KB及单IOV等约束，较大UCP请求由现有UCP分段。
+MPI单边OSU、MPI_Win同步、原子依赖、完整B4和性能仍待验；本轮不作性能或全场景无回退结论。历史AM与高规模结果不自动扩大为本产品重验结果。
 
 ## 历史已测：RM默认4KB片长与pending顺序修复
 
@@ -39,12 +29,12 @@ AM范围至单对1MiB、双向64KiB及PPN4多对64KiB，所测SEND均不超过40
 ## 当前交付与测试基线
 
 - A建链阶段：实现及标准OSU结果已交付AtomGit `957264713cae5999e4e8e658e858cbec2d8459ea`，清单文档修正已追加到同分支`99d3d81b53a52fe553a75e0ab1511c74ce859dd4`。
-- A历史已测产品：`2a8e3b771211e5af491c8ca483ebcc01a03c2f01`；当前B已测产品为`9e75fa386fdfe430399ac7d27b71088ed2baf1e6`（READ六轮＋WRITE六轮＋双开关28正常；完整历史大消息矩阵已测于ac414前置版本）。A阶段结论见[A_STAGE_CLOSEOUT_20261028.md](A_STAGE_CLOSEOUT_20261028.md)。
+- A历史已测产品：`2a8e3b771211e5af491c8ca483ebcc01a03c2f01`；当前B已测产品为`989fd71865046bde988603c97416dc133c582e88`（READ6＋WRITE6＋UCT8＋UCP16×2＋开启后28正常；完整历史AM大消息矩阵已测于ac414前置版本）。A阶段结论见[A_STAGE_CLOSEOUT_20261028.md](A_STAGE_CLOSEOUT_20261028.md)。
 - 正式测试使用原版OSU 7.5.2，性能和资源观察分轮；方法见[OSU_TEST_POLICY.md](OSU_TEST_POLICY.md)。
 - C重传延期；PPN192定位暂停。保序/去重与超时重发分别属于C4、C3，不能只增加PSN字段便视为完成。
 
 - B当前进度：PPN4两种标准OSU的消息边界正常校验及逐SEND矩阵均通过，软件默认4KB已在80b28a25产品复验通过。新矩阵含两项RC 8B门禁与16项RM校验，业务消息至16KB，观测SEND均不超过4096B。见[节点记录](wr_probe/WR_BOUNDARY_NODE_20261029.md)和[UCP分段审查](B2_EAGER_REUSE_20261029.md)。
-- B正常多片与边界已有证据；单次硬件契约、大小交替等未覆盖项仍按B1/B2/B3保留□，完整B4及故障恢复尚未交付。三端路径见[WORKSPACE_PATHS.md](WORKSPACE_PATHS.md)。
+- B正常多片与边界已有证据；单次硬件契约、AM/MPI大小交替等未覆盖项仍按B1/B2/B3保留□，普通UCP原生RMA交替专项见B4，完整B4及故障恢复尚未交付。三端路径见[WORKSPACE_PATHS.md](WORKSPACE_PATHS.md)。
 
 ## A：建链与资源管理
 
@@ -150,7 +140,7 @@ AM范围至单对1MiB、双向64KiB及PPN4多对64KiB，所测SEND均不超过40
    完成标准：无越界、缺失、重复或错序交付；如发现问题，保留可复现的修复前后证据。失败必须记录具体用例、版本与日志。
    前置：B2；消息长度按B1确定。
    √ 本阶段：两种原版OSU、PPN4、8项尺寸共16项RM及两项RC门禁，全部8rank数据校验及SEND<=4096通过。
-   □ 大小交替及其余必要正常场景待补，完整B3不提前勾选。
+   □ AM/MPI大小交替及其余必要正常场景待补；普通UCP原生RMA交替已按B4专项验证，完整B3不提前勾选。
    √ pending顺序修复正常回归：同EP新AM不得越过等待队列，28项正常、18项边界及窗口/AM所选20任务由原轮与补验共同覆盖；两种断言配置CPU检查与真实节点结果分别留档。
    √ 窗口及递增扫描子项：原版osu_bw/bibw窗口8/32、4086/8147B非整片，以及PPN4 multi_lat/alltoall递增扫描，通过10/10任务、54/54行校验与28份RM进程SEND观察；[完整记录](window_matrix/acceptance_20261030.md)。递增扫描不计作大小交替，完整B3仍待补。
 
@@ -158,21 +148,23 @@ AM范围至单对1MiB、双向64KiB及PPN4多对64KiB，所测SEND均不超过40
 
    内容：区分AM回退与原生RMA/rendezvous路径；复核已知注册/rkey生命周期风险，逐项恢复并验证需要的PUT/GET能力，再按真实支持范围上报。
    完成标准：READ/WRITE和所用大消息路径的数据、完成、缓冲/注册/rkey回收正确，覆盖大小交替、地址复用及跨阈值；基础sample通过不能代替HUCX验收。
-   前置：B1、B3和相关C1契约。原生READ/WRITE目前仅显式开关下接受GET_ZCOPY/PUT_ZCOPY，默认仍关闭；原生MPI RMA未验收，本项未完成，不默认扩展到原子操作等未明确目标。
-   √ AM rendezvous正常子项：c7ef修复后的16KB切换边界、64KB eager/AM、单对1MiB、双向64KB和PPN4多对64KB，原轮9项＋分进程日志补验1项通过；数据、候选maps及实际SEND<=4096均核验。见[阶段验收](pending_order/acceptance_20261030.md)。完整B4仍为□：原生读写的已过阶段见下，原生MPI RMA、更完整的注册/rkey复用及严格大小交替尚未闭合。
+   前置：B1、B3和相关C1契约。原生读写已在显式NATIVE_RMA下接受基础SHORT/BCOPY及单IOV ZCOPY；各开关默认仍关闭；原生MPI RMA未验收，本项未完成，不默认扩展到原子操作等未明确目标。
+   √ AM rendezvous正常子项：c7ef修复后的16KB切换边界、64KB eager/AM、单对1MiB、双向64KB和PPN4多对64KB，原轮9项＋分进程日志补验1项通过；数据、候选maps及实际SEND<=4096均核验。见[阶段验收](pending_order/acceptance_20261030.md)。完整B4仍为□：原生读写的已过阶段见下，原生MPI RMA、更完整的注册/rkey复用及AM/MPI严格大小交替尚未闭合；普通UCP原生RMA交替专项见下。
 
    √ 原生RMA前置修复子项：共用MD完整地址/EID识别、分配回滚、未导入key释放的真实源码CPU检查及ARM构建通过；ac4146054的28正常/18边界/10窗口/10AM/10集合回归已跑齐，15轮8B样本已审阅。本批旧RM/新RM/RC中位数为2.23/2.22/2.51μs，不外推全部性能。见[rkey前置验收](rkey_lifecycle/acceptance_20261031.md)。该前置版本的PUT/GET/AM_ZCOPY仍关闭；后续READ/WRITE定向阶段结果单列如下，原生MPI RMA及完整B4仍未验收。
 
    √ 原生WRITE定向路径及开启后的正常回归：118ab374b在ARM构建后，通过双节点8/64/4096B各两轮WRITE，接收内存、双端候选maps和注册释放均通过；随后开启WRITE的28项正常矩阵通过。343d初始门禁超时及pending自旋CPU复现保留，修复后节点门禁已恢复。当前仅单连续IOV/1～4096B，默认NATIVE_WRITE=n，该WRITE阶段READ尚未开放；原生MPI RMA、正式单边OSU及完整B4仍待验。见[WRITE阶段验收](native_write/acceptance_enabled_20261031.md)。
 
-   √ 原生READ定向路径及双开关正常回归：9e75fa386在ARM构建后，通过双节点8/64/4096B各两轮READ，本地目标、远端源、完整guard、双端maps及注册释放均通过；新库WRITE六轮和READ/WRITE双开关28项正常矩阵也通过。当前仅单连续IOV/1～4096B，两个开关默认关闭。GET_BCOPY及原生MPI RMA/正式单边OSU未验收，完整B4仍为□。见[阶段验收](native_read/acceptance_20261031.md)。
+   √ 原生READ定向路径及双开关正常回归：9e75fa386在ARM构建后，通过双节点8/64/4096B各两轮READ，本地目标、远端源、完整guard、双端maps及注册释放均通过；新库WRITE六轮和READ/WRITE双开关28项正常矩阵也通过。当前仅单连续IOV/1～4096B，两个开关默认关闭。该历史READ阶段尚未验GET_BCOPY；当前新增结果见下，原生MPI RMA/正式单边OSU未验收，完整B4仍为□。见[阶段验收](native_read/acceptance_20261031.md)。
+
+   √ 基础原生RMA及普通UCP阶段：989fd7186在ARM新库通过READ6、WRITE6、UCT8、UCP16×2及NATIVE_RMA=y的28正常。五种原生入口实际post已取证；普通UCP PUT/GET的8B～64KiB严格交替、guard、maps、完成及退出通过。flush等待pending尾部分片的修复经CPU与节点验证；[阶段验收](native_rma/acceptance_20261031.md)。原生MPI单边、原子依赖、多对端原生RMA及更完整的生命周期/性能仍待，完整B4保持□。
 
 5. **□ 完成大小消息和MPI目标场景回归对比（B5）**
 
    内容：从已验收小包逐步扩到确定的大消息范围，使用对应的点对点和集合通信场景，记录实际协议选择；验证新增大包路径没有破坏A。
    完成标准：统一消息矩阵下校验、性能和资源结果可复现，覆盖必要并发；先在可比范围做RM/RC对照，再按需求扩展RM。
    前置：B3、B4及所需可靠性；未测协议/尺寸不得宣称支持。
-   √ 集合正常子项：[原版OSU集合大消息](collective_matrix/acceptance_20261030.md)的alltoall/allgather、最高PPN4、最大每rank业务64KiB，10/10任务、36/36尺寸行、56份实际进程日志及52份RM发送观察通过，无片长环境覆盖，SEND<=4096。仅验收所列正常场景；未作性能对照或集合请求逐条路径证明，完整B5仍为□。严格反复大小交替保留待补，不改OSU算法或新增demo替代正式验收。
+   √ 集合正常子项：[原版OSU集合大消息](collective_matrix/acceptance_20261030.md)的alltoall/allgather、最高PPN4、最大每rank业务64KiB，10/10任务、36/36尺寸行、56份实际进程日志及52份RM发送观察通过，无片长环境覆盖，SEND<=4096。仅验收所列正常场景；未作性能对照或集合请求逐条路径证明，完整B5仍为□。AM/MPI严格反复大小交替保留待补；普通UCP原生RMA交替专项单列B4，不代替正式OSU验收。
 
 6. **□ 形成B的验收结论和正式交付（B6）**
 
