@@ -1,0 +1,18 @@
+{
+  "base_commit": "8e7d9e76bc129556221627101f9cb133a29675b4",
+  "full_x86_build": "PASS_SDK_LINK_STUBS_NOT_DEVICE",
+  "actual_rm_c_read_and_prior_regressions": "PASS_ASAN_UBSAN",
+  "read_tool_tests": 10,
+  "prior_write_tool_tests": 12,
+  "node_probe_local_compile": "PASS",
+  "log_sha256": {
+    "native_read_full_build_20261031.log": "881f25b9f5915c6126f8d0754a4ff903969cb0675555cff2874a18d30870a8ee",
+    "native_read_cpu_20261031.log": "a4dcd31b7b34ca8fca71880782fdb80c8653b50f7779ec4d339b4c69104d86bf",
+    "native_read_tools_20261031.log": "fe6b0aa86a650e0dc267262ba3880da8aa1e91179dc30ce0a625818977578862",
+    "native_write_tools_regression_20261031.log": "5d4080723d8b17c64314745e9872de394bc3a0ab75b599b79f83870e01dbc331"
+  },
+  "windows_execution": "NOT_RUN",
+  "arm_build": "PENDING",
+  "device_read": "PENDING",
+  "MPI_RMA": "NOT_ACCEPTED"
+}

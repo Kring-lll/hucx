@@ -87,8 +87,13 @@ ucs_config_field_t uct_rm_urma_iface_config_table[] = {
 
     {"NATIVE_WRITE", "n",
      "Enable the candidate single-IOV PUT_ZCOPY path (up to 4096 bytes).\n"
-     "Default off until device WRITE acceptance; GET and other RMA stay off.",
+     "Default off; READ has its own switch. Other PUT paths stay off.",
      ucs_offsetof(uct_rm_urma_iface_config_t, native_write), UCS_CONFIG_TYPE_BOOL},
+
+    {"NATIVE_READ", "n",
+     "Enable single-IOV GET_ZCOPY (up to 4096 bytes).\n"
+     "Default off; this does not enable GET_BCOPY or MPI RMA.",
+     ucs_offsetof(uct_rm_urma_iface_config_t, native_read), UCS_CONFIG_TYPE_BOOL},
 
     {NULL}
 };
@@ -187,6 +192,12 @@ static ucs_status_t uct_rm_urma_iface_query(uct_iface_h tl_iface, uct_iface_attr
         iface_attr->cap.put.min_zcopy = 1;
         iface_attr->cap.put.max_zcopy = ucs_min(4096, iface_attr->cap.put.max_zcopy);
         iface_attr->cap.put.max_iov = 1;
+    }
+    if (iface->config.native_read) {
+        iface_attr->cap.flags |= UCT_IFACE_FLAG_GET_ZCOPY;
+        iface_attr->cap.get.min_zcopy = 1;
+        iface_attr->cap.get.max_zcopy = ucs_min(4096, iface_attr->cap.get.max_zcopy);
+        iface_attr->cap.get.max_iov = 1;
     }
     iface_attr->cap.atomic32.op_flags = 0;
     iface_attr->cap.atomic32.fop_flags = 0;
@@ -814,6 +825,9 @@ static void uct_rm_urma_deal_with_send_cr(uct_rm_urma_iface_t *iface,
             uct_ub_iface_txqp_completion_desc(&ep->super.txqp,
                                              ep->super.status.ci);
         }
+        /* READ completion records return bytes during the callback above.
+         * Publish them before retrying pending, including the last CQE. */
+        uct_ub_iface_update_reads(&iface->super);
     }
     uct_rm_urma_iface_progress_pending(iface);
     --iface->tx.progress_depth;
@@ -913,6 +927,7 @@ static UCS_F_ALWAYS_INLINE ucs_status_t uct_rm_urma_init_iface_attr(uct_rm_urma_
     ucs_status_t status;
 
     iface->config.native_write = config->native_write;
+    iface->config.native_read = config->native_read;
     iface->tx.pending_group = NULL;
 
     uct_rm_urma_link_init(iface, config);

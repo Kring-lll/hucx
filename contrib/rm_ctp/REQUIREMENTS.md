@@ -154,6 +154,10 @@ AM范围至单对1MiB、双向64KiB及PPN4多对64KiB，所测SEND均不超过40
 
    √ 原生WRITE定向路径及开启后的正常回归：118ab374b在ARM构建后，通过双节点8/64/4096B各两轮WRITE，接收内存、双端候选maps和注册释放均通过；随后开启WRITE的28项正常矩阵通过。343d初始门禁超时及pending自旋CPU复现保留，修复后节点门禁已恢复。当前仅单连续IOV/1～4096B，默认NATIVE_WRITE=n，READ关闭；原生MPI RMA、正式单边OSU及完整B4仍待验。见[WRITE阶段验收](native_write/acceptance_enabled_20261031.md)。
 
+
+
+   □ 原生READ候选：基于已交付WRITE版本，重写单IOV/1～4096B GET_ZCOPY，独立默认关闭开关；提交前完成记录预留、读字节额度、错误回滚及末尾CQE回收已加入。完整x86构建、真实RM C的ASan/UBSan回归及工具检查通过；ARM/设备READ、新库WRITE与双开关正常矩阵待验。GET_BCOPY及原生MPI RMA仍未开放验收。见[READ候选](native_read/README.md)。
+
 5. **□ 完成大小消息和MPI目标场景回归对比（B5）**
 
    内容：从已验收小包逐步扩到确定的大消息范围，使用对应的点对点和集合通信场景，记录实际协议选择；验证新增大包路径没有破坏A。

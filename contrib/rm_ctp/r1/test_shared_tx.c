@@ -107,7 +107,7 @@ urma_status_t urma_post_jetty_send_wr(urma_jetty_t *j, urma_jfs_wr_t *wr,
         *bad = wr;
         return mock.fail_status ? mock.fail_status : URMA_ENOMEM;
     }
-    if (wr->opcode == URMA_OPC_WRITE) {
+    if ((wr->opcode == URMA_OPC_WRITE) || (wr->opcode == URMA_OPC_READ)) {
         assert(wr->rw.src.num_sge == 1 && wr->rw.dst.num_sge == 1);
         assert(wr->rw.src.sge[0].len == wr->rw.dst.sge[0].len);
         memcpy((void *)wr->rw.dst.sge[0].addr,
