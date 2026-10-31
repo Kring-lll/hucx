@@ -31,6 +31,37 @@ def stop(process):
             process.wait()
 
 
+def trial_environment(case):
+    # Match the already validated direct-UCT iface_v2 resource contract.
+    return {'LD_LIBRARY_PATH': str(case / 'install/lib') + ':' + str(case / 'install/lib/ucx'),
+            'UCX_RM_URMA_LINK_MODE': 'iface_v2', 'UCX_RM_URMA_MAX_PEERS': '5',
+            'UCX_RM_URMA_FC_ENABLE': 'y', 'UCX_RM_URMA_FC_WND_SIZE': '8',
+            'UCX_RM_URMA_TX_DEPTH': '8', 'UCX_RM_URMA_RX_DEPTH': '64',
+            'UCX_RM_URMA_FC_SOFT_THRESH': '0.5', 'UCX_RM_URMA_FC_HARD_THRESH': '0.25',
+            'UCX_RM_URMA_NATIVE_WRITE': 'y', 'UCX_LOG_LEVEL': 'debug'}
+
+
+def collect_receiver_outputs(out, sender_exit, receiver_exit, fetch):
+    # Error logs exist before final maps; preserve the primary process failure.
+    fetch('receiver.log')
+    if sender_exit != 0 or receiver_exit != 0:
+        raise RuntimeError('native probe failed: sender_exit=%s receiver_exit=%s; logs=%s' %
+                           (sender_exit, receiver_exit, out))
+    fetch('receiver.maps')
+
+
+def print_probe_errors(out):
+    import re
+    pattern = re.compile(r'DIRECT_IFACE_(?:FAILED|STATUS)|UCX\s+(?:ERROR|FATAL)|Assertion')
+    for role in ('sender', 'receiver'):
+        path = out / (role + '.log')
+        if path.exists():
+            lines = path.read_text(errors='replace').splitlines()
+            hits = [line for line in lines if pattern.search(line)]
+            for line in (hits[:4] or lines[-3:]):
+                print(role.upper() + ': ' + line[:450], flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description='原生WRITE定向验证；默认仅计划')
     parser.add_argument('case', type=Path)
@@ -48,7 +79,8 @@ def main():
     out = Path(tempfile.mkdtemp(prefix='native_write_', dir=case))
     report = {'source_commit': build['source_commit'], 'module_sha256': build['module_sha256'],
               'status': 'RUNNING', 'scope': 'DIRECT_UCT_WRITE_ONLY_NOT_OSU_PERFORMANCE',
-              'GET_enabled': False, 'default_native_write': False}
+              'GET_enabled': False, 'default_native_write': False,
+              'tool_overlay_sha256': globals().get('OVERLAY_SHA256')}
     print('NATIVE_WRITE_DIR=' + str(out), flush=True)
     server = None
     try:
@@ -69,9 +101,7 @@ def main():
         with socket.socket() as sock:
             sock.bind(('', 0))
             port = sock.getsockname()[1]
-        environment = {'LD_LIBRARY_PATH': str(case / 'install/lib') + ':' + str(case / 'install/lib/ucx'),
-                       'UCX_RM_URMA_LINK_MODE': 'iface_v2', 'UCX_RM_URMA_MAX_PEERS': '5',
-                       'UCX_RM_URMA_NATIVE_WRITE': 'y', 'UCX_LOG_LEVEL': 'debug'}
+        environment = trial_environment(case)
         env_args = ['env', '-u', 'LD_PRELOAD', '-u', 'LD_DEBUG']
         env_args += [k + '=' + v for k, v in environment.items()]
         server_cmd = ['timeout', '--signal=TERM', '--kill-after=5', '90'] + env_args
@@ -91,13 +121,11 @@ def main():
                                         timeout=88, check=False)
             report['sender_exit'] = result.returncode
             report['receiver_exit'] = server.wait(timeout=105)
-        # Only fetch the two files produced by this run; no wildcard or old result reuse.
-        for name in ('receiver.log', 'receiver.maps'):
+        def fetch(name):
             subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
                             'root@9.88.43.97:' + str(out / name), str(out / name)],
                            check=True, timeout=45)
-        if report['sender_exit'] != 0 or report['receiver_exit'] != 0:
-            raise RuntimeError('native probe failed; retain both logs')
+        collect_receiver_outputs(out, report['sender_exit'], report['receiver_exit'], fetch)
         for role in ('sender', 'receiver'):
             text = (out / (role + '.log')).read_text(errors='replace')
             if text.count('NATIVE_WRITE_ROUND=') != 6 or 'NATIVE_WRITE_PASS ' not in text:
@@ -116,6 +144,7 @@ def main():
     except BaseException as exc:
         report['status'] = 'STOPPED_INCOMPLETE'
         report['error'] = type(exc).__name__ + ': ' + str(exc)
+        print_probe_errors(out)
         print('NATIVE_WRITE_STOPPED=' + report['error'][:600], flush=True)
         raise SystemExit(1)
     finally:

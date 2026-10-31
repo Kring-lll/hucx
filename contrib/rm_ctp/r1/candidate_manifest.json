@@ -3,7 +3,7 @@
   "scope": "原生WRITE首条路径候选：默认关闭，显式开启仅PUT_ZCOPY；CPU/x86通过，ARM/设备/新产品回归待验；READ与完整B/C未验收",
   "files": {
     "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
-    "contrib/rm_ctp/REQUIREMENTS.md": "2818664ca1babb61049d9b90d45776b16d31e2fdb45cc28be004904ec362bd7d",
+    "contrib/rm_ctp/REQUIREMENTS.md": "136d83f7e1e710e2d4659dfa41790106e64451f7df8beddb9fd6feb18fc6a087",
     "contrib/rm_ctp/link_model.py": "786b5c48b3ae305afcd3eb0ade091e7d34a94ed0b9cd7686ccdffab62539c0c2",
     "contrib/rm_ctp/r1/README.md": "a3d7d969e9842554eaf283b459c7902a808be2c6fe0df2f24247d27cfa1ca407",
     "contrib/rm_ctp/r1/accept.py": "d3a50da339f7a84f092ae08f04ad6e526a27db20ac0c5cb5641bb2c7f5459ba6",
@@ -114,10 +114,14 @@
     "contrib/rm_ctp/rkey_lifecycle/acceptance_20261031.md": "09d4d9428896c836c0efd3d744b550c6537b81df3c24857007cb6e2336c27ecd",
     "contrib/rm_ctp/rkey_lifecycle/acceptance_summary_20261031.json": "c1d591348e7f0ad785f2d986948ac37693a970da0a72721de37f31e429e56d6d",
     "contrib/rm_ctp/native_write/cpu_checks_20261031.json": "518c3aecf1ff89e78580848a0376c8563ac92684df93edd7b86a349bea52907d",
-    "contrib/rm_ctp/native_write/run_candidate.py": "f433556339196dd782eaf1f158019a4bf46e8775947f247a91929e293864e33a",
+    "contrib/rm_ctp/native_write/run_candidate.py": "c551b31387a5355d8b1ab15d684bd2ad9fece16c2b3775539ca88b0dd4fcd924",
     "contrib/rm_ctp/native_write/write_probe.c": "09f5687ec6412a9a5e67fc1efcf49a3dc175094e0530f7a6612476b258d7b027",
-    "contrib/rm_ctp/native_write/README.md": "69cda8a494dad107f7f6d86006bd21a533bad60ddb996e7c2034f901523ac10d",
-    "contrib/rm_ctp/native_write/.gitignore": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793"
+    "contrib/rm_ctp/native_write/README.md": "b9f167b1f4b3bffcf58f8af048e57559977cfd50424bf5badcc498b17b31d973",
+    "contrib/rm_ctp/native_write/.gitignore": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793",
+    "contrib/rm_ctp/native_write/build_envfix_zip.py": "4e6b67b6a151f56ce27744611596f02ae700aa84d9fa686ce3c6d4865573ef82",
+    "contrib/rm_ctp/native_write/test_iface_config.c": "42dea665457541f6927a849ecd9940f950c6ac3f97488ee758e008451e91a50c",
+    "contrib/rm_ctp/native_write/tests/test_controller.py": "0d4dfff5da035e00b5b37ef2aee997c29e7e6a36514be5b16fdb3a90319fe9d9",
+    "contrib/rm_ctp/native_write/envfix_checks_20261031.json": "f30f3ef73a513ae9865b32309d5df1130bd4730dcc3192852b45ac4068437c95"
   },
   "current_validation": {
     "full_local_build": "Base62fb full x86 build PASS; 2a8e actual object CPU regressions PASS; 2a8e ARM64 isolated full build PASS",

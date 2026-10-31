@@ -49,3 +49,10 @@ python3 -u "$case_dir/source/contrib/rm_ctp/native_write/run_candidate.py" "$cas
 最高仅两进程；GNU timeout限定client80秒/server90秒（5秒kill-after），SSH还受连接及控制器超时限制。
 只终止本轮本地SSH进程组；远端命令由本轮timeout收敛，不扫描或杀其他任务，不重置设备。
 脚本失败保留结果，不自动重试、改写旧报告或重新扩大矩阵。首次失败先定位实际WRITE返回/CQE/数据，不能预判是环境或实现。
+
+## 2026-10-31 接口配置遗漏修正
+
+343d候选已在ARM构建，模块5373b75b。首轮native_write_7c_401pa两端退出2，open RM iface返回Invalid parameter，未进入注册或WRITE。控制器没有沿用已通过A7的FC_ENABLE=y，而基础默认n；实际link_ready源码拒绝FC关闭。原错误又被后续强取receiver.maps的scp失败遮住。
+工具现补齐已验证的FC=y/W8/TX8/RX64/K5与阈值，接收日志先取，非零退出直接报告原始错误，不再强取成功阶段maps；终端自动提取两端错误。产品不变，原CASE/source/install与失败结果不改写。
+真实RM link_ready CPU检查复现FC关闭拒绝，FC开启且R64/K5/W8通过；另5项Python检查覆盖与A7配置一致、预算、失败不取maps、成功必须取maps及错误打印。节点仍待执行。
+独立hucx_b_write_envfix_20261031.zip固定已构建CASE/commit/module，验证原116文件源清单和模块，在内存中执行修正控制器，ROOT仍引用原CASE工具/探针；不覆盖旧源码，不重编译传输库。只重编译小型探针并重跑6次WRITE。默认仅计划，--run才操作双端，失败停止留档。不推AtomGit。
