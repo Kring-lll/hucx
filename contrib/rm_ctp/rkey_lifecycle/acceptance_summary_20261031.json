@@ -1,0 +1,104 @@
+{
+  "date": "2026-10-31",
+  "status": "RKEY_PREREQUISITE_CPU_AND_EXISTING_NORMAL_REGRESSION_ACCEPTED",
+  "evidence_source": "用户实际节点终端及只读JSON断言输出的转录；完整原始JSON和日志保留在节点，未下载至本工作区",
+  "product_commit": "ac4146054b0e1364d0ea691b37b9f14238a43bb0",
+  "module_sha256": "c211385e1fa4a5c4096f49cdc74b69af8ec82104e80edb9b460e0b7667789308",
+  "tool_commit": "bb1a4cc37666f749c13e511d8e06271259eafe66",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_ac4146054_sbFyVf",
+  "results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_ac4146054_sbFyVf/rkey_log_review_08p4r89m/results.json",
+  "checkpoint_results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_ac4146054_sbFyVf/rkey_resume_j6c51b_5/results.json",
+  "first_results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_ac4146054_sbFyVf/rkey_accept__txtvu2a/results.json",
+  "large_log_review_results_json": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_ac4146054_sbFyVf/rkey_log_review_g8q_c8y3/results.json",
+  "gates": {
+    "normal": 28,
+    "boundary": 18,
+    "window": 10,
+    "am": 10,
+    "collective": 10,
+    "timing": 15
+  },
+  "resume": {
+    "prior_normal_boundary_window_and_timing_reused": true,
+    "prior_am_tasks": 7,
+    "existing_1MiB_log_review": "PASS_NO_NEW_MPI",
+    "new_remaining_am_tasks": 2,
+    "new_collective_tasks": 10,
+    "new_tasks_exit_zero_and_no_cleanup_error": true
+  },
+  "timing": {
+    "benchmark": "original OSU7.5.2 osu_multi_lat",
+    "ppn": 1,
+    "message_bytes": 8,
+    "old_rm_product_commit": "c7ef02b51d274e4ff3151457b82cc34f493419d5",
+    "samples_us": {
+      "old_rm": [
+        2.23,
+        2.22,
+        2.22,
+        2.23,
+        2.25
+      ],
+      "new_rm": [
+        2.22,
+        2.22,
+        2.22,
+        2.2,
+        2.24
+      ],
+      "rc": [
+        2.51,
+        2.52,
+        2.51,
+        2.51,
+        2.52
+      ]
+    },
+    "summary_us": {
+      "old_rm": {
+        "median": 2.23,
+        "min": 2.22,
+        "max": 2.25
+      },
+      "new_rm": {
+        "median": 2.22,
+        "min": 2.2,
+        "max": 2.24
+      },
+      "rc": {
+        "median": 2.51,
+        "min": 2.51,
+        "max": 2.52
+      }
+    },
+    "new_vs_old_median_reduction_percent": 0.4484304932735328,
+    "new_vs_rc_median_reduction_percent": 11.553784860557759,
+    "scope": "本批PPN1/8B五轮完整样本；未扩展为全尺寸、吞吐、内存或全部性能无回退结论",
+    "rss": "本轮未在用户复核输出回收全部RSS样本，不填写推测值"
+  },
+  "product_delta_from_previous_delivery": {
+    "files": [
+      "src/uct/urma/base/urma_md.c",
+      "src/uct/urma/base/urma_md.h"
+    ],
+    "insertions": 23,
+    "deletions": 15,
+    "shared_by": [
+      "RM",
+      "RC",
+      "UM"
+    ],
+    "wire_rkey_bytes_unchanged": 44
+  },
+  "cpu_scope": "真实MD源码五项ASan/UBSan检查；完整x86使用SDK链接桩构建。不是设备WRITE/READ证明",
+  "limits": {
+    "native_READ_WRITE": "DISABLED_NOT_ACCEPTED",
+    "AM_ZCOPY": "DISABLED",
+    "device_rkey_import_and_lifetime": "NOT_ACCEPTED_BY_THIS_AM_REGRESSION",
+    "strict_size_alternation": "NOT_COVERED",
+    "complete_B": "NOT_ACCEPTED",
+    "C_retry": "DEFERRED",
+    "ppn192": "PAUSED"
+  },
+  "next_product_work": "实现单一原生WRITE路径及定向验证，之后单独推进READ；不再扩大本轮前置回归矩阵"
+}

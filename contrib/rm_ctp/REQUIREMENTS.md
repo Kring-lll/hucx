@@ -1,6 +1,6 @@
 # HUCX RM+CTP 实施与验收清单
 
-更新：2026-10-30。固定编号为A1～A10、B1～B6、C1～C6。
+更新：2026-10-31。固定编号为A1～A10、B1～B6、C1～C6。
 
 √表示该条**列明的阶段范围**已完成；□表示尚未完成。原验收要求保留，阶段范围以外的事项单列待补。
 过程记录和历史失败保留在Git历史与对应验收文档中，本页只维护当前状态。
@@ -21,7 +21,7 @@ AM范围至单对1MiB、双向64KiB及PPN4多对64KiB，所测SEND均不超过40
 ## 当前交付与测试基线
 
 - A建链阶段：实现及标准OSU结果已交付AtomGit `957264713cae5999e4e8e658e858cbec2d8459ea`，清单文档修正已追加到同分支`99d3d81b53a52fe553a75e0ab1511c74ce859dd4`。
-- A历史已测产品：`2a8e3b771211e5af491c8ca483ebcc01a03c2f01`；当前B已测产品为`c7ef02b51d274e4ff3151457b82cc34f493419d5`。A阶段结论见[A_STAGE_CLOSEOUT_20261028.md](A_STAGE_CLOSEOUT_20261028.md)。
+- A历史已测产品：`2a8e3b771211e5af491c8ca483ebcc01a03c2f01`；当前B已测产品为`ac4146054b0e1364d0ea691b37b9f14238a43bb0`。A阶段结论见[A_STAGE_CLOSEOUT_20261028.md](A_STAGE_CLOSEOUT_20261028.md)。
 - 正式测试使用原版OSU 7.5.2，性能和资源观察分轮；方法见[OSU_TEST_POLICY.md](OSU_TEST_POLICY.md)。
 - C重传延期；PPN192定位暂停。保序/去重与超时重发分别属于C4、C3，不能只增加PSN字段便视为完成。
 
@@ -143,7 +143,7 @@ AM范围至单对1MiB、双向64KiB及PPN4多对64KiB，所测SEND均不超过40
    前置：B1、B3和相关C1契约。当前RMA能力仍屏蔽，本项未完成；不默认扩展到原子操作等未明确目标。
    √ AM rendezvous正常子项：c7ef修复后的16KB切换边界、64KB eager/AM、单对1MiB、双向64KB和PPN4多对64KB，原轮9项＋分进程日志补验1项通过；数据、候选maps及实际SEND<=4096均核验。见[阶段验收](pending_order/acceptance_20261030.md)。完整B4仍为□：原生READ/WRITE、注册/rkey复用及严格大小交替尚未闭合。
 
-   □ 原生RMA前置修复候选：共用MD的完整地址/EID识别、分配回滚、未导入key释放已补源码与CPU测试；ac4146054 ARM构建及28项正常回归已通过；边界和窗口已通过；1MiB数据及完整日志AM路径补验通过；续跑因对端父目录准备遗漏中断，工具已修正，剩余2项AM/10项集合待验，不开放PUT/GET/AM_ZCOPY。见[rkey工作包](rkey_lifecycle/README.md)。
+   √ 原生RMA前置修复子项：共用MD完整地址/EID识别、分配回滚、未导入key释放的真实源码CPU检查及ARM构建通过；ac4146054的28正常/18边界/10窗口/10AM/10集合回归已跑齐，15轮8B样本已审阅。本批旧RM/新RM/RC中位数为2.23/2.22/2.51μs，不外推全部性能。见[rkey前置验收](rkey_lifecycle/acceptance_20261031.md)。PUT/GET/AM_ZCOPY仍关闭，设备rkey导入/原生READ/WRITE及完整B4未验收；下一项产品实现为原生WRITE。
 
 5. **□ 完成大小消息和MPI目标场景回归对比（B5）**
 
