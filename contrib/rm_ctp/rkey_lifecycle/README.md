@@ -52,3 +52,17 @@ LSan在受限运行环境默认关闭；用缓存条目归零及unimport次数�
 不修改OSU，不更改SEG环境默认，不将诊断时延当性能结论；五轮性能仍须审阅。
 这些是修复后的现有功能回归，不能代替真实设备rkey导入/READ/WRITE数据及生命周期验收。
 C继续延期，严格大小交替、原生RMA、完整B仍未完成；通过CPU测试不在AtomGit提前标记完成。
+
+## 2026-10-31 控制器目录字段修复与续跑
+
+ac4146054候选已在ARM隔离构建；模块c211385e1fa4a5c4096f49cdc74b69af8ec82104e80edb9b460e0b7667789308。
+节点终端28项正常回归通过，随后boundary_matrix读取report['controller_dir']时出现KeyError。
+原始rkey_accept__txtvu2a/results.json保留，本轮不是传输层报错证据。
+主脚本现补齐controller_dir；新增主流程交接和失败停止检查，旧主流程测试复现失败，新旧控制器测试合计10项通过。
+
+resume.py默认只列计划，--run才继续。它严格限定ac4146054已测模块与CASE，
+复核原报告确为本字段中断、原28项名称/结果/产品身份完整并记录两份报告SHA256；
+通过原candidate.validate_build校验CASE源清单和本地库，复核双端模块，
+另建rkey_resume_*，从18边界、15轮计时、10窗口、10AM和10集合继续；不调用normal_regression。
+它导入原CASE中未修改的工具，校验原控制器内容SHA，不覆盖CASE/source、install或原报告。
+独立ZIP仅包含续跑工具，不包含产品库；无需重编译。原生RMA、完整B/C及新候选全回归仍未验收。

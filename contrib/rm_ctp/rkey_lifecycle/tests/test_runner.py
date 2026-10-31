@@ -71,5 +71,53 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(self.matrix(True), [0])
 
 
+    def full_main(self, failed):
+        with tempfile.TemporaryDirectory() as temporary, contextlib.ExitStack() as stack:
+            case = Path(temporary)
+            build = {'source_commit': 'a' * 40, 'module_sha256': 'b' * 64}
+            calls = []
+            def boundary(candidate, receipt):
+                # Same contract as the real boundary_matrix entry, before MPI.
+                directory = Path(receipt['controller_dir'])
+                self.assertEqual(directory.parent, case)
+                self.assertTrue(directory.is_dir())
+                calls.append('boundary')
+                if failed:
+                    raise ValueError('injected boundary failure')
+                receipt['boundary_matrix'] = str(directory / 'boundary.json')
+            def timing(*args):
+                calls.append('timing')
+                return {key: {'median_us': 2.0} for key in ('old_rm', 'new_rm', 'rc')}
+            for target, name, value in (
+                    (r.socket, 'gethostname', 'node89'), (r.os, 'geteuid', 0),
+                    (r.candidate, 'validate_build', build), (r.candidate, 'deploy', {}),
+                    (r.candidate, 'normal_regression', {'passed': True, 'cases': 28}),
+                    (r.pending, 'matrix', {}), (r, 'collective_matrix', {})):
+                stack.enter_context(patch.object(target, name, return_value=value))
+            stack.enter_context(patch.object(r.candidate, 'boundary_matrix', side_effect=boundary))
+            stack.enter_context(patch.object(r.pending, 'timing', side_effect=timing))
+            stack.enter_context(patch.object(r, '__file__', str(case / 'source/contrib/rm_ctp/rkey_lifecycle/run_candidate.py')))
+            stack.enter_context(patch.object(sys, 'argv', [str(ENTRY), str(case), '--run']))
+            with contextlib.redirect_stdout(io.StringIO()):
+                if failed:
+                    with self.assertRaises(SystemExit):
+                        r.main()
+                else:
+                    r.main()
+            reports = list(case.glob('rkey_accept_*/results.json'))
+            self.assertEqual(len(reports), 1)
+            report = json.loads(reports[0].read_text())
+            self.assertEqual(report['controller_dir'], str(reports[0].parent))
+            self.assertEqual(report['status'], 'STOPPED_INCOMPLETE' if failed else
+                             'RKEY_FIX_AM_REGRESSION_PASS_PERFORMANCE_REVIEW_REQUIRED')
+            return calls
+
+    def test_main_passes_controller_directory_to_boundary(self):
+        self.assertEqual(self.full_main(False), ['boundary', 'timing'])
+
+    def test_main_keeps_failure_report_and_stops_later_stages(self):
+        self.assertEqual(self.full_main(True), ['boundary'])
+
+
 if __name__ == '__main__':
     unittest.main()

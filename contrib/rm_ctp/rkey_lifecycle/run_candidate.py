@@ -105,7 +105,8 @@ def main():
         raise ValueError('reference product is not the new candidate')
     out = Path(tempfile.mkdtemp(prefix='rkey_accept_', dir=case))
     report = {'plan': plan(), 'source_commit': build['source_commit'],
-              'module_sha256': build['module_sha256'], 'status': 'RUNNING'}
+              'module_sha256': build['module_sha256'], 'controller_dir': str(out),
+              'status': 'RUNNING'}
     print('RKEY_ACCEPT_DIR=' + str(out), flush=True)
     try:
         report['deployment'] = candidate.deploy(case, build, out)
