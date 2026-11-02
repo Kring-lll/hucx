@@ -159,6 +159,8 @@ AM范围至单对1MiB、双向64KiB及PPN4多对64KiB，所测SEND均不超过40
 
    √ 基础原生RMA及普通UCP阶段：989fd7186在ARM新库通过READ6、WRITE6、UCT8、UCP16×2及NATIVE_RMA=y的28正常。五种原生入口实际post已取证；普通UCP PUT/GET的8B～64KiB严格交替、guard、maps、完成及退出通过。flush等待pending尾部分片的修复经CPU与节点验证；[阶段验收](native_rma/acceptance_20261031.md)。原生MPI单边、原子依赖、多对端原生RMA及更完整的生命周期/性能仍待，完整B4保持□。
 
+   □ MPI单边接入候选（2026-11-02）：已核对UCP现成软件AMO回退可与原生RMA分别选路，不将OSC申请AMO等同于必须实现RM硬件原子。新增MPI窗口guard/交替/同步门禁及原版OSU PUT/GET latency/bw工具；产品与默认开关不变，节点验收待执行。见[接入范围](mpi_rma/README.md)。
+
 5. **□ 完成大小消息和MPI目标场景回归对比（B5）**
 
    内容：从已验收小包逐步扩到确定的大消息范围，使用对应的点对点和集合通信场景，记录实际协议选择；验证新增大包路径没有破坏A。

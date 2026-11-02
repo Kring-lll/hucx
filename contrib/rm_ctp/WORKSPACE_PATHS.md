@@ -14,17 +14,25 @@
 - 中转内包：`D:\HUCX_RM_CTP\hucx-rm-b-segmentation-dev\hucx_b_eager_boundaries_20261029.zip`。
 - 节点内包：`/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/upload/hucx_b_eager_boundaries_20261029.zip`。
 
-## 当前默认4KB产品与历史依赖
+## 当前已验产品（2026-10-31）
 
-当前B已测CASE：`/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_80b28a25b_dvKqlu`。
+当前产品为 `989fd71865046bde988603c97416dc133c582e88`，CASE为B工作根下
+`r1_shared_989fd7186_xncBHX`，模块SHA256为
+`7b08a804a02d67fdc965b0055a55459ebf0dc4af198cbe4096ccf91019fb2530`。
+节点结果为 `native_rma_accept_7ssm55bv/results.json`；GitHub阶段记录d2f2dd6b，
+AtomGit B阶段6576f44d。新MPI/OSU工具使用这份安装，不改写其source/install。
+
+## 历史默认4KB产品与历史依赖
+
+早期默认片长已测CASE：`/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/r1_shared_80b28a25b_dvKqlu`。
 源码commit `80b28a25b5ea0e245bca88db44be79d15d06127f`；模块SHA256 `8d9ed4133c71c4ca77ad900e60433e9781cfef2adf33dc396f3f642b2cc9821c`。
-本阶段验收输出为该CASE下`segment_default_accept_94i91scl`，不再将旧CASE称为当前唯一安装。
+该历史阶段验收输出为CASE下`segment_default_accept_94i91scl`，不再将旧CASE称为当前唯一安装。
 源码包位于新B upload下`hucx-b-default-80b28a25b-source.tar.gz`，中转原包在独立Git打包仓库目录。
 
 旧2a8e CASE、原版OSU、HMPI及资源观察器仍保留在历史实验根
 `/home/y00993710/urma_rm_ctp_lab/experiments/hmpi_rm_resources_20261019`。
 旧CASE为`r1_shared_2a8e3b771_ps2tIz`。旧边界工具在新upload启动却写到旧CASE，是当时固定安装的预期行为。
-当前默认片长驱动明确绑定新CASE；历史依赖路径不搬迁、不全局替换。B实验根无需Git初始化。
+该默认片长驱动明确绑定80b CASE；历史依赖路径不搬迁、不全局替换。B实验根无需Git初始化。
 
 ## 开发流程
 
