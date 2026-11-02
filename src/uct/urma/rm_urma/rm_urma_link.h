@@ -21,6 +21,15 @@ struct uct_rm_urma_peer {
     uint64_t received_id;
     int request_posted;
     int grant_pending;
+    struct {
+        ucs_list_link_t replay;
+        uint64_t tx_next;
+        uint64_t rx_next;
+        unsigned count;
+        unsigned ack_pending;
+        unsigned ack_in_flight;
+        ucs_time_t ack_posted_at;
+    } reliable;
 };
 
 struct uct_rm_urma_link_req {
@@ -36,6 +45,9 @@ struct uct_rm_urma_link_req {
     unsigned char payload[UCT_RM_URMA_FC_REQ_V2_SIZE];
 };
 
+ucs_status_t uct_rm_urma_link_peer_get(uct_rm_urma_iface_t *iface,
+                          const uct_rm_urma_return_addr_t *remote,
+                          uct_rm_urma_peer_t **peer_p);
 void uct_rm_urma_link_init(uct_rm_urma_iface_t *iface,
                           const uct_rm_urma_iface_config_t *config);
 ucs_status_t uct_rm_urma_link_ready(uct_rm_urma_iface_t *iface);

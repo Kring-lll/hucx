@@ -61,7 +61,9 @@ bool uct_rm_urma_ep_can_send(uct_rm_urma_ep_t *ep)
             !(ep->super.flags & (UCT_RM_URMA_EP_FLAG_CLOSING |
                                  UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL |
                                  UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED)) &&
-            ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) ?
+            ((iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) ?
+             uct_rm_urma_reliable_can_send(ep) :
+             (iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) ?
              uct_rm_urma_link_can_send(ep) :
              uct_ub_fc_has_resources(&iface->super, &ep->super.fc)) &&
             (uct_rm_urma_outstanding_queue_available(ep) > 0));
@@ -79,6 +81,9 @@ ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr,
     ucs_status_t ret = UCS_OK;
     urma_status_t status;
 
+    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        return uct_rm_urma_reliable_short(ep, id, hdr, buffer, length);
+    }
     UCT_UB_CHECK_AM_SHORT(id, length, uct_ub_am_short_hdr_t, iface->super.config.max_inline);
     UCT_RM_URMA_CHECK_RES_AND_FC(iface, ep, id);
     UCT_TL_EP_STAT_OP(&ep->super.super, AM, SHORT, sizeof(hdr) + length);
@@ -123,6 +128,9 @@ ssize_t uct_rm_urma_ep_am_bcopy(uct_ep_h tl_ep, uint8_t id,
     urma_sge_t sge;
     size_t length;
 
+    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        return uct_rm_urma_reliable_bcopy(ep, id, pack_cb, arg);
+    }
     UCT_CHECK_AM_ID(id);
     UCT_RM_URMA_CHECK_RES_AND_FC(iface, ep, id);
     UCT_UB_IFACE_GET_TX_AM_BCOPY_DESC(&iface->super, &ep->super, &iface->super.tx.mp, desc,
@@ -167,6 +175,9 @@ ucs_status_t uct_rm_urma_ep_am_zcopy(uct_ep_h tl_ep, uint8_t id, const void *hea
     urma_status_t status;
     size_t sge_cnt;
 
+    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        return UCS_ERR_UNSUPPORTED;
+    }
     /* 1 iov consumed by am header */
     UCT_CHECK_IOV_SIZE(iovcnt, iface->super.config.max_send_sge - 1, "uct_rm_urma_ep_am_zcopy");
 
@@ -908,7 +919,8 @@ ucs_status_t uct_rm_urma_ep_pending_add(uct_ep_h tl_ep, uct_pending_req_t *r, un
     uct_pending_req_arb_group_push(&ep->arb_group, r);
     UCT_TL_EP_STAT_PEND(&ep->super.super);
 
-    if (iface->config.native_write || iface->config.native_read ||
+    if ((iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) ||
+        iface->config.native_write || iface->config.native_read ||
         iface->config.native_rma ||
         ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) ?
          ((ep->peer != NULL) && (ep->peer->credits > 0)) :
@@ -1238,6 +1250,11 @@ ucs_status_t uct_rm_urma_ep_flush(uct_ep_h tl_ep, unsigned flags,
         !uct_rm_urma_iface_pending_can_send(iface, &ep->arb_group)) {
         return UCS_ERR_NO_RESOURCE;
     }
+    if (ep->reliable_outstanding != 0) {
+        /* All replay WRs complete on the iface control EP. A user EP flush
+         * must wait for its own remote ACK and local DMA, not its empty PI. */
+        return UCS_ERR_NO_RESOURCE;
+    }
     if (ep->super.status.pi == ep->super.status.ci) {
         UCT_TL_EP_STAT_FLUSH(&ep->super.super);
         return UCS_OK;
@@ -1288,13 +1305,17 @@ ucs_arbiter_cb_result_t uct_rm_urma_ep_process_pending(ucs_arbiter_t *arbiter, u
         return UCS_ARBITER_CB_RESULT_STOP;
     }
 
+    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        return UCS_ARBITER_CB_RESULT_RESCHED_GROUP;
+    }
     /* No any other pending operations (except no-op, flush(CANEL), and others
      * which don't consume TX resources) allowed to be still scheduled on an
      * arbiter group for which flush(CANCEL) was done */
     ucs_assert(!(ep->super.flags & UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL));
 
     /* No ep resources */
-    if (iface->config.native_write || iface->config.native_read ||
+    if ((iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) ||
+        iface->config.native_write || iface->config.native_read ||
         iface->config.native_rma ||
         ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) ?
          ((ep->peer != NULL) && (ep->peer->credits > 0)) :
@@ -1390,7 +1411,7 @@ ucs_status_t uct_rm_urma_ep_get_address(uct_ep_h tl_ep, uct_ep_addr_t *addr)
     const urma_seg_t *seg = &iface->super.ka_local_seg->tseg->seg;
     uct_rm_urma_ep_wire_addr_t wire;
 
-    if (iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) {
+    if (iface->link.mode != UCT_RM_URMA_LINK_LEGACY) {
         return UCS_ERR_UNSUPPORTED;
     }
     ucs_debug("RM legacy EP address export iface=%p ep=%p", iface, ep);
@@ -1481,7 +1502,7 @@ ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep,
         return UCS_ERR_CANCELED;
     }
 
-    if (iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) {
+    if (iface->link.mode != UCT_RM_URMA_LINK_LEGACY) {
         return UCS_ERR_UNSUPPORTED;
     }
     ucs_debug("RM legacy connect_to_ep iface=%p ep=%p", iface, ep);
@@ -1550,6 +1571,10 @@ void uct_rm_urma_ep_txqp_purge_outstanding(uct_rm_urma_iface_t *iface, uct_ub_tx
     ucs_status_t ret = UCS_OK;
 
     ucs_queue_for_each_extract(op, &txqp->outstanding, queue, UCS_CIRCULAR_COMPARE32(op->sn, <=, sn)) {
+        if (op->handler == uct_rm_urma_reliable_complete) {
+            uct_rm_urma_reliable_complete(op, NULL);
+            continue;
+        }
         if (op->handler == uct_rm_urma_link_complete) {
             uct_rm_urma_link_complete(op, NULL);
             continue;
@@ -1580,9 +1605,10 @@ UCS_CLASS_INIT_FUNC(uct_rm_urma_ep_t, const uct_ep_params_t *params)
     self->tjetty = NULL;
     self->target = NULL;
     self->peer = NULL;
+    self->reliable_outstanding = 0;
     ucs_list_head_init(&self->peer_list);
     memset(&self->tp, 0, sizeof(self->tp));
-    if (iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) {
+    if (iface->link.mode != UCT_RM_URMA_LINK_LEGACY) {
         unsigned mask = UCT_EP_PARAM_FIELD_DEV_ADDR | UCT_EP_PARAM_FIELD_IFACE_ADDR;
 
         if ((params->field_mask & mask) == mask) {
@@ -1720,6 +1746,58 @@ ucs_status_t uct_rm_urma_ep_link_post(uct_rm_urma_iface_t *iface,
     req->op.handler = uct_rm_urma_link_complete;
     uct_rm_urma_update_tx_resources_status(ep, iface, URMA_COMPLETE_ENABLE);
     uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &req->op,
+                                           ep->super.status.pi);
+    return UCS_OK;
+}
+
+ucs_status_t uct_rm_urma_ep_reliable_post(uct_rm_urma_iface_t *iface,
+                                         uct_rm_urma_replay_t *entry)
+{
+    uct_ep_params_t params = {
+        .field_mask = UCT_EP_PARAM_FIELD_IFACE,
+        .iface = &iface->super.super.super
+    };
+    uct_ep_h tl_ep;
+    uct_rm_urma_ep_t *ep;
+    urma_jfs_wr_t *wr = &iface->super.send_wr;
+    urma_jfs_wr_t *bad = NULL;
+    urma_sge_t sge;
+    urma_status_t result;
+    ucs_status_t status;
+
+    if (iface->tx.ctrl_ep == NULL) {
+        iface->link.creating_control = 1;
+        status = UCS_CLASS_NEW(uct_rm_urma_ep_t, &tl_ep, &params);
+        iface->link.creating_control = 0;
+        if (status != UCS_OK) {
+            return status;
+        }
+        iface->tx.ctrl_ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
+        iface->tx.ctrl_ep->super.fc.fc_wnd = INT16_MAX;
+    }
+    ep = iface->tx.ctrl_ep;
+    if ((iface->rm_urma_jetty.available <= 0) ||
+        (iface->super.tx.jfc_available <= 0)) {
+        return UCS_ERR_NO_RESOURCE;
+    }
+    UCT_UB_FILL_WR_SG_BUF(&wr->send.src, (uint64_t)(entry->desc + 1),
+                          entry->length, entry->desc->tseg, 1, &sge);
+    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_SEND, ep, 1,
+                             URMA_INLINE_DISABLE, URMA_SOLICITED_ENABLE);
+    wr->tjetty = entry->peer->target->jetty;
+    result = urma_post_jetty_send_wr(ep->rm_urma_jetty->jetty, wr, &bad);
+    memset(wr, 0, sizeof(*wr));
+    if (result != URMA_SUCCESS) {
+        if ((result != URMA_ENOMEM) && (result != URMA_EAGAIN)) {
+            /* No retry of an uncertain terminal provider submission. */
+            entry->quarantined = 1;
+        }
+        return ((result == URMA_ENOMEM) || (result == URMA_EAGAIN)) ?
+               UCS_ERR_NO_RESOURCE : UCS_ERR_IO_ERROR;
+    }
+    entry->in_flight = 1;
+    uct_rm_urma_update_tx_resources_status(ep, iface, URMA_COMPLETE_ENABLE);
+    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &entry->op,
                                            ep->super.status.pi);
     return UCS_OK;
 }

@@ -18,6 +18,7 @@
 #include <ucs/datastruct/khash.h>
 
 #include "rm_urma_addr.h"
+#include <ucs/time/time.h>
 
 #include <urma_api.h>
 
@@ -55,7 +56,8 @@ KHASH_MAP_INIT_INT64(uct_rm_urma_requests, uct_rm_urma_peer_t *)
 
 enum {
     UCT_RM_URMA_LINK_LEGACY,
-    UCT_RM_URMA_LINK_IFACE_V2
+    UCT_RM_URMA_LINK_IFACE_V2,
+    UCT_RM_URMA_LINK_RELIABLE_V3
 };
 
 typedef struct uct_rm_urma_jetty {
@@ -186,6 +188,18 @@ struct uct_rm_urma_iface {
         khash_t(uct_rm_urma_peers) peers_by_address;
     } link;
 
+    struct {
+        ucs_list_link_t quarantine;
+        ucs_time_t rto;
+        ucs_time_t timeout;
+        unsigned max_retries;
+        unsigned rx_debt;
+        uint64_t delivered;
+        uint64_t discarded;
+        uint64_t retries;
+        uint64_t acks;
+    } reliable;
+
     UCS_STATS_NODE_DECLARE(stats)
 };
 
@@ -199,6 +213,9 @@ typedef struct uct_rm_urma_iface_config {
     unsigned                   native_write;
     unsigned                   native_read;
     unsigned                   native_rma;
+    double                     send_rto;
+    double                     send_timeout;
+    unsigned                   send_retries;
 } uct_rm_urma_iface_config_t;
 
 static UCS_F_ALWAYS_INLINE int

@@ -9,6 +9,11 @@ void uct_rm_urma_link_init(uct_rm_urma_iface_t *iface,
                           const uct_rm_urma_iface_config_t *config)
 {
     memset(&iface->link, 0, sizeof(iface->link));
+    memset(&iface->reliable, 0, sizeof(iface->reliable));
+    ucs_list_head_init(&iface->reliable.quarantine);
+    iface->reliable.rto = ucs_time_from_sec(config->send_rto);
+    iface->reliable.timeout = ucs_time_from_sec(config->send_timeout);
+    iface->reliable.max_retries = config->send_retries;
     iface->link.mode = config->link_mode;
     iface->link.max_peers = config->max_peers;
     ucs_list_head_init(&iface->link.peers);
@@ -28,7 +33,16 @@ ucs_status_t uct_rm_urma_link_ready(uct_rm_urma_iface_t *iface)
     if (iface->link.mode == UCT_RM_URMA_LINK_LEGACY) {
         return UCS_OK;
     }
-    if ((iface->link.mode != UCT_RM_URMA_LINK_IFACE_V2) ||
+    if ((iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) &&
+        (!iface->reliable.rto || !iface->reliable.max_retries ||
+         (iface->reliable.timeout < iface->reliable.rto) ||
+         iface->config.native_write || iface->config.native_read ||
+         iface->config.native_rma ||
+         (iface->super.config.seg_size != 4096))) {
+        return UCS_ERR_INVALID_PARAM;
+    }
+    if (((iface->link.mode != UCT_RM_URMA_LINK_IFACE_V2) &&
+         (iface->link.mode != UCT_RM_URMA_LINK_RELIABLE_V3)) ||
         !iface->super.config.fc_enabled ||
         (iface->link.max_peers == 0) ||
         (iface->link.max_peers > UINT16_MAX) ||
@@ -61,9 +75,15 @@ ucs_status_t uct_rm_urma_link_ready(uct_rm_urma_iface_t *iface)
         return status;
     }
     iface->link.instance = address->instance;
-    ucs_debug("RM iface_v2 ready iface=%p R=%u K=%u W=%u instance=%lu",
-              iface, address->rx_depth, address->max_peers,
-              address->initial_credit, address->instance);
+    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        ucs_debug("RM reliable_v3 ready iface=%p R=%u K=%u W=%u instance=%lu",
+                  iface, address->rx_depth, address->max_peers,
+                  address->initial_credit, address->instance);
+    } else {
+        ucs_debug("RM iface_v2 ready iface=%p R=%u K=%u W=%u instance=%lu",
+                  iface, address->rx_depth, address->max_peers,
+                  address->initial_credit, address->instance);
+    }
     reserve = 2u * address->max_peers + 2;
     iface->link.rx_free = address->rx_depth - reserve -
                           (uint64_t)address->max_peers * address->initial_credit;
@@ -81,6 +101,10 @@ ucs_status_t uct_rm_urma_link_get_address(uct_iface_h tl_iface,
          * Match the original RM/RC no-op callback without touching addr. */
         return UCS_OK;
     }
+    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        return uct_rm_urma_reliable_address_pack(address, 48,
+                                                  &iface->link.address);
+    }
     if (iface->link.mode != UCT_RM_URMA_LINK_IFACE_V2) {
         return UCS_ERR_UNSUPPORTED;
     }
@@ -90,7 +114,7 @@ ucs_status_t uct_rm_urma_link_get_address(uct_iface_h tl_iface,
                  UCT_RM_URMA_IFACE_ADDR_V2_SIZE, &iface->link.address);
 }
 
-static ucs_status_t
+ucs_status_t
 uct_rm_urma_link_peer_get(uct_rm_urma_iface_t *iface,
                           const uct_rm_urma_return_addr_t *remote,
                           uct_rm_urma_peer_t **peer_p)
@@ -130,6 +154,7 @@ uct_rm_urma_link_peer_get(uct_rm_urma_iface_t *iface,
         return UCS_ERR_NO_MEMORY;
     }
     peer->remote = *remote;
+    uct_rm_urma_reliable_peer_init(peer);
     slot = kh_put(uct_rm_urma_peers, &iface->link.peers_by_address,
                    &peer->remote, &inserted);
     if (inserted < 0) {
@@ -172,12 +197,17 @@ uct_rm_urma_link_peer_get(uct_rm_urma_iface_t *iface,
     flags.bs.cacheable = URMA_NON_CACHEABLE;
     flags.bs.access = URMA_ACCESS_READ | URMA_ACCESS_WRITE | URMA_ACCESS_ATOMIC;
     flags.bs.mapping = URMA_SEG_NOMAP;
-    peer->segment = urma_import_seg(md->dev.urma_ctx, &segment,
-                                    &md->dev.token, 0, flags);
-    if (peer->segment == NULL) {
-        status = UCS_ERR_IO_ERROR;
-        uct_rm_urma_iface_target_put(iface, peer->target);
-        goto err_free;
+    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        /* SEND reliability needs a target, never a remote RMA segment. */
+        peer->segment = NULL;
+    } else {
+        peer->segment = urma_import_seg(md->dev.urma_ctx, &segment,
+                                        &md->dev.token, 0, flags);
+        if (peer->segment == NULL) {
+            status = UCS_ERR_IO_ERROR;
+            uct_rm_urma_iface_target_put(iface, peer->target);
+            goto err_free;
+        }
     }
     kh_value(&iface->link.peers_by_address, slot) = peer;
     ucs_list_add_tail(&iface->link.peers, &peer->list);
@@ -202,7 +232,9 @@ ucs_status_t uct_rm_urma_link_connect(uct_rm_urma_ep_t *ep,
     uct_rm_urma_peer_t *peer;
     ucs_status_t status;
 
-    status = uct_rm_urma_iface_addr_v2_unpack(address, 48, &remote.iface);
+    status = (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) ?
+             uct_rm_urma_reliable_address_unpack(address, 48, &remote.iface) :
+             uct_rm_urma_iface_addr_v2_unpack(address, 48, &remote.iface);
     if (status != UCS_OK) {
         return status;
     }
@@ -481,7 +513,8 @@ void uct_rm_urma_link_cleanup(uct_rm_urma_iface_t *iface)
     }
     ucs_list_for_each_safe(peer, next_peer, &iface->link.peers, list) {
         ucs_assert(ucs_list_is_empty(&peer->eps));
-        if (urma_unimport_seg(peer->segment) != URMA_SUCCESS) {
+        if ((peer->segment != NULL) &&
+            (urma_unimport_seg(peer->segment) != URMA_SUCCESS)) {
             ucs_warn("RM peer segment unimport failed at stopped iface close");
         }
         uct_rm_urma_iface_target_put(iface, peer->target);

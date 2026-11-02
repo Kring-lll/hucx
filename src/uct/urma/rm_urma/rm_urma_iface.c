@@ -25,7 +25,7 @@
 static void UCS_CLASS_DELETE_FUNC_NAME(uct_rm_urma_iface_t)(uct_iface_t*);
 
 static const char *uct_rm_urma_link_mode_names[] = {
-    "legacy_ep", "iface_v2", NULL
+    "legacy_ep", "iface_v2", "reliable_v3", NULL
 };
 
 static const char *uct_rm_urma_flush_mode_names[] = {
@@ -76,9 +76,21 @@ ucs_config_field_t uct_rm_urma_iface_config_table[] = {
      ucs_offsetof(uct_rm_urma_iface_config_t, soft_thresh), UCS_CONFIG_TYPE_DOUBLE},
 
     {"LINK_MODE", "legacy_ep",
-     "RM connection mode: legacy_ep or bounded iface_v2.",
+     "RM connection mode: legacy_ep, iface_v2 or opt-in reliable_v3.",
      ucs_offsetof(uct_rm_urma_iface_config_t, link_mode),
      UCS_CONFIG_TYPE_ENUM(uct_rm_urma_link_mode_names)},
+
+    {"SEND_RTO", "100ms",
+     "Reliable SEND retry interval; progress polling drives the timer.",
+     ucs_offsetof(uct_rm_urma_iface_config_t, send_rto), UCS_CONFIG_TYPE_TIME},
+
+    {"SEND_TIMEOUT", "30s",
+     "Absolute lifetime of an unacknowledged reliable SEND.",
+     ucs_offsetof(uct_rm_urma_iface_config_t, send_timeout), UCS_CONFIG_TYPE_TIME},
+
+    {"SEND_RETRIES", "256",
+     "Maximum software resends per reliable DATA; no retry of terminal CQ errors.",
+     ucs_offsetof(uct_rm_urma_iface_config_t, send_retries), UCS_CONFIG_TYPE_UINT},
 
     {"MAX_PEERS", "0",
      "Static lifetime bound on distinct incoming/outgoing remote ifaces.\n"
@@ -121,6 +133,14 @@ ucs_status_t uct_rm_urma_iface_flush(uct_iface_h tl_iface, unsigned flags, uct_c
     if ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) &&
         !ucs_list_is_empty(&iface->link.pending)) {
         ++count;
+    }
+    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        uct_rm_urma_peer_t *peer;
+        ucs_list_for_each(peer, &iface->link.peers, list) {
+            if (peer->reliable.ack_pending || peer->reliable.count) {
+                ++count;
+            }
+        }
     }
     if ((iface->tx.ctrl_ep != NULL) &&
         !ucs_arbiter_group_is_empty(&iface->tx.ctrl_ep->arb_group)) {
@@ -183,7 +203,7 @@ static ucs_status_t uct_rm_urma_iface_query(uct_iface_h tl_iface, uct_iface_attr
                                UCT_IFACE_FLAG_EP_CHECK |
                                UCT_IFACE_FLAG_ERRHANDLE_PEER_FAILURE |
                                UCT_IFACE_FLAG_ATOMIC_DEVICE);
-    if (iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) {
+    if (iface->link.mode != UCT_RM_URMA_LINK_LEGACY) {
         iface_attr->iface_addr_len = UCT_RM_URMA_IFACE_ADDR_V2_SIZE;
         iface_attr->ep_addr_len = 0;
         iface_attr->cap.flags &= ~UCT_IFACE_FLAG_CONNECT_TO_EP;
@@ -213,6 +233,21 @@ static ucs_status_t uct_rm_urma_iface_query(uct_iface_h tl_iface, uct_iface_attr
         }
         iface_attr->cap.put.max_bcopy = ucs_min(4096, iface->super.config.seg_size);
         iface_attr->cap.get.max_bcopy = ucs_min(4096, iface->super.config.seg_size);
+    }
+    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        if (iface->super.config.seg_size <= sizeof(uct_ub_hdr_t) +
+                                            UCT_RM_URMA_REL_HEADER + 8) {
+            return UCS_ERR_INVALID_PARAM;
+        }
+        iface_attr->cap.am.max_bcopy = iface->super.config.seg_size -
+                      sizeof(uct_ub_hdr_t) - UCT_RM_URMA_REL_HEADER;
+        iface_attr->cap.am.max_short = ucs_min(iface_attr->cap.am.max_short,
+                                               iface_attr->cap.am.max_bcopy);
+        /* Reliable delivery is progress-driven and uses retained copies. */
+    }
+    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        /* This first implementation has a polled timer, no wakeup timer. */
+        iface_attr->cap.event_flags = 0;
     }
     iface_attr->cap.atomic32.op_flags = 0;
     iface_attr->cap.atomic32.fop_flags = 0;
@@ -496,7 +531,8 @@ void uct_rm_urma_iface_gc(uct_rm_urma_iface_t *iface)
 
     ++iface->tx.progress_depth;
     ucs_list_for_each_safe(ep, tmp, &iface->tx.retired_eps, retired_list) {
-        if (ep->super.status.pi != ep->super.status.ci) {
+        if ((ep->super.status.pi != ep->super.status.ci) ||
+            (ep->reliable_outstanding != 0)) {
             continue;
         }
         ucs_list_del(&ep->retired_list);
@@ -534,14 +570,17 @@ ucs_status_t uct_rm_urma_iface_fc_handler(uct_urma_iface_t *ub_iface, void *arg,
     unsigned length;
     uint8_t fc_hdr;
 
-    if (iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) {
+    if (iface->link.mode != UCT_RM_URMA_LINK_LEGACY) {
         if ((cr->completion_len < sizeof(*hdr)) ||
             (hdr->am_id != UCT_RM_URMA_EP_FC_PURE_GRANT)) {
             uct_rm_urma_iface_set_failed(iface, UCS_ERR_INVALID_PARAM);
             return UCS_ERR_INVALID_PARAM;
         }
-        status = uct_rm_urma_link_receive(iface, hdr + 1,
-                                          cr->completion_len - sizeof(*hdr));
+        status = (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) ?
+                 uct_rm_urma_reliable_receive(iface, hdr + 1,
+                                           cr->completion_len - sizeof(*hdr)) :
+                 uct_rm_urma_link_receive(iface, hdr + 1,
+                                           cr->completion_len - sizeof(*hdr));
         if (status != UCS_OK) {
             uct_rm_urma_iface_set_failed(iface, status);
         }
@@ -655,6 +694,9 @@ static ucs_status_t uct_rm_urma_iface_event_arm(uct_iface_h tl_iface,
 
     if (iface->tx.error != UCS_OK) {
         return iface->tx.error;
+    }
+    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        return UCS_ERR_UNSUPPORTED;
     }
     if ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) &&
         (iface->link.control_debt ||
@@ -882,9 +924,18 @@ static unsigned uct_rm_urma_iface_progress(void *arg)
         return 0;
     }
     ++iface->tx.progress_depth;
-    if ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) &&
+    if ((iface->link.mode != UCT_RM_URMA_LINK_LEGACY) &&
         (iface->tx.error != UCS_OK)) {
         count = 0;
+    } else if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        uct_ub_iface_rx_result_t rx;
+        count = uct_ub_iface_poll_rx_accounted(&iface->super,
+                         UCT_RM_URMA_EP_FC_MASK, 1, &rx);
+        iface->reliable.rx_debt += rx.data + rx.control;
+        iface->reliable.rx_debt -= ucs_min(iface->reliable.rx_debt, rx.posted);
+        if (rx.status != UCS_OK) {
+            uct_rm_urma_iface_set_failed(iface, rx.status);
+        }
     } else if (iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) {
         uct_ub_iface_rx_result_t rx;
 
@@ -903,6 +954,9 @@ static unsigned uct_rm_urma_iface_progress(void *arg)
     count += uct_rm_urma_iface_poll_tx(iface);
     if (iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) {
         uct_rm_urma_link_progress(iface);
+    }
+    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        uct_rm_urma_reliable_progress(iface, ucs_get_time());
     }
     uct_rm_urma_iface_progress_pending(iface);
     uct_rm_urma_iface_gc(iface);
@@ -1114,6 +1168,8 @@ static UCS_CLASS_CLEANUP_FUNC(uct_rm_urma_iface_t)
     }
     uct_rm_urma_iface_gc(self);
     self->tx.ctrl_ep = NULL;
+    uct_rm_urma_reliable_cleanup(self);
+    uct_rm_urma_iface_gc(self);
     uct_rm_urma_link_cleanup(self);
     uct_rm_urma_iface_targets_cleanup(self);
     --self->tx.progress_depth;

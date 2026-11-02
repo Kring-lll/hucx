@@ -16,6 +16,7 @@
 #include <uct/urma/rm_urma/rm_urma_iface.h>
 
 #include "rm_urma_link.h"
+#include "rm_urma_reliable.h"
 
 #define RM_URMA_UNSIGNALED_INF UINT16_MAX
 
@@ -31,6 +32,7 @@ struct uct_rm_urma_ep {
     urma_tp_t                       tp;
     uct_rm_urma_peer_t              *peer;
     ucs_list_link_t                  peer_list;
+    unsigned                        reliable_outstanding;
 };
 
 typedef struct uct_rm_urma_ep_addr {

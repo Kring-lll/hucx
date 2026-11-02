@@ -33,7 +33,7 @@ static struct {
     unsigned require_quiesce, hardware_stopped;
     unsigned am_calls, destroy_on_error, purge_on_error, purged;
     urma_status_t fail_status;
-    unsigned char frame[2112];
+    unsigned char frame[4096];
     unsigned frame_length;
     urma_cr_t rx_cr[8];
     int rx_count;
