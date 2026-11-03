@@ -1,0 +1,32 @@
+{
+  "source_commit": "97b50328718c3c7c1b613c2ee09a90c198666142",
+  "source_tree": "09a0052466236c742a50b054be7fbfc088ddc8ff",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-c-send-reliability-dev/r1_shared_97b503287_f1PZta",
+  "module_sha256": "3245bcca9bb5319230ed1d3e153191501fba4602a1529f405944992beb6eeec7",
+  "results_json": "send_reliable__xwh27b4/results.json",
+  "source_module_and_prior_normal_28": "PASS",
+  "normal": {"sender_exit": 0, "receiver_exit": 0},
+  "software_injection": {
+    "sender_exit": 0,
+    "receiver_exit": 0,
+    "sender_ack_drops": 2,
+    "receiver_data_drops": 1,
+    "receiver_duplicates": 1,
+    "production_retransmit_posts": 15,
+    "injection_layer": "after successful hardware receive, before production reliable decoder",
+    "hardware_network_loss_acceptance": false
+  },
+  "focused_send_acceptance": "PASS",
+  "new_mode_scope": {
+    "business_eps": 4,
+    "reverse_business_eps": 0,
+    "messages_per_trial": 512,
+    "message_bytes": 64,
+    "paths": ["SHORT", "BCOPY"],
+    "ep_create_destroy": 160,
+    "inflight_destroy_and_pending": 32
+  },
+  "legacy_28_is_new_mode_28": false,
+  "complete_c_d": "PENDING",
+  "performance": "PENDING"
+}
