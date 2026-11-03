@@ -1,14 +1,14 @@
 {
   "base_commit": "990398f43e7b589b4030e45d69b48c1766f5eac3",
-  "scope": "已测97b产品不变；首轮可靠SEND正常/软件注入通过；新增40项集成工具，节点待验，READ/WRITE与PPN192暂停",
+  "scope": "97b可靠SEND首轮与所选MPI集成40项通过；默认不变；性能、规模及完整C/D待验",
   "files": {
     "contrib/rm_ctp/A_STAGE_CLOSEOUT_20261028.md": "fab481735b7c2362c5fd3fc6c33f84793c0fc776846afe1aa1ccac383f05196b",
     "contrib/rm_ctp/B1_SOURCE_AUDIT_20261028.md": "202b212370f67b3501536154ea9932aa847a06c78c6c0fc8a57ba82e6c154b7e",
     "contrib/rm_ctp/B2_EAGER_REUSE_20261029.md": "12e5a6d984d4f2b68bcd07b751c2d4efd7c5b3cf1d6e5d3ecb960d900fb4d64c",
     "contrib/rm_ctp/LINK_DESIGN.md": "9f20a4b487444717b79ba744c77491c4cd7d0ef86081c2af92889a1b202ea9e0",
     "contrib/rm_ctp/OSU_TEST_POLICY.md": "cb80e9aa87d5401cf4a1a23832b39cadd8c5baef3d2fc052ff3f9fc9cfc25ecd",
-    "contrib/rm_ctp/REQUIREMENTS.md": "4f4b2a33e7ae4fd8587b20694d0b478d24a897c23e54b7c08158e0a4c6e33077",
-    "contrib/rm_ctp/WORKSPACE_PATHS.md": "2adfd77abd25a7216530188fcb6907da63fdc277029ffbcff166af7b24b9a783",
+    "contrib/rm_ctp/REQUIREMENTS.md": "15d9ad4d78956045aeef44ae3821660db839ac753dfc0bba08bab4853730df95",
+    "contrib/rm_ctp/WORKSPACE_PATHS.md": "6aa005fb5a949003afb28eadc99fec0910b25f54cd5aa64579b5260996adbfc2",
     "contrib/rm_ctp/am_rndv/.gitignore": "65c449a9610b8dd8255e76529e5ec9bd335bad7b743b30650a626c55b7b280d1",
     "contrib/rm_ctp/am_rndv/README.md": "715db9c4fb54af39686901b8fdaf3cc1185873efb3c489fae61e87a507d6d4c6",
     "contrib/rm_ctp/am_rndv/SOURCE_REVIEW.md": "b17d8139e7737b861ce083a31c868d1924615edc8ced57607c8392065b4f22fe",
@@ -148,9 +148,10 @@
     "contrib/rm_ctp/segment_default/tests/no_devices.c": "1eb2cd2f9000d5c74a5a341b763e0fef6fbfb233917994c2a1b58ef18a3be6ba",
     "contrib/rm_ctp/segment_default/tests/test_candidate.py": "f2c73127878deb0a65d2ff6da449ea7ece77e3c75fd5c282ced7912292384e93",
     "contrib/rm_ctp/segment_default/tests/test_config_parser.py": "e5a1bb0d073e8a76c45d8789592427a985bcc8bb174d2f0296f66f4e8b1cade3",
-    "contrib/rm_ctp/send_integration/.gitignore": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793",
-    "contrib/rm_ctp/send_integration/README.md": "49a21745d015f2b1426150a0ea3db5d1f9f8f4edeea877ed3249c12d0b582718",
+    "contrib/rm_ctp/send_integration/README.md": "5c0bfd0322a30f0298c0b5f1d0feb7c0f8bf5ff7f1cc67468bbbc0991219bec2",
     "contrib/rm_ctp/send_integration/REVIEW_AND_CHECKS_20261103.md": "fd5775257645afcc7597c16c24540432e33351686beae4e48f279ce3b6c31d52",
+    "contrib/rm_ctp/send_integration/acceptance_20261103.json": "85e23b8c71dd0c5724b91ac3f31bc6220ecc21f2a965cef67bcd5ee6d0934146",
+    "contrib/rm_ctp/send_integration/acceptance_20261103.md": "eb01f58411b7ca17310cdf7955b09a44cec148b98904b7e532c0ef000ff8fa4e",
     "contrib/rm_ctp/send_integration/build_node_package.py": "b36946ea8d2e8222b727dad5eeb42c74e160c5dbf6cb39e0b6e225040c2d1a55",
     "contrib/rm_ctp/send_integration/drop_receive_mpi.c": "27b96be58fbf367b16596ddf63ea9720b2cdea3bf2252512f843f8d6f4f28a1e",
     "contrib/rm_ctp/send_integration/matrix.py": "5eb8104511f9d43c4ccc7c7192aa13a152e103c8897beac93c8dbb8f16d0b5c6",
@@ -165,7 +166,7 @@
     "contrib/rm_ctp/send_integration/tests/test_node_entry.py": "c56b8e2fd5e14fa0aaa4ab7c390dee0ab05fb5a2b13eb5abbd2e726928632be6",
     "contrib/rm_ctp/send_integration/tests/test_probe_processes.py": "29969fd2b5f735bae78a5d3dcffbb0171d3e9dfc235b0a67882564ff8b979c4b",
     "contrib/rm_ctp/send_integration/tests/test_runner.py": "e814e78d1ffc83afb0c566c3f4cfe49a46be68bcc4bf28849607a56e969c7f8e",
-    "contrib/rm_ctp/send_reliable/README.md": "86987676964a3d6e452a96febe6b1b1715ee2649e8ddadaedd109d6bcb61dd79",
+    "contrib/rm_ctp/send_reliable/README.md": "4de69166cfbf4cbbb3e8b8709ddccea3faaedb9c6dac037ebb51928eff9912f7",
     "contrib/rm_ctp/send_reliable/acceptance_20261103.json": "a4011f353e248b98b9d778e8aefdfc3b6a782a38f7b9ef4a9494a47b775bf879",
     "contrib/rm_ctp/send_reliable/acceptance_20261103.md": "ff7b97ebce08ba6e4dcd360510668110f0bb4651efe530e00680c43a20896a83",
     "contrib/rm_ctp/send_reliable/cpu_checks_20261102.json": "97f86b0cda860885bbc0f2fe8587f2af9223c29b045905cfe54b0bd1191b85af",
@@ -304,6 +305,15 @@
       "CPU_tests": 71,
       "remaining_MPI_tasks": 12,
       "node_status": "PENDING"
+    },
+    "send_integration_20261103": {
+      "result": "PASS",
+      "tasks": 40,
+      "actual_rank_send_observations": 174,
+      "production_retransmit_posts": 36,
+      "record": "contrib/rm_ctp/send_integration/acceptance_20261103.json",
+      "performance_accepted": false,
+      "full_C_D_accepted": false
     }
   },
   "product_tested_commit": "2a8e3b771211e5af491c8ca483ebcc01a03c2f01",
@@ -679,5 +689,10 @@
     "summary": "contrib/rm_ctp/collective_matrix/acceptance_summary_20261030.json",
     "raw_evidence": "USER_TERMINAL_AND_JSON_ASSERTIONS; raw reports remain on nodes, not downloaded"
   },
-  "candidate_base_commit": "b1895ec77e3098cb710c15a09ca222bea8af4873"
+  "candidate_base_commit": "b1895ec77e3098cb710c15a09ca222bea8af4873",
+  "current_product": {
+    "source_commit": "97b50328718c3c7c1b613c2ee09a90c198666142",
+    "module_sha256": "3245bcca9bb5319230ed1d3e153191501fba4602a1529f405944992beb6eeec7",
+    "scope": "可靠SEND；历史A/B产品字段保留用于追溯"
+  }
 }

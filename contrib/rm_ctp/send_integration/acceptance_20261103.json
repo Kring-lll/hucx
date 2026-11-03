@@ -1,0 +1,89 @@
+{
+  "source_commit": "97b50328718c3c7c1b613c2ee09a90c198666142",
+  "source_tree": "09a0052466236c742a50b054be7fbfc088ddc8ff",
+  "module_sha256": "3245bcca9bb5319230ed1d3e153191501fba4602a1529f405944992beb6eeec7",
+  "tool_commit": "8722c885ebfaa9726973f01a7ebd08d0d10209f8",
+  "node_package_sha256": "0a75e4149e020209b0e5c78c6dff316e23ea196463fa3b2b976a6a17b3668dc2",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-c-send-reliability-dev/r1_shared_97b503287_f1PZta",
+  "tool_dir": "send_tools_fixed_ng1gtguv",
+  "results_json": "send_integration_fixed_x10vh01o/results.json",
+  "results_sha256": "2f41dd86ca79136b38c993dd38921703f5f09fd73e5fb61e84852c629847ae3a",
+  "verification": "用户在node89执行只读断言并返回全部通过；原始JSON及日志保留在节点，仓库保存摘要",
+  "status": "SELECTED_RELIABLE_SEND_INTEGRATION_PASS",
+  "tasks": {
+    "eager": 30,
+    "strict_alternation": 3,
+    "am_switch": 6,
+    "software_injection": 1,
+    "total": 40
+  },
+  "ppn": [
+    1,
+    2,
+    4
+  ],
+  "eager_message_bytes": [
+    8,
+    3980,
+    3981,
+    3982,
+    7937,
+    7938,
+    7939,
+    16384,
+    65536,
+    1048576
+  ],
+  "am_cases": [
+    [
+      1,
+      16383
+    ],
+    [
+      1,
+      16384
+    ],
+    [
+      1,
+      16385
+    ],
+    [
+      1,
+      65536
+    ],
+    [
+      1,
+      1048576
+    ],
+    [
+      4,
+      65536
+    ]
+  ],
+  "actual_rank_send_observations": 174,
+  "send_wr_max_bytes": 4096,
+  "data_maps_wr_exit_cleanup": "PASS",
+  "software_injection": {
+    "data_drops": 2,
+    "ack_drops": 4,
+    "duplicates": 2,
+    "production_retransmit_posts": 36,
+    "production_retransmit_posts_by_rank": {
+      "0": 18,
+      "1": 18
+    },
+    "injection_layer": "成功硬件接收之后、生产可靠协议译码之前",
+    "hardware_network_loss_acceptance": false
+  },
+  "prior_focused_record": "../send_reliable/acceptance_20261103.json",
+  "prior_focused_retransmit_posts": 15,
+  "failed_run_preserved": "send_integration_fixed_hcjug4au/results.json",
+  "environment": "环境恢复后原包通过；具体底层根因未确定，不将失败记录删除或改写为通过",
+  "transport_changed_since_tested_product": false,
+  "default_mode_changed": false,
+  "native_read_write": "PAUSED",
+  "mpi_one_sided": "PAUSED",
+  "performance_accepted": false,
+  "scale_accepted": false,
+  "full_C_D_accepted": false
+}

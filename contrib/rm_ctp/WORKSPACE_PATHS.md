@@ -14,7 +14,7 @@
 - 中转内包：`D:\HUCX_RM_CTP\hucx-rm-b-segmentation-dev\hucx_b_eager_boundaries_20261029.zip`。
 - 节点内包：`/home/y00993710/urma_rm_ctp_lab/experiments/hucx-b-segmentation-dev/upload/hucx_b_eager_boundaries_20261029.zip`。
 
-## 当前已验产品（2026-10-31）
+## 历史B已验产品（2026-10-31）
 
 当前产品为 `989fd71865046bde988603c97416dc133c582e88`，CASE为B工作根下
 `r1_shared_989fd7186_xncBHX`，模块SHA256为
@@ -40,3 +40,14 @@ AtomGit B阶段6576f44d。新MPI/OSU工具使用这份安装，不改写其sourc
 每轮隔离，不覆盖可用安装；正式验收以原版标准OSU为主。GitHub保存过程和回滚点，
 个人AtomGit按A/B/C方向分支、完整验收工作包追加中文commit，不照搬全部过程历史；不强推、不操作公司主仓。
 节点通过不直接证明Windows本地已提交或远端已同步。新开发前核对HEAD/工作区，重要结果同步清单和交接记录。
+
+## 当前SEND方向（2026-11-03）
+
+- 新电脑开发工作树：`C:\Users\y00993710\projects\hucx-c-send-reliability-dev`。
+- 中转文件目录：`D:\HUCX_RM_CTP\hucx-c-send-reliability-dev`。
+- 节点工作根：`/home/y00993710/urma_rm_ctp_lab/experiments/hucx-c-send-reliability-dev`，上传放其`upload`。
+- 已测产品：97b503287，CASE `r1_shared_97b503287_f1PZta`，module `3245bcca9bb5319230ed1d3e153191501fba4602a1529f405944992beb6eeec7`。
+- 已测集成工具：8722c885，结果`send_integration_fixed_x10vh01o/results.json`；当前阶段不重编或覆盖安装。
+- 个人AtomGit SEND方向分支：`rm-c-send-reliability`；基于B最后已交付6576f44d保留历史，首笔阶段交付由用户脚本执行后确认。
+
+READ/WRITE、MPI单边及PPN192定位继续暂停；B的工作树、上传目录和历史CASE保留。
