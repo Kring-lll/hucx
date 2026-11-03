@@ -24,29 +24,84 @@ osu = integration.osu
 CASE = integration.DEFAULT_CASE
 
 
+def configuration_query_environment(install, application_environment):
+    """Keep configuration queries independent of rank logs and test interposers."""
+    env = {key:value for key,value in application_environment.items()
+           if not key.startswith(('HUCX_SEND_', 'HUCX_OSU_')) and
+           key not in ('RM_RESOURCE_OBSERVER_DIR', 'A89_RUN_NONCE', 'LD_DEBUG')}
+    allowed = {str(install / 'lib' / ('lib' + name + '.so.0'))
+               for name in ('ucp', 'uct', 'ucs', 'ucm')}
+    env['LD_PRELOAD'] = ':'.join(path for path in env.get('LD_PRELOAD', '').split(':')
+                                 if path in allowed)
+    # Empty LOG_FILE selects UCX's normal console destination. The query must
+    # work before any remote application log directory exists.
+    env.update(UCX_LOG_FILE='', UCX_LOG_LEVEL='warn',
+               UCX_LOG_FILE_SIZE='inf', UCX_LOG_FILE_ROTATE='0')
+    return env
+
+
+CONFIGURATION_QUERY = r'''
+import json
+import os
+import subprocess
+import sys
+
+env = {key:value for key,value in os.environ.items()
+       if not key.startswith(('UCX_', 'MPI_UCX_', 'HUCX_SEND_', 'HUCX_OSU_')) and
+       key not in ('LD_PRELOAD', 'LD_DEBUG', 'RM_RESOURCE_OBSERVER_DIR', 'A89_RUN_NONCE')}
+env.update(json.loads(sys.argv[2]))
+queries = {}
+for name, command in (
+    ('config', [sys.argv[1] + '/bin/ucx_info', '-c']),
+    ('device', [sys.argv[1] + '/bin/ucx_info', '-d', '-t', sys.argv[3]]),
+):
+    try:
+        result = subprocess.run(command, env=env, text=True, capture_output=True, timeout=40)
+        queries[name] = {'command':command, 'exit':result.returncode,
+                         'stdout':result.stdout, 'stderr':result.stderr}
+    except subprocess.TimeoutExpired as exc:
+        def decode(value):
+            return value.decode(errors='replace') if isinstance(value, bytes) else value or ''
+        queries[name] = {'command':command, 'exit':None, 'timeout_seconds':40,
+                         'stdout':decode(exc.stdout), 'stderr':decode(exc.stderr)}
+    except OSError as exc:
+        queries[name] = {'command':command, 'exit':None,
+                         'stdout':'', 'stderr':type(exc).__name__ + ': ' + str(exc)}
+print(json.dumps(queries))
+'''
+
+
 def config_capture(install, env, directory, mode):
-    """Check the actual config on each node for all three explicitly named modes."""
+    """Check both nodes and retain complete CLI diagnostics, including failures."""
     if install != CASE / 'install' or mode not in ('iface', 'rc'):
         raise ValueError('unbound configuration source')
-    query = ('import json,os,subprocess,sys\n'
-             'e={k:v for k,v in os.environ.items() if not k.startswith(("UCX_","MPI_UCX_"))}\n'
-             'e.update(json.loads(sys.argv[2]));d={}\n'
-             'for key,argv in (("config",[sys.argv[1]+"/bin/ucx_info","-c"]),'
-             '("device",[sys.argv[1]+"/bin/ucx_info","-d","-t",sys.argv[3]])):\n'
-             ' p=subprocess.run(argv,env=e,text=True,capture_output=True,timeout=40)\n'
-             ' if p.returncode: raise RuntimeError(key+":"+p.stderr[-400:])\n'
-             ' d[key]=p.stdout\n'
-             'print(json.dumps(d))\n')
     import subprocess
     tl = 'rc_urma' if mode == 'rc' else 'rm_urma'
-    command = [sys.executable, '-c', query, str(install), json.dumps(env), tl]
+    query_env = configuration_query_environment(install, env)
+    command = [sys.executable, '-c', CONFIGURATION_QUERY, str(install), json.dumps(query_env), tl]
     local = json.loads(subprocess.check_output(command, text=True, timeout=90))
-    remote = json.loads(osu.base.ssh('python3 -c "$1" "$2" "$3" "$4"\n', query,
-                                     install, json.dumps(env), tl, timeout=100))
+    osu.base.write_json(directory / 'node89_query.json',
+                        {'environment':query_env, 'queries':local})
+    remote = json.loads(osu.base.ssh('python3 -c "$1" "$2" "$3" "$4"\n', CONFIGURATION_QUERY,
+                                     install, json.dumps(query_env), tl, timeout=100))
+    outputs = {}
+    for host, queries in (('node89', local), ('node97', remote)):
+        osu.base.write_json(directory / (host + '_query.json'),
+                            {'environment':query_env, 'queries':queries})
+        for name, query in queries.items():
+            (directory / (host + '_ucx_' + name + '.txt')).write_text(query['stdout'])
+            (directory / (host + '_ucx_' + name + '_stderr.txt')).write_text(query['stderr'])
+        outputs[host] = {name:query['stdout'] for name,query in queries.items()}
+    for host, queries in (('node89', local), ('node97', remote)):
+        if set(queries) != {'config','device'}:
+            raise ValueError('configuration query coverage incomplete: ' + host)
+        for name, query in queries.items():
+            if query['exit'] != 0:
+                path = directory / (host + '_ucx_' + name + '_stderr.txt')
+                raise RuntimeError('ucx_info failed: %s %s EXIT=%s STDERR=%s' %
+                                   (host,name,query['exit'],path))
     result = {}
-    for host, output in (('node89', local), ('node97', remote)):
-        (directory / (host + '_ucx_config.txt')).write_text(output['config'])
-        (directory / (host + '_ucx_device.txt')).write_text(output['device'])
+    for host, output in outputs.items():
         # Same validator covers all RM SEND controls and ordinary protocol choices.
         result[host] = integration.matrix.check_config(output['config'], env,
                                                        integration.boundary_config.bytes_value)

@@ -15,6 +15,8 @@ READ/WRITE、MPI单边接入及PPN192定位暂停，保留已验收代码和记�
 
 新增[集合、失败退出与正式OSU工作包](send_validation/README.md)：固定已测97b产品，准备22项集合、1项原版OSU软件注入、6项直接UCT正常/超时退出，以及同库RC/iface_v2/reliable_v3的六组性能与资源对照。最高PPN4，传输代码及默认模式不变；当前为工具完成、节点待验，未据此勾选C/D完成。READ/WRITE、MPI单边、PPN192继续暂停，代码精简在性能回收后进行。
 
+配置预检修正：c999工具的首次节点运行停在远端ucx_info日志初始化，集合/退出/性能未开始。现已准备独立配置查询日志修正及完整错误留存，产品不变、节点复验待执行；详见[问题记录](send_validation/LOG_QUERY_FIX_20261103.md)。
+
 ## 历史已测：基础原生RMA与普通UCP读写
 
 产品`989fd71865046bde988603c97416dc133c582e88`在ARM隔离构建后，通过READ6、WRITE6、基础UCT8、普通UCP16×2及NATIVE_RMA开启后的28项正常回归。
