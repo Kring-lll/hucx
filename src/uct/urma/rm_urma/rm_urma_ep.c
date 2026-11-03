@@ -1764,6 +1764,7 @@ ucs_status_t uct_rm_urma_ep_reliable_post(uct_rm_urma_iface_t *iface,
     urma_sge_t sge;
     urma_status_t result;
     ucs_status_t status;
+    int use_inline = entry->length <= iface->super.config.max_inline;
 
     if (iface->tx.ctrl_ep == NULL) {
         iface->link.creating_control = 1;
@@ -1781,9 +1782,12 @@ ucs_status_t uct_rm_urma_ep_reliable_post(uct_rm_urma_iface_t *iface,
         return UCS_ERR_NO_RESOURCE;
     }
     UCT_UB_FILL_WR_SG_BUF(&wr->send.src, (uint64_t)(entry->desc + 1),
-                          entry->length, entry->desc->tseg, 1, &sge);
+                          entry->length,
+                          use_inline ? NULL : entry->desc->tseg, 1, &sge);
+    /* Retain the replay copy and CQE lifetime for both submission modes. */
     uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_SEND, ep, 1,
-                             URMA_INLINE_DISABLE, URMA_SOLICITED_ENABLE);
+                             use_inline ? URMA_INLINE_ENABLE : URMA_INLINE_DISABLE,
+                             URMA_SOLICITED_ENABLE);
     wr->tjetty = entry->peer->target->jetty;
     result = urma_post_jetty_send_wr(ep->rm_urma_jetty->jetty, wr, &bad);
     memset(wr, 0, sizeof(*wr));
