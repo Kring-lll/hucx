@@ -62,7 +62,8 @@ def validate_old():
 
 
 def validate_candidate(case):
-    if ROOT!=case/'source/contrib/rm_ctp/send_pool':
+    if (ROOT.name not in ('send_pool', 'send_cleanup') or
+            ROOT != case/'source/contrib/rm_ctp'/ROOT.name):
         raise ValueError('execute this isolated candidate source, not an installed toolkit')
     build=integration.policy.validate_build(case,root=EXPERIMENT)
     identity=json.loads((ROOT/'product_identity.json').read_text())
