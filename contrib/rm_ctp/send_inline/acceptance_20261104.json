@@ -1,0 +1,76 @@
+{
+  "source_commit": "a2b4b07c12be5401afaf427877aadd6752871810",
+  "module_sha256": "2543923f6b2cae2a37365d293e715bc63fefa539ecc8b146880b6270b0351aa0",
+  "results_json": "r1_shared_a2b4b07c1_Z1tIOO/send_inline_accept_9gpdcz12/results.json",
+  "results_sha256": "0c9d72fc108e25e9afc306256dc402d58dce9e70b41d4e27dab2eede25986d80",
+  "evidence_source": "用户终端及node89只读JSON断言；原始JSON/日志保留节点，非本摘要",
+  "normal": 28,
+  "mpi": 56,
+  "uct_exit": 6,
+  "software_retransmit_posts": 23,
+  "inline_boundary": {
+    "device_limit": 128,
+    "actual_data_wr_bytes": [
+      123,
+      127,
+      128,
+      129
+    ],
+    "inline": [
+      1,
+      1,
+      1,
+      0
+    ]
+  },
+  "timing_samples": {
+    "multi_lat_p1": {
+      "old_reliable": [
+        2.74,
+        2.75,
+        2.73,
+        2.71,
+        2.72
+      ],
+      "new_reliable": [
+        2.57,
+        2.6,
+        2.61,
+        2.6,
+        2.57
+      ],
+      "rc": [
+        2.51,
+        2.55,
+        2.57,
+        2.53,
+        2.51
+      ]
+    },
+    "alltoall_p4": {
+      "old_reliable": [
+        7.02,
+        6.99,
+        6.91,
+        7.04,
+        7.01
+      ],
+      "new_reliable": [
+        6.92,
+        6.96,
+        12.05,
+        7.0,
+        6.94
+      ],
+      "rc": [
+        4.23,
+        4.1,
+        4.3,
+        4.16,
+        4.19
+      ]
+    }
+  },
+  "scope": "inline功能与当批正式样本；不与pool样本混成一个统计总体",
+  "full_C_D_accepted": false
+}

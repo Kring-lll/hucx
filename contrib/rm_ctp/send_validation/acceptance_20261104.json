@@ -1,0 +1,39 @@
+{
+  "source_commit": "97b50328718c3c7c1b613c2ee09a90c198666142",
+  "module_sha256": "3245bcca9bb5319230ed1d3e153191501fba4602a1529f405944992beb6eeec7",
+  "tool_commit": "2b9751b7b8277745ac81f4d04e1afae56503710e",
+  "results_json": "r1_shared_97b503287_f1PZta/send_validation_08z6t0e2/results.json",
+  "results_sha256": "5a88cb94e89e1d8494a9382aae8b86684ef53e753ecbd056f10a7da97aff6a13",
+  "evidence_source": "用户终端及node89只读JSON断言；原始JSON/日志保留节点，非本摘要",
+  "mpi_total": 149,
+  "validation": 41,
+  "timing": 90,
+  "resources": 18,
+  "uct_exit": 6,
+  "collective": 22,
+  "software_faults": {
+    "data_drop": 2,
+    "ack_drop": 4,
+    "duplicate": 2,
+    "production_retransmit_posts": 31,
+    "by_rank": {
+      "0": 15,
+      "1": 16
+    }
+  },
+  "historical_64k_bandwidth_MBps": {
+    "osu_bw": {
+      "rc": 5949.94,
+      "iface_v2": 2944.73,
+      "reliable_v3": 3679.6
+    },
+    "osu_bibw": {
+      "rc": 13166.15,
+      "iface_v2": 5654.73,
+      "reliable_v3": 5809.42
+    }
+  },
+  "scope": "97b历史集合/退出和正式性能；不冒充a68完整重验或最新带宽",
+  "full_C_D_accepted": false,
+  "hardware_fault_accepted": false
+}

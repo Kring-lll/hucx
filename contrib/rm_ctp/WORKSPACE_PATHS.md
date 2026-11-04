@@ -51,3 +51,9 @@ AtomGit B阶段6576f44d。新MPI/OSU工具使用这份安装，不改写其sourc
 - 个人AtomGit SEND方向分支：`rm-c-send-reliability`；基于B最后已交付6576f44d保留历史，首笔阶段交付由用户脚本执行后确认。
 
 READ/WRITE、MPI单边及PPN192定位继续暂停；B的工作树、上传目录和历史CASE保留。
+
+## 2026-11-04 最新可靠SEND功能产品
+
+开发路径与upload根不变。最新CASE=r1_shared_a68a7ab31_DBw3Ll，产品a68a7ab3119e2ac545a1bf4a78e537d958b23f50。
+模块SHA256=cea0c23ef9f2331ddaa5a270cacd425a84fc4ccf2b16a3c556b5b08e2146c765。最新结果send_cleanup_accept_c0qx1fzi/results.json，SHA256=8fc51d9fda3a23e9bf94d0e6b2378df86607010fe3eb2f9903c08b23f36ff1ea。
+原安装、源码和结果不覆盖；本阶段交付无需重跑节点，src必须与已测a68一致。

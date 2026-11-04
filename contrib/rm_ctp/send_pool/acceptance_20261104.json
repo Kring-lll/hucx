@@ -1,0 +1,129 @@
+{
+  "source_commit": "bdc1e36e9ee75d97dee2d3e93b9e83b6bd10b49f",
+  "module_sha256": "560fd644b66d60d25e5c86bc55be6d44bae5495804c3f48fa8b3ef63744b375a",
+  "case_dir": "/home/y00993710/urma_rm_ctp_lab/experiments/hucx-c-send-reliability-dev/r1_shared_bdc1e36e9_gCNkQI",
+  "results_json": "send_pool_accept_8vruomlc/results.json",
+  "results_sha256": "8c5a886923d5db6ef2e50d6685a6e2a3df76974b1a3893a5c1bd372ccb2241e9",
+  "evidence_source": "用户终端及node89只读JSON断言；原始JSON/日志保留节点，非本摘要",
+  "normal": 28,
+  "mpi": 56,
+  "uct_exit": 6,
+  "software_retransmit_posts": 31,
+  "latest_cleanup_performance_measured": false,
+  "performance_method": "原版OSU7.5.2，三模式轮换，每组各1校验+5计时+1资源；计时无WR/故障观察器和调试日志",
+  "groups": [
+    {
+      "benchmark": "osu_multi_lat",
+      "ppn": 1,
+      "bytes": 8,
+      "unit": "us",
+      "profiles": {
+        "old_reliable": {
+          "samples": [
+            2.6,
+            2.58,
+            2.7,
+            2.58,
+            2.59
+          ],
+          "rss_median_mib": 100.31640625,
+          "jetty_per_rank_peak": [
+            1,
+            1
+          ]
+        },
+        "new_reliable": {
+          "samples": [
+            2.53,
+            2.54,
+            2.63,
+            2.56,
+            2.54
+          ],
+          "rss_median_mib": 100.32421875,
+          "jetty_per_rank_peak": [
+            1,
+            1
+          ]
+        },
+        "rc": {
+          "samples": [
+            2.54,
+            2.59,
+            2.55,
+            2.52,
+            2.55
+          ],
+          "rss_median_mib": 120.34765625,
+          "jetty_per_rank_peak": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "benchmark": "osu_alltoall",
+      "ppn": 4,
+      "bytes": 8,
+      "unit": "us",
+      "profiles": {
+        "old_reliable": {
+          "samples": [
+            6.95,
+            6.93,
+            6.89,
+            7.04,
+            6.95
+          ],
+          "rss_median_mib": 402.0625,
+          "jetty_per_rank_peak": [
+            1,
+            1
+          ]
+        },
+        "new_reliable": {
+          "samples": [
+            6.37,
+            30.13,
+            6.42,
+            6.18,
+            6.34
+          ],
+          "rss_median_mib": 402.30078125,
+          "jetty_per_rank_peak": [
+            1,
+            1
+          ]
+        },
+        "rc": {
+          "samples": [
+            4.11,
+            4.17,
+            4.13,
+            4.19,
+            4.15
+          ],
+          "rss_median_mib": 530.25390625,
+          "jetty_per_rank_peak": [
+            8,
+            8
+          ]
+        }
+      }
+    }
+  ],
+  "rss_scope": "各rank Finalize前未同步样本求和，两节点合计，不是峰值/设备内存",
+  "outlier": {
+    "value_us": 30.13,
+    "preserved": true,
+    "root_cause": "UNKNOWN",
+    "rank_min_us": 6.52,
+    "rank_max_us": 36.46,
+    "iterations": 1000,
+    "warmup": 100
+  },
+  "full_performance_accepted": false,
+  "full_C_D_accepted": false,
+  "hardware_fault_accepted": false
+}
