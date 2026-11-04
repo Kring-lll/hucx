@@ -13,260 +13,264 @@
 #include <uct/urma/base/urma_md.h>
 #include <uct/urma/base/urma_iface.h>
 #include <uct/base/uct_iov.inl>
+#include <ucs/async/async.h>
+#include <ucs/time/timer_wheel.h>
 #include <ucs/datastruct/ptr_array.h>
-#include <ucs/datastruct/list.h>
-#include <ucs/datastruct/khash.h>
-
-#include "rm_urma_addr.h"
-#include <ucs/time/time.h>
-
+#include <ucs/datastruct/conn_match.h>
+#include <ucs/datastruct/frag_list.h>
 #include <urma_api.h>
+#include "rm_urma_def.h"
 
-typedef struct uct_rm_urma_iface    uct_rm_urma_iface_t;
-typedef struct uct_rm_urma_peer     uct_rm_urma_peer_t;
-typedef struct uct_rm_urma_link_req uct_rm_urma_link_req_t;
+#define UCT_UB_MAX_IOV          8UL
+#define UCT_RM_URMA_GRH_LEN     40  /* GLobal routing header */
+#define UCT_RM_URMA_SKIP_SWEEP  8
 
-static UCS_F_ALWAYS_INLINE khint32_t
-uct_rm_urma_peer_hash(const uct_rm_urma_return_addr_t *address)
-{
-    khint32_t hash = kh_int64_hash_func(address->iface.instance);
-    unsigned i;
-
-    hash ^= kh_int_hash_func(address->iface.jetty_id ^ address->uasid);
-    for (i = 0; i < sizeof(address->eid); ++i) {
-        hash = hash * 31 + address->eid[i];
-    }
-    return hash;
-}
-
-static UCS_F_ALWAYS_INLINE int
-uct_rm_urma_peer_equal(const uct_rm_urma_return_addr_t *a,
-                       const uct_rm_urma_return_addr_t *b)
-{
-    return (a->iface.instance == b->iface.instance) &&
-           (a->iface.jetty_id == b->iface.jetty_id) &&
-           (a->uasid == b->uasid) && !memcmp(a->eid, b->eid, sizeof(a->eid));
-}
-
-KHASH_INIT(uct_rm_urma_peers, const uct_rm_urma_return_addr_t *,
-           uct_rm_urma_peer_t *, 1, uct_rm_urma_peer_hash,
-           uct_rm_urma_peer_equal)
-
-KHASH_MAP_INIT_INT64(uct_rm_urma_requests, uct_rm_urma_peer_t *)
+typedef uint16_t                    uct_rm_urma_psn_t;
+typedef uint32_t                    uct_rm_urma_ep_conn_sn_t;
 
 enum {
-    UCT_RM_URMA_LINK_LEGACY,
-    UCT_RM_URMA_LINK_IFACE_V2,
-    UCT_RM_URMA_LINK_RELIABLE_V3
+    UCT_RM_URMA_SEND_SKB_FLAG_ACK_REQ    = UCS_BIT(0), /* ACK was requested for this skb */
+    UCT_RM_URMA_SEND_SKB_FLAG_COMP       = UCS_BIT(1), /* This skb contains a completion */
+    UCT_RM_URMA_SEND_SKB_FLAG_ZCOPY      = UCS_BIT(2), /* This skb contains a zero-copy segment */
+    UCT_RM_URMA_SEND_SKB_FLAG_RESENDING  = UCS_BIT(3), /* An active control skb refers to this skb */
+
+#if UCS_ENABLE_ASSERT
+    UCT_RM_URMA_SEND_SKB_FLAG_CTL_ACK    = UCS_BIT(5), /* This is a control-ack skb */
+    UCT_RM_URMA_SEND_SKB_FLAG_CTL_RESEND = UCS_BIT(6), /* This is a control-resend rsb */
+    UCT_RM_URMA_SEND_SKB_FLAG_INVALID    = UCS_BIT(7)  /* skb is released */
+
+#else
+    UCT_RM_URMA_SEND_SKB_FLAG_CTL_ACK    = 0,
+    UCT_RM_URMA_SEND_SKB_FLAG_CTL_RESEND = 0,
+    UCT_RM_URMA_SEND_SKB_FLAG_INVALID    = 0
+#endif
 };
 
-typedef struct uct_rm_urma_jetty {
-    urma_jetty_t                    *jetty;
-    int16_t                         available;
-} uct_rm_urma_jetty_t;
-
-/* A target is reusable only when every URMA import parameter matches. */
-typedef struct uct_rm_urma_target_key {
-    urma_rjetty_t remote;
-    urma_token_t  token;
-} uct_rm_urma_target_key_t;
-
-typedef struct uct_rm_urma_target {
-    uct_rm_urma_target_key_t key;
-    urma_target_jetty_t      *jetty;
-    unsigned                references;
-} uct_rm_urma_target_t;
-
-static UCS_F_ALWAYS_INLINE khint32_t
-uct_rm_urma_target_hash(const uct_rm_urma_target_key_t *key)
-{
-    khint32_t hash = kh_int_hash_func(key->remote.jetty_id.id ^
-                                    key->remote.jetty_id.uasid);
-    unsigned i;
-
-    for (i = 0; i < sizeof(key->remote.jetty_id.eid.raw); ++i) {
-        hash = hash * 31 + key->remote.jetty_id.eid.raw[i];
-    }
-    return hash;
-}
-
-static UCS_F_ALWAYS_INLINE int
-uct_rm_urma_target_equal(const uct_rm_urma_target_key_t *a,
-                         const uct_rm_urma_target_key_t *b)
-{
-    /* Compare fields, not structure padding or only the low EID bits. */
-    return !memcmp(a->remote.jetty_id.eid.raw, b->remote.jetty_id.eid.raw,
-                   sizeof(a->remote.jetty_id.eid.raw)) &&
-           (a->remote.jetty_id.uasid == b->remote.jetty_id.uasid) &&
-           (a->remote.jetty_id.id == b->remote.jetty_id.id) &&
-           (a->remote.trans_mode == b->remote.trans_mode) &&
-           (a->remote.policy == b->remote.policy) &&
-           (a->remote.type == b->remote.type) &&
-           (a->remote.flag.value == b->remote.flag.value) &&
-           (a->remote.tp_type == b->remote.tp_type) &&
-           (a->token.token == b->token.token);
-}
-
-KHASH_INIT(uct_rm_urma_targets, const uct_rm_urma_target_key_t *,
-           uct_rm_urma_target_t *, 1, uct_rm_urma_target_hash,
-           uct_rm_urma_target_equal)
+/* flags for uct_rm_urma_iface_send_ctl() */
+enum {
+    UCT_RM_URMA_IFACE_SEND_CTL_FLAG_INLINE          = UCS_BIT(0),
+    UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SOLICITED       = UCS_BIT(1),
+    UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SIGNALED        = UCS_BIT(2)
+};
 
 enum {
-    UCT_RM_URMA_IFACE_STAT_RX_DL_CR_ERR,
-    UCT_RM_URMA_IFACE_STAT_TX_DL_CR_ERR,
-    UCT_RM_URMA_IFACE_STAT_RX_FC_REQ,
-    UCT_RM_URMA_IFACE_STAT_TX_FC_GRANT,
-    UCT_RM_URMA_IFACE_STAT_TX_KA_SUCCESS,
-    UCT_RM_URMA_IFACE_STAT_TX_KA_FAIL,
-    UCT_RM_URMA_IFACE_STAT_NO_CQE,
+    UCT_RM_URMA_IFACE_STAT_RX_DROP,
     UCT_RM_URMA_IFACE_STAT_LAST
 };
 
-enum {
-    UCT_RM_URMA_FLUSH_MODE_RDMA_WRITE_0,
-    UCT_RM_URMA_FLUSH_MODE_FLOW_CONTROL,
-    UCT_RM_URMA_FLUSH_MODE_AUTO,
-    UCT_RM_URMA_FLUSH_MODE_LAST
-};
-
-typedef struct uct_rm_urma_pending_req {
-    uct_pending_req_t super;
-    uct_ep_t          *ep;
-} uct_rm_urma_pending_req_t;
-
-/* A grant owns its destination independently of any business EP. The same
- * object stays in pending, then in the control sender's outstanding queue. */
-typedef struct uct_rm_urma_fc_pending_req {
-    uct_rm_urma_pending_req_t super;
-    uct_urma_iface_send_op_t  send_op;
-    uct_rm_urma_target_t     *target;
-    uct_ub_iface_send_desc_t *desc;
-    uct_rm_urma_ep_t         *legacy_ep; /* only while an old-format reply waits */
-    uint16_t                 remote_ep_id;
-} uct_rm_urma_fc_pending_req_t;
-
-struct uct_rm_urma_iface {
-    uct_urma_iface_t             super;
-    uct_rm_urma_jetty_t          rm_urma_jetty; /* owned once per iface */
-    khash_t(uct_rm_urma_targets) targets;
-    ucs_callback_t             progress;
-    uct_ub_iface_send_desc_t   *fc_desc; /* used when max_inline is zero */
-    struct {
-        /* Threshold to send "soft" FC credit request. The peer will try to
-         * piggy-back credits grant to the counter AM, if any. */
-        int16_t                fc_soft_thresh;
-        uint8_t                flush_by_fc;
-        unsigned               native_write;
-        unsigned               native_read;
-        unsigned               native_rma;
-    } config;
-    struct {
-        ucs_mpool_t            pending_mp; /* pool for FC/link requests and reliable replay records */
-        ucs_arbiter_t          arbiter;
-        uct_rm_urma_ep_t      *ctrl_ep; /* software completion owner, no Jetty */
-        ucs_list_link_t        retired_eps;
-        ucs_status_t          error;
-        unsigned              progress_depth;
-        /* Only this group may send past its own queued head callback. */
-        ucs_arbiter_group_t   *pending_group;
-    } tx;
-
-    struct {
-        unsigned mode;
-        unsigned max_peers;
-        unsigned peer_count;
-        int creating_control;
-        uint64_t instance;
-        uint64_t sequence;
-        uint32_t rx_free;
-        uint32_t data_debt;
-        uint32_t control_debt;
-        uct_rm_urma_iface_addr_v2_t address;
-        ucs_list_link_t peers;
-        ucs_list_link_t pending;
-        khash_t(uct_rm_urma_requests) requests;
-        khash_t(uct_rm_urma_peers) peers_by_address;
-    } link;
-
-    struct {
-        ucs_list_link_t quarantine;
-        ucs_time_t rto;
-        ucs_time_t timeout;
-        unsigned max_retries;
-        unsigned rx_debt;
-        uint64_t delivered;
-        uint64_t discarded;
-        uint64_t retries;
-        uint64_t acks;
-    } reliable;
-
-    UCS_STATS_NODE_DECLARE(stats)
-};
+typedef struct uct_rm_urma_iface_ops {
+    uct_iface_ops_t        super;
+    void                   (*ep_free)(uct_ep_h ep);
+} uct_rm_urma_iface_ops_t;
 
 typedef struct uct_rm_urma_iface_config {
-    uct_urma_iface_config_t      super;
-    unsigned                   flush_mode;
-    unsigned                   tx_jfc_len;
-    double                     soft_thresh;
-    unsigned                   link_mode;
-    unsigned                   max_peers;
-    unsigned                   native_write;
-    unsigned                   native_read;
-    unsigned                   native_rma;
-    double                     send_rto;
-    double                     send_timeout;
-    unsigned                   send_retries;
+    uct_urma_iface_config_t   super;
+    unsigned                tx_jfc_len;
+    double                  peer_timeout;
+    double                  min_poke_time;
+    double                  timer_tick;
+    double                  timer_backoff;
+    double                  event_timer_tick;
+    unsigned                max_window;
+    unsigned                rx_async_max_poll;
 } uct_rm_urma_iface_config_t;
 
-static UCS_F_ALWAYS_INLINE int
-uct_rm_urma_have_jfc_avail(uct_rm_urma_iface_t* iface)
+typedef struct uct_rm_urma_jetty {
+    urma_jetty_t    *jetty;
+    int16_t         available;
+} uct_rm_urma_jetty_t;
+
+typedef struct uct_rm_urma_neth {
+    uint32_t            packet_type;
+    uct_rm_urma_psn_t   psn;
+    uct_rm_urma_psn_t   ack_psn;
+} UCS_S_PACKED uct_rm_urma_neth_t;
+
+typedef struct uct_rm_urma_send_skb {
+    ucs_queue_elem_t    queue;      /* in send window */
+    urma_target_seg_t   *tseg;
+    uint16_t            len;        /* data size */
+    uint16_t            flags;
+    uct_rm_urma_neth_t  neth[0];
+} UCS_S_PACKED UCS_V_ALIGNED(UCT_RM_URMA_SKB_ALIGN) uct_rm_urma_send_skb_t;
+
+typedef struct uct_rm_urma_recv_skb {
+    uct_ub_iface_recv_desc_t        super;
+    union {
+        struct {
+            ucs_frag_list_elem_t    elem;
+        } ooo;
+        struct {
+            ucs_queue_elem_t        queue;
+            uint32_t                len;
+        } am;
+    } u;
+} uct_rm_urma_recv_skb_t;
+
+typedef struct uct_rm_urma_ctl_desc {
+    ucs_queue_elem_t            queue;       /* Queue element in outstanding queue */
+    uint16_t                    sn;          /* Sequence number in outstanding queue */
+    uct_rm_urma_send_skb_t      *self_skb;   /* Back-pointer to owner skb */
+    uct_rm_urma_send_skb_t      *resent_skb; /* For resend skb: points to a re-sent
+                                               * skb in the window, can be NULL */
+    uct_rm_urma_ep_t            *ep;         /* For resend skb: points to the endpoint
+                                               * on which the resend was made */
+} uct_rm_urma_ctl_desc_t;
+
+typedef struct {
+    uint32_t                          tjetty_id;
+    urma_target_jetty_t               *tjetty;
+} UCS_S_PACKED uct_rm_urma_peer_address_t;
+
+static UCS_F_ALWAYS_INLINE khint32_t uct_rm_urma_tjetty_hash_func(urma_rjetty_t key)
+{
+    return kh_int_hash_func(key.jetty_id.eid.in4.addr | key.jetty_id.uasid | key.jetty_id.id);
+}
+
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_tjetty_hash_equal(urma_rjetty_t lh, urma_rjetty_t rh)
+{
+    return (lh.jetty_id.uasid == rh.jetty_id.uasid) &&
+           (lh.jetty_id.id == rh.jetty_id.id) &&
+           (lh.trans_mode == rh.trans_mode) &&
+           (lh.jetty_id.eid.in4.addr == rh.jetty_id.eid.in4.addr);
+}
+
+KHASH_INIT(uct_rm_urma_tjetty, urma_rjetty_t, uct_rm_urma_peer_address_t, 1,
+           uct_rm_urma_tjetty_hash_func, uct_rm_urma_tjetty_hash_equal)
+
+typedef struct uct_rm_urma_iface {
+    uct_urma_iface_t                  super;
+    uct_rm_urma_jetty_t             rm_urma_jetty;
+    struct {
+        unsigned                    available;
+        unsigned                    async_max_poll;
+        ucs_queue_head_t            pending_q;
+    } rx;
+    struct {
+        uct_rm_urma_send_skb_t      *skb; /* ready to use skb */
+        ucs_mpool_t                 mp;   /* pool for send_op completions */
+        urma_sge_t                  sge[UCT_UB_MAX_IOV];
+        urma_jfs_wr_t               wr_inl;
+        urma_jfs_wr_t               wr_skb;
+        ucs_arbiter_t               pending_q;
+        ucs_queue_head_t            outstanding_q;
+        ucs_queue_head_t            async_comp_q;
+        int16_t                     available;
+        uint16_t                    send_sn;
+        uint16_t                    comp_sn;
+        uint8_t                     async_before_pending;
+        ucs_twheel_t                timer;
+        ucs_time_t                  tick;
+        double                      timer_backoff;
+        unsigned                    timer_sweep_count;
+        unsigned                    unsignaled;
+    } tx;
+    struct {
+        ucs_time_t                  tick;
+        int                         timer_id;
+        unsigned                    disable;
+    } async;
+    struct {
+        unsigned                    max_inline;
+        unsigned                    max_window;
+        ucs_time_t                  peer_timeout;
+        ucs_time_t                  min_poke_time;
+    } config;
+    ucs_conn_match_ctx_t            conn_match_ctx;
+    uct_rm_urma_iface_ops_t         *ops;
+    khash_t(uct_rm_urma_tjetty) peer_addr_hash;
+
+    UCS_STATS_NODE_DECLARE(stats)
+} uct_rm_urma_iface_t;
+
+typedef struct uct_rm_urma_iface_addr {
+    uint32_t                jetty_id;
+    urma_transport_mode_t   trans_mode;
+} UCS_S_PACKED uct_rm_urma_iface_addr_t;
+
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_iface_can_tx(uct_rm_urma_iface_t *iface)
 {
     return iface->super.tx.jfc_available > 0;
 }
 
-static UCS_F_ALWAYS_INLINE ucs_status_t
-uct_rm_urma_iface_invoke_pending_cb(uct_rm_urma_iface_t *iface,
-                                    ucs_arbiter_group_t *group,
-                                    uct_pending_req_t *req)
+ucs_status_t uct_rm_urma_iface_cep_get_conn_sn(uct_rm_urma_iface_t *iface, const uct_ub_address_t *dev_addr,
+                                               const uct_rm_urma_iface_addr_t *if_addr,
+                                               uct_rm_urma_ep_conn_sn_t *conn_sn_p);
+
+uct_rm_urma_ep_t *uct_rm_urma_iface_cep_get_ep(uct_rm_urma_iface_t *iface, const uct_ub_address_t *dev_addr,
+                                               const uct_rm_urma_iface_addr_t *if_addr,
+                                               uct_rm_urma_ep_conn_sn_t conn_sn, int is_private);
+
+void uct_rm_urma_iface_cep_insert_ep(uct_rm_urma_iface_t *iface, const uct_ub_address_t *dev_addr,
+                                     const uct_rm_urma_iface_addr_t *if_addr, uct_rm_urma_ep_conn_sn_t conn_sn,
+                                     uct_rm_urma_ep_t *ep);
+
+void uct_rm_urma_iface_cep_remove_ep(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep);
+
+void uct_rm_urma_iface_release_desc(uct_recv_desc_t *self, void *desc);
+
+ucs_status_t uct_rm_urma_iface_get_address(uct_iface_h tl_iface, uct_iface_addr_t *addr);
+
+void uct_rm_urma_iface_progress_enable(uct_iface_h tl_iface, unsigned flags);
+
+void uct_rm_urma_iface_progress_disable(uct_iface_h tl_iface, unsigned flags);
+
+unsigned uct_rm_urma_iface_dispatch_async_comps_do(uct_rm_urma_iface_t *iface);
+
+void uct_rm_urma_iface_ctl_skb_complete(uct_rm_urma_iface_t *iface, uct_rm_urma_ctl_desc_t *cdesc, int is_async);
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_enter(uct_rm_urma_iface_t *iface)
 {
-    ucs_arbiter_group_t *previous_group = iface->tx.pending_group;
-    ucs_status_t status;
-
-    ucs_trace_data("Progressing pending request");
-    iface->tx.pending_group = group;
-    status = req->func(req);
-    iface->tx.pending_group = previous_group;
-    ucs_trace_data("Status returned from progress pending: %s",
-                   ucs_status_string(status));
-
-    return status;
+    UCS_ASYNC_BLOCK(iface->super.super.worker->async);
 }
 
-static UCS_F_ALWAYS_INLINE int
-uct_rm_urma_iface_pending_can_send(uct_rm_urma_iface_t *iface,
-                                    ucs_arbiter_group_t *group)
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_leave(uct_rm_urma_iface_t *iface)
 {
-    return (iface->tx.pending_group == group) ||
-           ucs_arbiter_group_is_empty(group);
+    UCS_ASYNC_UNBLOCK(iface->super.super.worker->async);
 }
 
-static UCS_F_ALWAYS_INLINE void
-uct_rm_urma_iface_check_pending(uct_rm_urma_iface_t *iface, ucs_arbiter_group_t *arb_group)
+static UCS_F_ALWAYS_INLINE ucs_time_t uct_rm_urma_iface_get_time(uct_rm_urma_iface_t *iface)
 {
-    ucs_assert(uct_rm_urma_iface_pending_can_send(iface, arb_group));
+    return ucs_get_time();
 }
 
-ucs_status_t uct_rm_urma_iface_control_ep_get(uct_rm_urma_iface_t *iface);
-void uct_rm_urma_iface_set_failed(uct_rm_urma_iface_t *iface, ucs_status_t status);
-void uct_rm_urma_iface_gc(uct_rm_urma_iface_t *iface);
-ucs_status_t uct_rm_urma_iface_target_get(uct_rm_urma_iface_t *iface,
-                                         const urma_rjetty_t *remote,
-                                         const urma_token_t *token,
-                                         uct_rm_urma_target_t **target_p);
-void uct_rm_urma_iface_target_put(uct_rm_urma_iface_t *iface,
-                                 uct_rm_urma_target_t *target);
-ucs_status_t uct_rm_urma_iface_send_fc_grant(uct_rm_urma_iface_t *iface,
-                                           const urma_rjetty_t *remote,
-                                           const urma_token_t *token,
-                                           uint32_t remote_ep_id);
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_twheel_sweep(uct_rm_urma_iface_t *iface)
+{
+    if (iface->tx.timer_sweep_count++ % UCT_RM_URMA_SKIP_SWEEP) {
+        return;
+    }
+    if (ucs_twheel_is_empty(&iface->tx.timer)) {
+        return;
+    }
+    ucs_twheel_sweep(&iface->tx.timer, uct_rm_urma_iface_get_time(iface));
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_raise_pending_async_ev(uct_rm_urma_iface_t *iface)
+{
+    if (!ucs_arbiter_is_empty(&iface->tx.pending_q)) {
+        iface->tx.async_before_pending = 1;
+    }
+}
+
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_iface_has_pending_async_ev(uct_rm_urma_iface_t *iface)
+{
+    return iface->tx.async_before_pending;
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_dispatch_comp(uct_rm_urma_iface_t *iface, uct_completion_t *comp,
+                                                                ucs_status_t status)
+{
+    uct_rm_urma_iface_raise_pending_async_ev(iface);
+    uct_invoke_completion(comp, status);
+}
+
+static UCS_F_ALWAYS_INLINE unsigned uct_rm_urma_iface_dispatch_async_comps(uct_rm_urma_iface_t *iface)
+{
+    if (ucs_likely(ucs_queue_is_empty(&iface->tx.async_comp_q))) {
+        return 0;
+    }
+
+    return uct_rm_urma_iface_dispatch_async_comps_do(iface);
+}
+
 #endif

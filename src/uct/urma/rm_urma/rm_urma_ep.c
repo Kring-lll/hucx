@@ -8,1553 +8,1392 @@
 #include "config.h"
 #endif
 
-#include "rm_urma_ep.h"
-
 #include <ucs/time/time.h>
 #include <uct/urma/base/urma_md.h>
 #include <uct/api/uct.h>
+#include <uct/base/uct_iov.inl>
 #include <uct/base/uct_iface.h>
 #include <ucs/arch/bitops.h>
 #include <ucs/arch/cpu.h>
 #include <ucs/type/class.h>
 #include <ucs/type/cpu_set.h>
 #include <ucs/debug/log.h>
-#include <uct/base/uct_iov.inl>
+#include <ucs/sys/string.h>
+#include <stdint.h>
+#include <infiniband/verbs.h>
+#include <unistd.h>
+#include "rm_urma_ep.h"
+#include "rm_urma_iface.h"
+#include "rm_urma_def.h"
+#include "rm_urma_inl.h"
 
-static void UCS_F_ALWAYS_INLINE uct_rm_urma_init_base_wr(urma_jfs_wr_t *wr, uct_rm_urma_iface_t *iface,
-                                                         urma_opcode_t opcode, uct_rm_urma_ep_t *ep,
-                                                         uint32_t force_complete_enable, uint32_t inline_flag,
-                                                         uint32_t solicited_flag)
+#define UCT_RM_URMA_SLOW_TIMER_MAX_TICK(_iface)  ((_iface)->config.peer_timeout / 3)
+static void uct_rm_urma_peer_name(uct_rm_urma_peer_name_t *peer)
 {
-    /* R1 uses one CQE per WR. Per-EP moderation can strand a shared SQ. */
-    uct_ub_init_base_wr(wr, &iface->super, opcode, &ep->super, 1, inline_flag, solicited_flag);
-
-    wr->user_ctx = ep->super.ep_id;
-    /* the upper 32bits is ep_id, and the lower 32 bit is sn */
-    wr->user_ctx = (wr->user_ctx << UCT_UB_EP_ID_OFFSET) | (ep->super.status.pi + 1);
-    wr->tjetty = ep->tjetty;
-
-    ucs_trace("Init wr, ep_id:%u, pi:%u, ci:%u, opcode:%u\n",
-              ep->super.ep_id, ep->super.status.pi, ep->super.status.ci, opcode);
+    ucs_strncpy_zero(peer->name, ucs_get_host_name(), sizeof(peer->name));
+    peer->pid = getpid();
 }
 
-static inline void uct_rm_urma_update_tx_resources_status(uct_rm_urma_ep_t *ep, uct_rm_urma_iface_t *iface,
-                                                          uint32_t complete_flag)
+static void uct_rm_urma_ep_set_state(uct_rm_urma_ep_t *ep, uint32_t state)
 {
-    if (complete_flag == 1) {
-        ep->super.status.uncompltes = 0;
+    ep->flags |= state;
+}
+
+static void uct_rm_urma_ep_resend_start(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep)
+{
+    ep->resend.max_psn = ep->tx.psn - 1;
+    ep->resend.psn     = ep->tx.acked_psn + 1;
+    ep->resend.pos     = ucs_queue_iter_begin(&ep->tx.window);
+    uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_RESEND);
+}
+
+static void uct_rm_urma_ep_resend_end(uct_rm_urma_ep_t *ep)
+{
+    uct_rm_urma_ep_ctl_op_del(ep, UCT_RM_URMA_EP_OP_RESEND);
+    ep->flags &= ~UCT_RM_URMA_EP_FLAG_TX_NACKED;
+}
+
+static void uct_rm_urma_ep_resend_ack(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep)
+{
+    if (ucs_likely(UCT_RM_URMA_PSN_COMPARE(ep->resend.psn, >, ep->resend.max_psn))) {
+        return;
+    }
+
+    if (UCT_RM_URMA_PSN_COMPARE(ep->tx.acked_psn, <, ep->resend.max_psn)) {
+        if (UCT_RM_URMA_PSN_COMPARE(ep->resend.psn, <=, ep->tx.acked_psn)) {
+            ucs_debug("Ep: ack received during resend resend.psn=%d tx.acked_psn=%d.",
+                      ep->resend.psn, ep->tx.acked_psn);
+            ep->resend.pos = ucs_queue_iter_begin(&ep->tx.window);
+            ep->resend.psn = ep->tx.acked_psn + 1;
+        }
+        uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_RESEND);
     } else {
-        ep->super.status.uncompltes += 1;
+        ep->resend.psn = ep->resend.max_psn + 1;
+        uct_rm_urma_ep_resend_end(ep);
     }
-
-    ep->super.status.pi++;
-    ep->rm_urma_jetty->available--;
-    iface->super.tx.jfc_available--;
 }
 
-bool uct_rm_urma_ep_can_send(uct_rm_urma_ep_t *ep)
+static void uct_rm_urma_ep_ca_drop(uct_rm_urma_ep_t *ep)
 {
-    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface,
-                                                uct_rm_urma_iface_t);
-
-    return ((iface->tx.error == UCS_OK) &&
-            !(ep->super.flags & (UCT_RM_URMA_EP_FLAG_CLOSING |
-                                 UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL |
-                                 UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED)) &&
-            ((iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) ?
-             uct_rm_urma_reliable_can_send(ep) :
-             (iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) ?
-             uct_rm_urma_link_can_send(ep) :
-             uct_ub_fc_has_resources(&iface->super, &ep->super.fc)) &&
-            (uct_rm_urma_outstanding_queue_available(ep) > 0));
+    ucs_debug("Ep ca drop@cwnd = %d in flight: %d.",
+              ep->ca.cwnd, (int)ep->tx.psn - (int)ep->tx.acked_psn - 1);
+    ep->ca.cwnd /= UCT_RM_URMA_CA_MD_FACTOR;
+    if (ep->ca.cwnd < UCT_RM_URMA_CA_MIN_WINDOW) {
+        ep->ca.cwnd = UCT_RM_URMA_CA_MIN_WINDOW;
+    }
+    ep->tx.max_psn    = ep->tx.acked_psn + ep->ca.cwnd;
+    if (UCT_RM_URMA_PSN_COMPARE(ep->tx.max_psn, >, ep->tx.psn)) {
+        uct_rm_urma_ep_tx_stop(ep);
+    }
 }
 
-ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr,
-                                     const void *buffer, unsigned length)
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_neth_init_data(uct_rm_urma_ep_t *ep, uct_rm_urma_neth_t *neth)
 {
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    uct_ub_am_short_hdr_t *am = &iface->super.am_inl_hdr;
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    urma_jfs_wr_t *bad_wr = NULL;
-    ucs_status_t ret = UCS_OK;
-    urma_status_t status;
-
-    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
-        return uct_rm_urma_reliable_short(ep, id, hdr, buffer, length);
-    }
-    UCT_UB_CHECK_AM_SHORT(id, length, uct_ub_am_short_hdr_t, iface->super.config.max_inline);
-    UCT_RM_URMA_CHECK_RES_AND_FC(iface, ep, id);
-    UCT_TL_EP_STAT_OP(&ep->super.super, AM, SHORT, sizeof(hdr) + length);
-
-    am->am_hdr = hdr;
-    am->ub_hdr.am_id = id;
-    am->ub_hdr.ep_id = ep->super.dep_id;
-    uct_ub_iface_fill_inl_sge(&iface->super, am, sizeof(*am), buffer, length);
-
-    UCT_UB_FILL_SRC_SGL_BUF(&wr->send.src, iface->super.inl_sge, iface->super.inline_num_sge);
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_SEND, ep, 0, URMA_INLINE_ENABLE, URMA_SOLICITED_ENABLE);
-    uct_ub_ep_fm(&iface->super, &ep->super, wr);
-
-    status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (ucs_unlikely(status != URMA_SUCCESS)) {
-        ucs_warn("In function ep_am_short, urma_post_jetty_send_wr() failed, status:0x%x.\n", status);
-        ret = (status == URMA_ENOMEM || status == URMA_EAGAIN) ?
-              UCS_ERR_NO_RESOURCE : UCS_ERR_IO_ERROR;
-        goto out;
-    }
-
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    UCT_RM_URMA_UPDATE_FC(iface, ep, id);
-
-out:
-    (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-    return ret;
+    neth->psn = ep->tx.psn;
+    neth->ack_psn = ep->rx.acked_psn = ucs_frag_list_sn(&ep->rx.ooo_pkts);
 }
 
-ssize_t uct_rm_urma_ep_am_bcopy(uct_ep_h tl_ep, uint8_t id,
-                                uct_pack_callback_t pack_cb, void *arg,
-                                unsigned flags)
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_ctl_op_check(uct_rm_urma_ep_t *ep, uint32_t op)
 {
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    uct_ub_iface_send_desc_t *desc = NULL;
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_status_t status;
-    urma_sge_t sge;
-    size_t length;
+    return ep->tx.pending.ops & op;
+}
 
-    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
-        return uct_rm_urma_reliable_bcopy(ep, id, pack_cb, arg);
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_ep_reset_max_psn(uct_rm_urma_ep_t *ep)
+{
+    ep->tx.max_psn = ep->tx.psn + ep->ca.cwnd;
+}
+
+#if UCS_ENABLE_ASSERT
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_has_pending(uct_rm_urma_ep_t *ep)
+{
+    return !ucs_arbiter_group_is_empty(&ep->tx.pending.group) &&
+           !ucs_arbiter_elem_is_only(&ep->tx.pending.elem);
+}
+#endif
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_neth_set_type_am(uct_rm_urma_ep_t *ep, uct_rm_urma_neth_t *neth, uint8_t id)
+{
+    neth->packet_type = (id << UCT_RM_URMA_PACKET_AM_ID_SHIFT) | ep->super.dep_id | UCT_RM_URMA_PACKET_FLAG_AM;
+}
+
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_req_ack(uct_rm_urma_ep_t *ep)
+{
+    return UCT_RM_URMA_PSN_COMPARE(ep->tx.psn, ==, ((ep->tx.acked_psn * 3 + ep->tx.max_psn) >> 2)) ||
+           UCT_RM_URMA_PSN_COMPARE(ep->tx.psn + 1, ==, ep->tx.max_psn) ||
+           uct_rm_urma_ep_ctl_op_check(ep, UCT_RM_URMA_EP_OP_ACK_REQ);
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_neth_ack_req(uct_rm_urma_ep_t *ep, uct_rm_urma_neth_t *neth)
+{
+    neth->packet_type |= uct_rm_urma_ep_req_ack(ep) << UCT_RM_URMA_PACKET_ACK_REQ_SHIFT;
+    uct_rm_urma_ep_ctl_op_del(ep, UCT_RM_URMA_EP_OP_ACK | UCT_RM_URMA_EP_OP_ACK_REQ);
+}
+
+static uct_rm_urma_send_skb_t *uct_rm_urma_iface_get_tx_skb(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep)
+{
+    uct_rm_urma_send_skb_t *skb = NULL;
+
+    if (ucs_unlikely(!uct_rm_urma_iface_can_tx(iface))) {
+        UCS_STATS_UPDATE_COUNTER(ep->super.super.stats, UCT_EP_STAT_NO_RES, 1);
+        return NULL;
     }
+
+    skb = iface->tx.skb;
+    if (ucs_unlikely(skb == NULL)) {
+        skb = ucs_mpool_get(&iface->tx.mp);
+        if (skb == NULL) {
+            ucs_trace_data("Iface out of tx skbs.");
+            UCT_TL_IFACE_STAT_TX_NO_DESC(&iface->super.super);
+            return NULL;
+        }
+        iface->tx.skb = skb;
+    }
+
+    VALGRIND_MAKE_MEM_DEFINED(&skb->tseg, sizeof(*skb->tseg));
+    skb->flags = 0;
+    ucs_read_prefetch(skb->neth);
+
+    return skb;
+}
+
+static UCS_F_ALWAYS_INLINE uint32_t uct_rm_urma_neth_get_am_id(uct_rm_urma_neth_t *neth)
+{
+    return neth->packet_type >> UCT_RM_URMA_PACKET_AM_ID_SHIFT;
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_ep_rx_put(uct_rm_urma_neth_t *neth, unsigned byte_len)
+{
+    uct_rm_urma_put_hdr_t *put_hdr = NULL;
+
+    if (byte_len <= sizeof(*neth) + sizeof(*put_hdr)){
+        ucs_warn("RM_URMA rx_put byte_len %u too short", byte_len);
+        return;
+    }
+    put_hdr = (uct_rm_urma_put_hdr_t *)(neth + 1);
+    memcpy((void *)put_hdr->rva, put_hdr + 1, byte_len - sizeof(*neth) - sizeof(*put_hdr));
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_ep_ca_ack(uct_rm_urma_ep_t *ep)
+{
+    if (ep->ca.cwnd < ep->ca.wmax) {
+        ep->ca.cwnd += UCT_RM_URMA_CA_AI_VALUE;
+    }
+    ep->tx.max_psn = ep->tx.acked_psn + ep->ca.cwnd;
+}
+
+static void uct_rm_urma_ep_rx_ctl_drop_packet(uct_rm_urma_ep_t *ep, uct_rm_urma_neth_t *neth,
+                                              uint16_t exp_flags, const char *packet_type_str)
+{
+    ucs_trace_data("Ep: drop %s with psn %u, head_sn %u", packet_type_str, neth->psn, ep->rx.ooo_pkts.head_sn);
+    ucs_assertv_always(ep->flags & exp_flags,
+                       "Conn_sn=%d ep_id=%d, dep_id=%d head_sn=%u"
+                       " Neth_psn=%u ep_flags=0x%x exp_ep_flags=0x%x"
+                       " Ctl_ops=0x%x rx_creq_count=%d",
+                       ep->conn_sn, ep->super.ep_id, ep->super.dep_id, ep->rx.ooo_pkts.head_sn,
+                       neth->psn, ep->flags, exp_flags,
+                       ep->tx.pending.ops, ep->rx_creq_count);
+}
+
+static uct_rm_urma_send_skb_t *uct_rm_urma_ep_get_tx_skb(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep)
+{
+    if (ucs_unlikely(!uct_rm_urma_ep_is_connected_and_no_pending(ep) ||
+                     uct_rm_urma_ep_no_window(ep) ||
+                     uct_rm_urma_iface_has_pending_async_ev(iface))) {
+        UCS_STATS_UPDATE_COUNTER(ep->super.super.stats, UCT_EP_STAT_NO_RES, 1);
+        return NULL;
+    }
+
+    return uct_rm_urma_iface_get_tx_skb(iface, ep);
+}
+
+static ucs_status_t uct_rm_urma_am_skb_common(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
+                                              uint8_t id, uct_rm_urma_send_skb_t **skb_p)
+{
+    uct_rm_urma_send_skb_t *skb = NULL;
+    uct_rm_urma_neth_t *neth = NULL;
+
     UCT_CHECK_AM_ID(id);
-    UCT_RM_URMA_CHECK_RES_AND_FC(iface, ep, id);
-    UCT_UB_IFACE_GET_TX_AM_BCOPY_DESC(&iface->super, &ep->super, &iface->super.tx.mp, desc,
-                                      id, uct_ub_am_hdr_fill, uct_ub_hdr_t,
-                                      pack_cb, arg, &length);
-    UCT_TL_EP_STAT_OP(&ep->super.super, AM, BCOPY, length);
 
-    UCT_UB_FILL_WR_SG_BUF(&wr->send.src, (uint64_t)(desc + 1),
-                          length + sizeof(uct_ub_hdr_t), desc->tseg, 1, &sge);
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_SEND, ep, 0, URMA_INLINE_DISABLE, URMA_SOLICITED_ENABLE);
-    uct_ub_ep_fm(&iface->super, &ep->super, wr);
-
-    status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (ucs_unlikely(status != URMA_SUCCESS)) {
-        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-        ucs_mpool_put(desc);
-        return (status == URMA_ENOMEM || status == URMA_EAGAIN) ?
-               UCS_ERR_NO_RESOURCE : UCS_ERR_IO_ERROR;
+    skb = uct_rm_urma_ep_get_tx_skb(iface, ep);
+    if (!skb) {
+        return UCS_ERR_NO_RESOURCE;
     }
 
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &desc->super, ep->super.status.pi);
-    UCT_RM_URMA_UPDATE_FC(iface, ep, id);
-    (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-    return length;
-}
+    ucs_assertv((ep->flags & UCT_RM_URMA_EP_FLAG_IN_PENDING) ||
+                !uct_rm_urma_ep_has_pending(ep),
+                "Out-of-order send detected for ep am %d ep_pending %d",
+                id, (ep->flags & UCT_RM_URMA_EP_FLAG_IN_PENDING));
 
-ucs_status_t uct_rm_urma_ep_am_zcopy(uct_ep_h tl_ep, uint8_t id, const void *header,
-                                     unsigned header_length, const uct_iov_t *iov,
-                                     size_t iovcnt, unsigned flags,
-                                     uct_completion_t *comp)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    uct_ub_iface_send_desc_t *desc = NULL;
-    uint32_t force_complete_enable;
-    urma_sge_t sge[UCT_UB_MAX_IOV];
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_status_t status;
-    size_t sge_cnt;
+    neth = skb->neth;
+    uct_rm_urma_neth_init_data(ep, neth);
+    uct_rm_urma_neth_set_type_am(ep, neth, id);
+    uct_rm_urma_neth_ack_req(ep, neth);
 
-    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
-        return UCS_ERR_UNSUPPORTED;
-    }
-    /* 1 iov consumed by am header */
-    UCT_CHECK_IOV_SIZE(iovcnt, iface->super.config.max_send_sge - 1, "uct_rm_urma_ep_am_zcopy");
+    *skb_p = skb;
 
-    UCT_UB_CHECK_AM_ZCOPY(id, header_length, uct_iov_total_length(iov, iovcnt),
-                          iface->super.config.short_desc_size, iface->super.config.seg_size);
-    UCT_RM_URMA_CHECK_RES_AND_FC(iface, ep, id);
-
-    UCT_UB_IFACE_GET_TX_AM_ZCOPY_DESC(&iface->super, &ep->super, &iface->super.tx.short_desc_mp,
-                                      desc, id, header, header_length, comp,
-                                      &force_complete_enable);
-    UCT_TL_EP_STAT_OP(&ep->super.super, AM, ZCOPY, header_length +
-                      uct_iov_total_length(iov, iovcnt));
-    sge[0].len = sizeof(uct_ub_hdr_t) + header_length;
-    sge[0].addr = (uint64_t)(desc + 1);
-    sge[0].tseg = desc->tseg;
-    sge_cnt = uct_ub_sge_fill_iov(sge + 1, iov, iovcnt);
-
-    UCT_UB_FILL_SRC_SGL_BUF(&wr->send.src, sge, sge_cnt + 1);
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_SEND, ep, force_complete_enable,
-                             URMA_INLINE_DISABLE, URMA_SOLICITED_ENABLE);
-    uct_ub_ep_fm(&iface->super, &ep->super, wr);
-
-    status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (ucs_unlikely(status != URMA_SUCCESS)) {
-        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-        ucs_fatal("In function ep am zcopy, urma_post_jetty_send_wr() failed, status:0x%x", status);
-    }
-
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &desc->super, ep->super.status.pi);
-    UCT_RM_URMA_UPDATE_FC(iface, ep, id);
-    (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-    return UCS_INPROGRESS;
-}
-
-ucs_status_t uct_rm_urma_ep_put_0bytes(uct_rm_urma_ep_t *ep, uct_rm_urma_iface_t *iface)
-{
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    urma_jfs_wr_t *bad_wr = NULL;
-    uint64_t dummy_paylaod;
-    urma_status_t status;
-    urma_sge_t dst_sge;
-    urma_sge_t src_sge;
-    ucs_status_t ret;
-
-    UCT_UB_FILL_WR_SG_BUF(&wr->rw.src, (uint64_t)&dummy_paylaod, 0, NULL, 1, &src_sge);
-    UCT_UB_FILL_WR_SG_BUF(&wr->rw.dst, (uint64_t)ep->ka_va_addr, 0, ep->ka_tseg, 1, &dst_sge);
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_WRITE, ep, 1, URMA_INLINE_ENABLE, URMA_SOLICITED_DISABLE);
-    uct_ub_ep_fm(&iface->super, &ep->super, wr);
-
-    status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (ucs_unlikely(status != URMA_SUCCESS)) {
-        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-        ucs_fatal("In function ep put_0bytes, urma_post_jetty_send_wr() failed, status:0x%x", status);
-    }
-
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    ret = UCS_OK;
-
-    return ret;
-}
-
-/* Validate the wire rkey range before importing or posting. Subtraction avoids
- * wrapping remote_addr + length at the end of the address space. */
-static int uct_rm_urma_rma_range(uct_rkey_t rkey, uint64_t remote_addr,
-                                size_t length)
-{
-    uct_ub_rkey_info_t *key = (uct_ub_rkey_info_t *)rkey;
-
-    return (key != NULL) && (remote_addr >= key->remote_seg.ubva.va) &&
-           (length <= key->remote_seg.len) &&
-           (remote_addr - key->remote_seg.ubva.va <= key->remote_seg.len - length);
-}
-
-/* Each invocation owns its WR and SGEs. Failed posts leave sequence numbers,
- * fence state and SQ/CQE budgets unchanged; callers still own their descriptor. */
-static ucs_status_t
-uct_rm_urma_rma_post(uct_rm_urma_ep_t *ep, uint64_t local_addr,
-                     urma_target_seg_t *local_seg, size_t length,
-                     uint64_t remote_addr, uct_rkey_t rkey, int read,
-                     int inline_write)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface,
-                                               uct_rm_urma_iface_t);
-    urma_target_seg_t *remote_seg;
-    urma_jfs_wr_t wr = {0};
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_sge_t local, remote;
-    uint64_t saved_fence;
-    urma_status_t posted;
-    ucs_status_t status;
-
-    status = uct_ub_ep_get_tseg(&iface->super, rkey, &remote_seg);
-    if (status != UCS_OK) {
-        return status;
-    }
-    UCT_UB_FILL_WR_SG_BUF(read ? &wr.rw.dst : &wr.rw.src, local_addr,
-                         length, local_seg, 1, &local);
-    UCT_UB_FILL_WR_SG_BUF(read ? &wr.rw.src : &wr.rw.dst, remote_addr,
-                         length, remote_seg, 1, &remote);
-    uct_rm_urma_init_base_wr(&wr, iface, read ? URMA_OPC_READ : URMA_OPC_WRITE,
-                              ep, 1, inline_write ? URMA_INLINE_ENABLE :
-                              URMA_INLINE_DISABLE, URMA_SOLICITED_DISABLE);
-    saved_fence = ep->super.fi.fence_beat;
-    uct_ub_ep_fm(&iface->super, &ep->super, &wr);
-    posted = urma_post_jetty_send_wr(ep->rm_urma_jetty->jetty, &wr, &bad_wr);
-    if (posted != URMA_SUCCESS) {
-        ep->super.fi.fence_beat = saved_fence;
-        return ((posted == URMA_ENOMEM) || (posted == URMA_EAGAIN)) ?
-               UCS_ERR_NO_RESOURCE : UCS_ERR_IO_ERROR;
-    }
-    uct_rm_urma_update_tx_resources_status(ep, iface, 1);
-    ucs_trace("RM native RMA post kind=%s length=%zu",
-              read ? "get_bcopy" : (inline_write ? "put_short" : "put_bcopy"), length);
     return UCS_OK;
 }
 
-ucs_status_t uct_rm_urma_ep_put_short(uct_ep_h tl_ep, const void *payload,
-                                      unsigned length, uint64_t remote_addr,
+static void uct_rm_urma_iface_complete_tx(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
+                                          uct_rm_urma_send_skb_t *skb, int has_data, void *data,
+                                          const void *buffer, unsigned length)
+{
+    ucs_time_t now = uct_rm_urma_iface_get_time(iface);
+    iface->tx.skb = ucs_mpool_get(&iface->tx.mp);
+    if (ucs_unlikely(iface->tx.skb == NULL)) {
+        ucs_warn("Failed to allocate iface->tx.skb");
+    }
+    ep->tx.psn++;
+
+    if (has_data) {
+        skb->len += length;
+        memcpy(data, buffer, length);
+    }
+
+    ucs_queue_push(&ep->tx.window, &skb->queue);
+    ep->tx.tick = iface->tx.tick;
+    if (!iface->async.disable) {
+        ucs_wtimer_add(&iface->tx.timer, &ep->timer,
+                       now - ucs_twheel_get_time(&iface->tx.timer) + ep->tx.tick);
+    }
+
+    ep->tx.send_time = now;
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_complete_tx_skb(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
+                                                                  uct_rm_urma_send_skb_t *skb)
+{
+    uct_rm_urma_iface_complete_tx(iface, ep, skb, 0, NULL, NULL, 0);
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_complete_tx_inl(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
+                                                                  uct_rm_urma_send_skb_t *skb, void *data,
+                                                                  const void *buffer, unsigned length)
+{
+    uct_rm_urma_iface_complete_tx(iface, ep, skb, 1, data, buffer, length);
+}
+
+static void uct_rm_urma_post_send(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
+                                         urma_jfs_wr_t *wr, unsigned send_flags)
+{
+    urma_jfs_wr_t *bad_wr = NULL;
+    urma_status_t ret;
+
+    if ((send_flags & UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SIGNALED) ||
+        iface->tx.unsignaled >= iface->super.config.tx_jfc_moderation - 1) {
+        wr->flag.bs.complete_enable = URMA_COMPLETE_ENABLE;
+        wr->user_ctx = iface->tx.unsignaled;
+        iface->tx.unsignaled = 0;
+        ep->super.status.uncompltes = 0;
+    } else {
+        wr->flag.bs.complete_enable = URMA_COMPLETE_DISABLE;
+        ++iface->tx.unsignaled;
+        ep->super.status.uncompltes++;
+    }
+
+    wr->flag.bs.inline_flag = (send_flags & UCT_RM_URMA_IFACE_SEND_CTL_FLAG_INLINE) ? URMA_INLINE_ENABLE:
+                              URMA_INLINE_DISABLE;
+    wr->flag.bs.solicited_enable = (send_flags & UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SOLICITED) ? URMA_SOLICITED_ENABLE:
+                                   URMA_SOLICITED_DISABLE;
+    /* Apply the same RM budget to DATA, connection controls and retries. */
+    {
+        size_t length = 0;
+        unsigned i;
+        for (i = 0; i < wr->send.src.num_sge; ++i) {
+            length += wr->send.src.sge[i].len;
+        }
+        if (length > iface->super.config.seg_size) {
+            ucs_fatal("RM SEND exceeds segment budget: %zu > %zu", length,
+                      iface->super.config.seg_size);
+        }
+    }
+    wr->tjetty = ep->peer_address.tjetty;
+
+    ret = urma_post_jetty_send_wr(iface->rm_urma_jetty.jetty, wr, &bad_wr);
+    if (ret != URMA_SUCCESS) {
+        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
+        ucs_fatal("Post send return %d (%m).", ret);
+    }
+
+    ++ep->super.status.pi;
+    --iface->rm_urma_jetty.available;
+    --iface->super.tx.jfc_available;
+    ++iface->tx.send_sn;
+}
+
+static void uct_rm_urma_ep_tx_inlv(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
+                                   const void *buffer, unsigned length)
+{
+    iface->tx.sge[1].len = length;
+    iface->tx.sge[1].addr = (uintptr_t)buffer;
+    ucs_assert(iface->tx.wr_inl.send.src.num_sge == 2);
+    uct_rm_urma_post_send(iface, ep, &iface->tx.wr_inl, UCT_RM_URMA_IFACE_SEND_CTL_FLAG_INLINE);
+}
+
+
+static void uct_rm_urma_ep_tx_skb(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
+                                  uct_rm_urma_send_skb_t *skb, unsigned send_flags)
+{
+    iface->tx.sge[0].tseg = skb->tseg;
+    iface->tx.sge[0].len = skb->len;
+    iface->tx.sge[0].addr = (uintptr_t)skb->neth;
+    uct_rm_urma_post_send(iface, ep, &iface->tx.wr_skb, send_flags);
+}
+
+ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr, const void *buffer, unsigned length)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
+    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
+    uct_rm_urma_am_short_hdr_t *am_hdr = NULL;
+    uct_rm_urma_send_skb_t *skb = NULL;
+    ucs_status_t ret = UCS_OK;
+
+    UCT_CHECK_LENGTH(sizeof(uct_rm_urma_neth_t) + sizeof(uct_rm_urma_am_short_hdr_t) + length, 0,
+                     iface->super.config.max_inline, "am_short");
+
+    uct_rm_urma_enter(iface);
+
+    ret = uct_rm_urma_am_skb_common(iface, ep, id, &skb);
+    if (ret != UCS_OK) {
+        uct_rm_urma_leave(iface);
+        return UCS_ERR_NO_RESOURCE;
+    }
+
+    am_hdr = (uct_rm_urma_am_short_hdr_t *)(skb->neth + 1);
+    am_hdr->hdr = hdr;
+    iface->tx.sge[0].len = sizeof(uct_rm_urma_neth_t) + sizeof(*am_hdr);
+    iface->tx.sge[0].addr = (uintptr_t)skb->neth;
+
+    uct_rm_urma_ep_tx_inlv(iface, ep, buffer, length);
+    skb->len = iface->tx.sge[0].len;
+
+    uct_rm_urma_iface_complete_tx_inl(iface, ep, skb, am_hdr + 1, buffer, length);
+    UCT_TL_EP_STAT_OP(&ep->super.super, AM, SHORT, sizeof(hdr) + length);
+    uct_rm_urma_leave(iface);
+
+    return UCS_OK;
+}
+
+ssize_t uct_rm_urma_ep_am_bcopy(uct_ep_h tl_ep, uint8_t id, uct_pack_callback_t pack_cb, void *arg, unsigned flags)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
+    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
+    uct_rm_urma_send_skb_t *skb = NULL;
+    ucs_status_t ret = UCS_OK;
+    uint32_t payload_len;
+
+    uct_rm_urma_enter(iface);
+
+    ret = uct_rm_urma_am_skb_common(iface, ep, id, &skb);
+    if (ret != UCS_OK) {
+        uct_rm_urma_leave(iface);
+        return UCS_ERR_NO_RESOURCE;
+    }
+
+    payload_len = pack_cb(skb->neth + 1, arg);
+    skb->len = sizeof(skb->neth[0]) + payload_len;
+    UCT_CHECK_LENGTH(skb->len, 0, iface->super.config.seg_size, "am_bcopy");
+
+    ucs_assert(iface->tx.wr_skb.send.src.num_sge == 1);
+
+    uct_rm_urma_ep_tx_skb(iface, ep, skb, 0);
+    uct_rm_urma_iface_complete_tx_skb(iface, ep, skb);
+    UCT_TL_EP_STAT_OP(&ep->super.super, AM, BCOPY, payload_len);
+    uct_rm_urma_leave(iface);
+
+    return payload_len;
+}
+
+
+static UCS_F_ALWAYS_INLINE uct_rm_urma_zcopy_desc_t *uct_rm_urma_get_zcopy_desc(uct_rm_urma_send_skb_t *skb)
+{
+    ucs_assert(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_ZCOPY);
+    ucs_assert(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_INVALID));
+
+    return (uct_rm_urma_zcopy_desc_t*)((char*)skb->neth + skb->len);
+}
+
+static void uct_rm_urma_skb_set_zcopy_desc(uct_rm_urma_send_skb_t *skb, const uct_iov_t *iov,
+                                           size_t iovcnt, uct_completion_t *comp)
+{
+    uct_rm_urma_zcopy_desc_t *zdesc = NULL;
+    uct_rm_urma_iov_t *rm_urma_iov = NULL;
+    size_t iov_it_length;
+    size_t iov_it;
+
+    skb->flags |= UCT_RM_URMA_SEND_SKB_FLAG_ZCOPY;
+    zdesc = uct_rm_urma_get_zcopy_desc(skb);
+    zdesc->iovcnt = 0;
+
+    for (iov_it = 0; iov_it < iovcnt; ++iov_it) {
+        iov_it_length = uct_iov_get_length(iov + iov_it);
+        if (iov_it_length == 0) {
+            continue;
+        }
+
+        ucs_assert(iov_it_length <= UINT16_MAX);
+
+        rm_urma_iov = &zdesc->iov[zdesc->iovcnt++];
+        rm_urma_iov->buffer = iov[iov_it].buffer;
+        rm_urma_iov->tseg = uct_ub_memh_get_tseg(iov[iov_it].memh);
+        rm_urma_iov->length = iov_it_length;
+    }
+
+    if (comp != NULL) {
+        skb->flags |= UCT_RM_URMA_SEND_SKB_FLAG_COMP;
+        zdesc->super.comp = comp;
+    }
+}
+
+static uct_rm_urma_send_skb_t *uct_rm_urma_iface_ctl_skb_get(uct_rm_urma_iface_t *iface)
+{
+    uct_rm_urma_send_skb_t *skb = NULL;
+
+    skb = ucs_mpool_get(&iface->tx.mp);
+    if (skb == NULL) {
+        ucs_fatal("Failed to allocate control skb.");
+    }
+
+    VALGRIND_MAKE_MEM_DEFINED(&skb->tseg, sizeof(*skb->tseg));
+    skb->flags = 0;
+
+    return skb;
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_add_ctl_desc(uct_rm_urma_iface_t *iface,
+                                                               uct_rm_urma_ctl_desc_t *cdesc)
+{
+    ucs_queue_push(&iface->tx.outstanding_q, &cdesc->queue);
+}
+
+
+ucs_status_t uct_rm_urma_ep_am_zcopy(uct_ep_h tl_ep, uint8_t id, const void *header, unsigned header_length,
+                                     const uct_iov_t *iov, size_t iovcnt, unsigned flags, uct_completion_t *comp)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
+    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
+    uct_rm_urma_send_skb_t *skb = NULL;
+    ucs_status_t ret = UCS_OK;
+
+    UCT_CHECK_IOV_SIZE(iovcnt, iface->super.config.max_send_sge - 1, "uct_rm_urma_ep_am_zcopy");
+
+    UCT_CHECK_LENGTH(sizeof(uct_rm_urma_neth_t) + sizeof(uct_rm_urma_zcopy_desc_t) + header_length,
+                     0, iface->super.config.seg_size, "am_zcopy header");
+
+    uct_rm_urma_enter(iface);
+
+    ret = uct_rm_urma_am_skb_common(iface, ep, id, &skb);
+    if (ret != UCS_OK) {
+        uct_rm_urma_leave(iface);
+        return UCS_ERR_NO_RESOURCE;
+    }
+
+    skb->neth->packet_type |= UCT_RM_URMA_PACKET_FLAG_ACK_REQ;
+    memcpy(skb->neth + 1, header, header_length);
+    skb->len = sizeof(uct_rm_urma_neth_t) + header_length;
+
+    iface->tx.wr_skb.send.src.num_sge = uct_ub_sge_fill_iov(iface->tx.sge + 1, iov, iovcnt) + 1;
+
+    uct_rm_urma_ep_tx_skb(iface, ep, skb, 0);
+    iface->tx.wr_skb.send.src.num_sge = 1;
+
+    uct_rm_urma_skb_set_zcopy_desc(skb, iov, iovcnt, comp);
+    uct_rm_urma_iface_complete_tx_skb(iface, ep, skb);
+    UCT_TL_EP_STAT_OP(&ep->super.super, AM, ZCOPY, header_length + uct_iov_total_length(iov, iovcnt));
+    uct_rm_urma_leave(iface);
+
+    return UCS_INPROGRESS;
+}
+
+ucs_status_t uct_rm_urma_ep_put_short(uct_ep_h tl_ep, const void *payload, unsigned length, uint64_t remote_addr,
                                       uct_rkey_t rkey)
 {
     uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    ucs_status_t status;
+    uct_rm_urma_put_hdr_t *put_hdr = NULL;
+    uct_rm_urma_send_skb_t *skb = NULL;
+    uct_rm_urma_neth_t *neth = NULL;
 
-    if (!iface->config.native_rma) {
-        return UCS_ERR_UNSUPPORTED;
-    }
-    if (length == 0) {
-        return UCS_OK;
-    }
-    if ((payload == NULL) || (length > ucs_min(4096, iface->super.config.max_inline)) ||
-        !uct_rm_urma_rma_range(rkey, remote_addr, length)) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    UCT_RM_URMA_CHECK_RES(iface, ep);
-    if (!uct_rm_urma_iface_pending_can_send(iface, &ep->arb_group)) {
+    UCT_CHECK_LENGTH(sizeof(uct_rm_urma_neth_t) + sizeof(uct_rm_urma_put_hdr_t) + length,
+                     0, iface->super.config.max_inline, "put_short");
+
+    uct_rm_urma_enter(iface);
+
+    skb = uct_rm_urma_ep_get_tx_skb(iface, ep);
+    if (!skb) {
+        uct_rm_urma_leave(iface);
         return UCS_ERR_NO_RESOURCE;
     }
-    status = uct_rm_urma_rma_post(ep, (uint64_t)payload, NULL, length,
-                                  remote_addr, rkey, 0, 1);
-    if (status == UCS_OK) {
-        UCT_TL_EP_STAT_OP(&ep->super.super, PUT, SHORT, length);
-    }
-    return status;
-}
 
-ssize_t uct_rm_urma_ep_put_bcopy(uct_ep_h tl_ep, uct_pack_callback_t pack_cb,
-                                 void *arg, uint64_t remote_addr, uct_rkey_t rkey)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    uct_ub_iface_send_desc_t *desc;
-    ucs_status_t status;
-    size_t length;
+    neth = skb->neth;
+    uct_rm_urma_neth_init_data(ep, neth);
+    neth->packet_type = ep->super.dep_id | UCT_RM_URMA_PACKET_FLAG_PUT;
+    uct_rm_urma_neth_ack_req(ep, neth);
 
-    if (!iface->config.native_rma) {
-        return UCS_ERR_UNSUPPORTED;
-    }
-    if (pack_cb == NULL) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    UCT_RM_URMA_CHECK_RES(iface, ep);
-    if (!uct_rm_urma_iface_pending_can_send(iface, &ep->arb_group)) {
-        return UCS_ERR_NO_RESOURCE;
-    }
-    UCT_UB_IFACE_GET_TX_DESC(&iface->super, &iface->super.tx.mp, desc);
-    /* The callback must honor advertised max_bcopy, as for other UCTs. Check
-     * its returned size too, including in release builds. */
-    length = pack_cb(desc + 1, arg);
-    if (length == 0) {
-        ucs_mpool_put(desc);
-        return 0;
-    }
-    if ((length > ucs_min(4096, iface->super.config.seg_size)) ||
-        !uct_rm_urma_rma_range(rkey, remote_addr, length)) {
-        ucs_mpool_put(desc);
-        return UCS_ERR_INVALID_PARAM;
-    }
-    status = uct_rm_urma_rma_post(ep, (uint64_t)(desc + 1), desc->tseg,
-                                  length, remote_addr, rkey, 0, 0);
-    if (status != UCS_OK) {
-        ucs_mpool_put(desc);
-        return status;
-    }
-    desc->super.handler = (uct_ub_send_handler_t)ucs_mpool_put;
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &desc->super,
-                                           ep->super.status.pi);
-    UCT_TL_EP_STAT_OP(&ep->super.super, PUT, BCOPY, length);
-    return length;
-}
+    put_hdr = (uct_rm_urma_put_hdr_t *)(skb->neth + 1);
+    put_hdr->rva = remote_addr;
+    iface->tx.sge[0].addr = (uintptr_t)neth;
+    iface->tx.sge[0].len = sizeof(*neth) + sizeof(*put_hdr);
 
-/* WRITE does not consume a remote receive WQE or AM credit. The caller keeps
- * the local registration and rkey alive through completion (or local flush).
- * Device delivery is verified independently by the receiving test process. */
-ucs_status_t uct_rm_urma_ep_put_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov,
-                                      size_t iovcnt, uint64_t remote_addr,
-                                      uct_rkey_t rkey, uct_completion_t *comp)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    uct_ub_rkey_info_t *key = (uct_ub_rkey_info_t *)rkey;
-    uct_urma_iface_send_op_t *op = NULL;
-    urma_target_seg_t *target_seg;
-    urma_target_seg_t *local_seg;
-    urma_jfs_wr_t wr = {0};
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_sge_t src, dst;
-    ucs_status_t status;
-    urma_status_t posted;
-    uint64_t saved_fence;
-    size_t length;
+    uct_rm_urma_ep_tx_inlv(iface, ep, payload, length);
 
-    if (!iface->config.native_write && !iface->config.native_rma) {
-        return UCS_ERR_UNSUPPORTED;
-    }
-    /* Check unconditionally, including release builds. No strided/multi-IOV
-     * support is advertised in this first native WRITE work package. */
-    if ((iov == NULL) || (iovcnt != 1) || (iov[0].count != 1)) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    length = iov[0].length;
-    if (length == 0) {
-        return UCS_OK;
-    }
-    if ((length > 4096) || (iov[0].memh == UCT_MEM_HANDLE_NULL) ||
-        (iov[0].buffer == NULL) || (key == NULL)) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    if ((remote_addr < key->remote_seg.ubva.va) ||
-        (length > key->remote_seg.len) ||
-        (remote_addr - key->remote_seg.ubva.va > key->remote_seg.len - length)) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    local_seg = uct_ub_memh_get_tseg(iov[0].memh);
-    if (local_seg == NULL) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    if (((uint64_t)iov[0].buffer < local_seg->seg.ubva.va) ||
-        (length > local_seg->seg.len) ||
-        ((uint64_t)iov[0].buffer - local_seg->seg.ubva.va > local_seg->seg.len - length)) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    UCT_RM_URMA_CHECK_RES(iface, ep);
-    if (!uct_rm_urma_iface_pending_can_send(iface, &ep->arb_group)) {
-        return UCS_ERR_NO_RESOURCE;
-    }
-    /* Reserve completion state before posting. A successful DMA must never
-     * depend on a later allocation succeeding. */
-    if (comp != NULL) {
-        op = uct_ub_iface_get_send_op(&iface->super);
-        if (op == NULL) {
-            return UCS_ERR_NO_RESOURCE;
-        }
-    }
-    status = uct_ub_ep_get_tseg(&iface->super, rkey, &target_seg);
-    if (status != UCS_OK) {
-        goto release_op;
-    }
-    UCT_UB_FILL_WR_SG_BUF(&wr.rw.src, (uint64_t)iov[0].buffer,
-                         length, local_seg, 1, &src);
-    UCT_UB_FILL_WR_SG_BUF(&wr.rw.dst, remote_addr, length, target_seg, 1, &dst);
-    uct_rm_urma_init_base_wr(&wr, iface, URMA_OPC_WRITE, ep, 1,
-                              URMA_INLINE_DISABLE, URMA_SOLICITED_DISABLE);
-    saved_fence = ep->super.fi.fence_beat;
-    uct_ub_ep_fm(&iface->super, &ep->super, &wr);
-    posted = urma_post_jetty_send_wr(ep->rm_urma_jetty->jetty, &wr, &bad_wr);
-    if (posted != URMA_SUCCESS) {
-        ep->super.fi.fence_beat = saved_fence;
-        status = ((posted == URMA_ENOMEM) || (posted == URMA_EAGAIN)) ?
-                 UCS_ERR_NO_RESOURCE : UCS_ERR_IO_ERROR;
-        goto release_op;
-    }
-    uct_rm_urma_update_tx_resources_status(ep, iface, 1);
-    if (op != NULL) {
-        op->handler = uct_ub_send_op_completion_handler;
-        op->user_comp = comp;
-        op->length = length;
-        op->flags |= UCT_UB_IFACE_SEND_OP_FLAG_ZCOPY;
-        uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, op,
-                                               ep->super.status.pi);
-    }
-    ucs_trace("RM native RMA post kind=put_zcopy length=%zu", length);
-    UCT_TL_EP_STAT_OP(&ep->super.super, PUT, ZCOPY, length);
-    return UCS_INPROGRESS;
+    skb->len = iface->tx.sge[0].len;
+    uct_rm_urma_iface_complete_tx_inl(iface, ep, skb, put_hdr + 1, payload, length);
+    UCT_TL_EP_STAT_OP(&ep->super.super, PUT, SHORT, length);
+    uct_rm_urma_leave(iface);
 
-release_op:
-    if (op != NULL) {
-        uct_ub_iface_put_send_op(op);
-    }
-    return status;
-}
-
-ucs_status_t uct_rm_urma_ep_get_zero_bytes(uct_rm_urma_ep_t *ep, uct_rm_urma_iface_t *iface,
-                                       uct_ub_iface_send_desc_t *desc)
-{
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_status_t status;
-    urma_sge_t dst_sge;
-    urma_sge_t src_sge;
-    ucs_status_t ret;
-
-    UCT_UB_FILL_WR_SG_BUF(&wr->rw.dst, (uint64_t)(desc + 1), 0, desc->tseg, 1, &src_sge);
-    UCT_UB_FILL_WR_SG_BUF(&wr->rw.src, (uint64_t)ep->ka_va_addr, 0, ep->ka_tseg, 1, &dst_sge);
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_READ, ep, 1, URMA_INLINE_DISABLE, URMA_SOLICITED_DISABLE);
-
-    status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (ucs_unlikely(status != URMA_SUCCESS)) {
-        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-        ucs_fatal("In function ep put_0bytes, urma_post_jetty_send_wr() failed, status:0x%x.\n", status);
-    }
-
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &desc->super, ep->super.status.pi);
-    ret = UCS_INPROGRESS;
-
-    return ret;
-}
-
-ucs_status_t uct_rm_urma_ep_get_bcopy(uct_ep_h tl_ep,
-                                      uct_unpack_callback_t unpack_cb,
-                                      void *arg, size_t length,
-                                      uint64_t remote_addr, uct_rkey_t rkey,
-                                      uct_completion_t *comp)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    uct_ub_iface_send_desc_t *desc;
-    ucs_status_t status;
-
-    if (!iface->config.native_rma) {
-        return UCS_ERR_UNSUPPORTED;
-    }
-    if (length == 0) {
-        return UCS_OK;
-    }
-    if ((unpack_cb == NULL) ||
-        (length > ucs_min(4096, iface->super.config.seg_size)) ||
-        !uct_rm_urma_rma_range(rkey, remote_addr, length)) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    UCT_RM_URMA_CHECK_RES(iface, ep);
-    if (!uct_rm_urma_iface_pending_can_send(iface, &ep->arb_group) ||
-        (iface->super.tx.reads_available < (ssize_t)length)) {
-        return UCS_ERR_NO_RESOURCE;
-    }
-    UCT_UB_IFACE_GET_TX_DESC(&iface->super, &iface->super.tx.mp, desc);
-    status = uct_rm_urma_rma_post(ep, (uint64_t)(desc + 1), desc->tseg,
-                                  length, remote_addr, rkey, 1, 0);
-    if (status != UCS_OK) {
-        ucs_mpool_put(desc);
-        return status;
-    }
-    /* Exact base handlers are also recognized by error/cancel purge. Never
-     * unpack a failed READ; return its read-byte budget exactly once. */
-    desc->super.handler = (comp == NULL) ? uct_ub_ep_get_bcopy_handler_no_completion :
-                                          uct_ub_ep_get_bcopy_handler;
-    desc->super.unpack_arg = arg;
-    desc->super.user_comp = comp;
-    desc->super.length = length;
-    desc->unpack_cb = unpack_cb;
-    UCT_UB_READ_POSTED(iface, length);
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &desc->super,
-                                           ep->super.status.pi);
-    UCT_TL_EP_STAT_OP(&ep->super.super, GET, BCOPY, length);
-    return UCS_INPROGRESS;
-}
-
-/* Native READ keeps local destination memory and the remote rkey alive until
- * completion/flush. It shares SQ/CQE ownership but does not consume AM credit. */
-ucs_status_t uct_rm_urma_ep_get_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov,
-                                      size_t iovcnt, uint64_t remote_addr,
-                                      uct_rkey_t rkey, uct_completion_t *comp)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    uct_ub_rkey_info_t *key = (uct_ub_rkey_info_t *)rkey;
-    uct_urma_iface_send_op_t *op = NULL;
-    urma_target_seg_t *target_seg;
-    urma_target_seg_t *local_seg;
-    urma_jfs_wr_t wr = {0};
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_sge_t src, dst;
-    ucs_status_t status;
-    urma_status_t posted;
-    uint64_t saved_fence;
-    size_t length;
-
-    if (!iface->config.native_read && !iface->config.native_rma) {
-        return UCS_ERR_UNSUPPORTED;
-    }
-    /* Check unconditionally, including release builds. No strided/multi-IOV
-     * support is advertised in this first native READ work package. */
-    if ((iov == NULL) || (iovcnt != 1) || (iov[0].count != 1)) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    length = iov[0].length;
-    if (length == 0) {
-        return UCS_OK;
-    }
-    if ((length > ucs_min(4096, iface->super.config.max_get_zcopy)) ||
-        (iov[0].memh == UCT_MEM_HANDLE_NULL) ||
-        (iov[0].buffer == NULL) || (key == NULL)) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    if ((remote_addr < key->remote_seg.ubva.va) ||
-        (length > key->remote_seg.len) ||
-        (remote_addr - key->remote_seg.ubva.va > key->remote_seg.len - length)) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    local_seg = uct_ub_memh_get_tseg(iov[0].memh);
-    if (local_seg == NULL) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    if (((uint64_t)iov[0].buffer < local_seg->seg.ubva.va) ||
-        (length > local_seg->seg.len) ||
-        ((uint64_t)iov[0].buffer - local_seg->seg.ubva.va > local_seg->seg.len - length)) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    UCT_RM_URMA_CHECK_RES(iface, ep);
-    if (!uct_rm_urma_iface_pending_can_send(iface, &ep->arb_group)) {
-        return UCS_ERR_NO_RESOURCE;
-    }
-    /* Every READ needs accounting, even without a user callback. Reserve the
-     * record before DMA; completion/purge returns the byte budget exactly once. */
-    if (iface->super.tx.reads_available < (ssize_t)length) {
-        return UCS_ERR_NO_RESOURCE;
-    }
-    op = uct_ub_iface_get_send_op(&iface->super);
-    if (op == NULL) {
-        return UCS_ERR_NO_RESOURCE;
-    }
-    status = uct_ub_ep_get_tseg(&iface->super, rkey, &target_seg);
-    if (status != UCS_OK) {
-        goto release_op;
-    }
-    UCT_UB_FILL_WR_SG_BUF(&wr.rw.dst, (uint64_t)iov[0].buffer,
-                         length, local_seg, 1, &dst);
-    UCT_UB_FILL_WR_SG_BUF(&wr.rw.src, remote_addr, length, target_seg, 1, &src);
-    uct_rm_urma_init_base_wr(&wr, iface, URMA_OPC_READ, ep, 1,
-                              URMA_INLINE_DISABLE, URMA_SOLICITED_DISABLE);
-    saved_fence = ep->super.fi.fence_beat;
-    uct_ub_ep_fm(&iface->super, &ep->super, &wr);
-    posted = urma_post_jetty_send_wr(ep->rm_urma_jetty->jetty, &wr, &bad_wr);
-    if (posted != URMA_SUCCESS) {
-        ep->super.fi.fence_beat = saved_fence;
-        status = ((posted == URMA_ENOMEM) || (posted == URMA_EAGAIN)) ?
-                 UCS_ERR_NO_RESOURCE : UCS_ERR_IO_ERROR;
-        goto release_op;
-    }
-    uct_rm_urma_update_tx_resources_status(ep, iface, 1);
-    op->handler = uct_ub_ep_get_zcopy_completion_handler;
-    op->user_comp = comp;
-    op->length = length;
-    op->flags |= UCT_UB_IFACE_SEND_OP_FLAG_ZCOPY;
-    UCT_UB_READ_POSTED(iface, length);
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, op,
-                                           ep->super.status.pi);
-    ucs_trace("RM native RMA post kind=get_zcopy length=%zu", length);
-    UCT_TL_EP_STAT_OP(&ep->super.super, GET, ZCOPY, length);
-    return UCS_INPROGRESS;
-
-release_op:
-    if (op != NULL) {
-        uct_ub_iface_put_send_op(op);
-    }
-    return status;
-}
-
-static UCS_F_ALWAYS_INLINE ucs_status_t
-uct_rm_urma_ep_atomic_cswap(uct_rm_urma_ep_t *ep, unsigned opcode, void *result,
-                            unsigned length, uint64_t remote_addr, uct_rkey_t rkey,
-                            uint64_t compare_mask, uint64_t compare,
-                            uint64_t swap_mask, uint64_t swap_add, uct_completion_t *comp)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    uct_ub_iface_send_desc_t *desc = NULL;
-    urma_target_seg_t *target_seg = NULL;
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_status_t status;
-    ucs_status_t ret;
-    urma_sge_t dst;
-    urma_sge_t src;
-
-    UCT_RM_URMA_CHECK_RES(iface, ep);
-
-    ret = uct_ub_ep_get_tseg(&iface->super, rkey, &target_seg);
-    if (ucs_unlikely(ret != UCS_OK)) {
-        ucs_error("In function ep_get_zcopy, get target seg failed");
-        return ret;
-    }
-
-    if (comp == NULL) {
-        UCT_UB_IFACE_GET_TX_ATOMIC_DESC(&iface->super, &iface->super.tx.short_desc_mp, desc);
-    } else {
-        UCT_UB_IFACE_GET_TX_ATOMIC_FETCH_DESC(&iface->super, &iface->super.tx.short_desc_mp,
-                                              desc, uct_ub_iface_atomic_handler(&iface->super, length),
-                                              result, comp);
-    }
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_CAS, ep, 1, URMA_INLINE_DISABLE, URMA_SOLICITED_DISABLE);
-    uct_ub_ep_fm(&iface->super, &ep->super, wr);
-
-    UCT_UB_FILL_ATOMIC_WR(wr, (uint64_t)(desc + 1), remote_addr, compare, swap_add, length,
-                          target_seg, desc->tseg, &dst, &src);
-
-    status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (ucs_unlikely(status != URMA_SUCCESS)) {
-        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-        ucs_fatal("In function uct_rm_urma_ep_atomic_cswap, urma_post_jetty_send_wr() failed, status:0x%x", status);
-    }
-
-    UCT_TL_EP_STAT_ATOMIC(&ep->super.super);
-
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &desc->super, ep->super.status.pi);
-    (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-    return UCS_INPROGRESS;
-
-}
-
-ucs_status_t uct_rm_urma_ep_atomic_cswap64(uct_ep_h tl_ep, uint64_t compare, uint64_t swap,
-                                           uint64_t remote_addr, uct_rkey_t rkey,
-                                           uint64_t *result, uct_completion_t *comp)
-{
-    return uct_rm_urma_ep_atomic_cswap(ucs_derived_of(tl_ep, uct_rm_urma_ep_t),
-                                       UCT_ATOMIC_OP_CSWAP, result,
-                                       sizeof(uint64_t), remote_addr, rkey, 0,
-                                       compare, UINT64_MAX, swap, comp);
-}
-
-ucs_status_t uct_rm_urma_ep_atomic_cswap32(uct_ep_h tl_ep, uint32_t compare, uint32_t swap,
-                                           uint64_t remote_addr, uct_rkey_t rkey,
-                                           uint32_t *result, uct_completion_t *comp)
-{
-    return uct_rm_urma_ep_atomic_cswap(ucs_derived_of(tl_ep, uct_rm_urma_ep_t),
-                                       UCT_ATOMIC_OP_CSWAP, result,
-                                       sizeof(uint32_t), remote_addr, rkey, UCS_MASK(32),
-                                       compare, UINT64_MAX, swap, comp);
-}
-
-static ucs_status_t UCS_F_ALWAYS_INLINE
-uct_rm_urma_ep_atomic_opcode_post(uct_ep_h tl_ep, unsigned opcode, unsigned size,
-                                  uint64_t value, uint64_t remote_addr, uct_rkey_t rkey)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    uct_ub_iface_send_desc_t *desc = NULL;
-    urma_target_seg_t *target_seg = NULL;
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_status_t status;
-    urma_sge_t src_buff;
-    urma_sge_t dst_buff;
-    ucs_status_t ret;
-
-    UCT_RM_URMA_CHECK_RES(iface, ep);
-    UCT_UB_CHECK_ATOMIC_OPS(opcode, size, UCT_UB_ATOMIC_OPS);
-
-    ret = uct_ub_ep_get_tseg(&iface->super, rkey, &target_seg);
-    if (ucs_unlikely(ret != UCS_OK)) {
-        ucs_error("In function ep_atomic_opcode_post, get target seg failed");
-        return ret;
-    }
-
-    UCT_UB_IFACE_GET_TX_ATOMIC_DESC(&iface->super, &iface->super.tx.short_desc_mp, desc);
-
-    UCT_UB_FILL_FAA(wr, remote_addr, value, size,
-                    (uint64_t)(desc + 1), desc->tseg, target_seg, &dst_buff, &src_buff);
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_FADD, ep, 1, URMA_INLINE_DISABLE, URMA_SOLICITED_DISABLE);
-    uct_ub_ep_fm(&iface->super, &ep->super, wr);
-
-    status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (ucs_unlikely(status != URMA_SUCCESS)) {
-        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-        ucs_fatal("In function ep_atomic_opcode_post, urma_post_jetty_send_wr() failed, status:0x%x.\n", status);
-    }
-
-    UCT_TL_EP_STAT_ATOMIC(&ep->super.super);
-
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &desc->super, ep->super.status.pi);
-    (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
     return UCS_OK;
 }
 
-ucs_status_t uct_rm_urma_ep_atomic64_post(uct_ep_h ep, unsigned opcode, uint64_t value,
-                                          uint64_t remote_addr, uct_rkey_t rkey)
+ucs_status_t uct_rm_urma_ep_pending_add(uct_ep_h tl_ep, uct_pending_req_t *req, unsigned flags)
 {
-    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->iface, uct_rm_urma_iface_t);
-    uct_ub_md_t *md = ucs_derived_of(iface->super.super.md, uct_ub_md_t);
-    if (md->dev.urma_ctx->dev->type == URMA_TRANSPORT_UB && opcode != UCT_ATOMIC_OP_ADD) {
-        return UCS_ERR_UNSUPPORTED;
-    }
-
-    if (opcode == UCT_ATOMIC_OP_SWAP) {
-        return uct_rm_urma_ep_atomic_cswap(ucs_derived_of(ep, uct_rm_urma_ep_t),
-                                           UCT_ATOMIC_OP_SWAP, NULL,
-                                           sizeof(uint64_t), remote_addr, rkey, 0,
-                                           0, UINT64_MAX, value, NULL);
-    }
-    return uct_rm_urma_ep_atomic_opcode_post(ep, opcode, sizeof(value), value, remote_addr, rkey);
-}
-
-ucs_status_t uct_rm_urma_ep_atomic32_post(uct_ep_h ep, unsigned opcode, uint32_t value,
-                                          uint64_t remote_addr, uct_rkey_t rkey)
-{
-    if (opcode == UCT_ATOMIC_OP_SWAP) {
-        return uct_rm_urma_ep_atomic_cswap(ucs_derived_of(ep, uct_rm_urma_ep_t),
-                                           UCT_ATOMIC_OP_SWAP, NULL,
-                                           sizeof(uint32_t), remote_addr, rkey, 0,
-                                           0, UINT64_MAX, value, NULL);
-    }
-
-    return uct_rm_urma_ep_atomic_opcode_post(ep, opcode, sizeof(value), value, remote_addr, rkey);
-}
-
-static ucs_status_t UCS_F_ALWAYS_INLINE
-uct_rm_urma_ep_atomic_opcode_fetch(uct_ep_h tl_ep, unsigned opcode, unsigned size,
-                                   uint64_t value, void *result,
-                                   uint64_t remote_addr, uct_rkey_t rkey,
-                                   uct_completion_t *comp)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    uct_ub_iface_send_desc_t *desc = NULL;
-    urma_target_seg_t *target_seg = NULL;
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_status_t status;
-    urma_sge_t dst_buff;
-    urma_sge_t src_buff;
-    ucs_status_t ret;
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
 
-    UCT_RM_URMA_CHECK_RES(iface, ep);
-    UCT_UB_CHECK_ATOMIC_OPS(opcode, size, UCT_UB_ATOMIC_OPS);
+    uct_rm_urma_enter(iface);
 
-    ret = uct_ub_ep_get_tseg(&iface->super, rkey, &target_seg);
-    if (ucs_unlikely(ret != UCS_OK)) {
-        ucs_error("In function ep_atomic_opcode_fetch, get target seg failed");
-        return ret;
+    if (ucs_unlikely(uct_rm_urma_iface_has_pending_async_ev(iface))) {
+        goto add_req;
     }
 
-    UCT_UB_IFACE_GET_TX_ATOMIC_FETCH_DESC(&iface->super, &iface->super.tx.short_desc_mp,
-                                          desc, uct_ub_iface_atomic_handler(&iface->super, size),
-                                          result, comp);
-
-    UCT_UB_FILL_FAA(wr, remote_addr, value, size,
-                    (uint64_t)(desc + 1), desc->tseg, target_seg, &dst_buff, &src_buff);
-
-    ucs_trace("Atomic fetch, value:%lu, token_id:%u, src_key_id:%u, size:%u\n",
-              value,
-              desc->tseg->seg.token_id, target_seg->seg.token_id, size);
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_FADD, ep, 1, URMA_INLINE_DISABLE, URMA_SOLICITED_DISABLE);
-    uct_ub_ep_fm(&iface->super, &ep->super, wr);
-
-    status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (ucs_unlikely(status != URMA_SUCCESS)) {
-        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-        ucs_fatal("In function ep atomic opcode fetch, urma_post_jetty_send_wr() failed, status:0x%x.\n", status);
-    }
-
-    UCT_TL_EP_STAT_ATOMIC(&ep->super.super);
-
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &desc->super, ep->super.status.pi);
-    (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-    return UCS_INPROGRESS;
-
-}
-
-ucs_status_t uct_rm_urma_ep_atomic64_fetch(uct_ep_h ep, uct_atomic_op_t opcode,
-                                           uint64_t value, uint64_t *result,
-                                           uint64_t remote_addr, uct_rkey_t rkey,
-                                           uct_completion_t *comp)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->iface, uct_rm_urma_iface_t);
-    uct_ub_md_t *md = ucs_derived_of(iface->super.super.md, uct_ub_md_t);
-    if (md->dev.urma_ctx->dev->type == URMA_TRANSPORT_UB && opcode != UCT_ATOMIC_OP_ADD) {
-        return UCS_ERR_UNSUPPORTED;
-    }
-
-    if (opcode == UCT_ATOMIC_OP_SWAP) {
-        return uct_rm_urma_ep_atomic_cswap(ucs_derived_of(ep, uct_rm_urma_ep_t),
-                                           UCT_ATOMIC_OP_SWAP, result,
-                                           sizeof(uint64_t), remote_addr, rkey, 0,
-                                           0, UINT64_MAX, value, comp);
-    }
-
-    return uct_rm_urma_ep_atomic_opcode_fetch(ep, opcode, sizeof(value), value, result,
-                                              remote_addr, rkey, comp);
-}
-
-ucs_status_t uct_rm_urma_ep_atomic32_fetch(uct_ep_h ep, uct_atomic_op_t opcode,
-                                           uint32_t value, uint32_t *result,
-                                           uint64_t remote_addr, uct_rkey_t rkey,
-                                           uct_completion_t *comp)
-{
-
-    if (opcode == UCT_ATOMIC_OP_SWAP) {
-        return uct_rm_urma_ep_atomic_cswap(ucs_derived_of(ep, uct_rm_urma_ep_t),
-                                           UCT_ATOMIC_OP_SWAP, result,
-                                           sizeof(uint32_t), remote_addr, rkey, 0,
-                                           0, UINT64_MAX, value, comp);
-    }
-
-    return uct_rm_urma_ep_atomic_opcode_fetch(ep, opcode, sizeof(value), value, result,
-                                              remote_addr, rkey, comp);
-}
-
-ucs_status_t uct_rm_urma_ep_pending_add(uct_ep_h tl_ep, uct_pending_req_t *r, unsigned flags)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-
-    /* BUSY asks UCP to retry immediately. That is only safe with an empty
-     * pending queue, even when shared credits or SQ resources have returned.
-     * Otherwise preserve the existing queue and append the new request. */
-    if (ucs_arbiter_group_is_empty(&ep->arb_group) &&
-        uct_ub_iface_has_tx_resources(&iface->super) &&
-        uct_rm_urma_ep_can_send(ep) && iface->super.tx.jfc_available > 0) {
+    if (uct_rm_urma_iface_can_tx(iface) &&
+        uct_rm_urma_iface_has_skbs(iface) &&
+        uct_rm_urma_ep_is_connected_and_no_pending(ep) &&
+        !uct_rm_urma_ep_no_window(ep)) {
+        uct_rm_urma_leave(iface);
         return UCS_ERR_BUSY;
     }
 
-    UCS_STATIC_ASSERT(sizeof(uct_pending_req_priv_arb_t) <=
-                      UCT_PENDING_REQ_PRIV_LEN);
-    uct_pending_req_arb_group_push(&ep->arb_group, r);
-    UCT_TL_EP_STAT_PEND(&ep->super.super);
+add_req:
+    UCS_STATIC_ASSERT(sizeof(uct_rm_urma_pending_req_priv_t) <= UCT_PENDING_REQ_PRIV_LEN);
 
-    if ((iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) ||
-        iface->config.native_write || iface->config.native_read ||
-        iface->config.native_rma ||
-        ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) ?
-         ((ep->peer != NULL) && (ep->peer->credits > 0)) :
-         uct_ub_fc_has_resources(&iface->super, &ep->super.fc))) {
-        /* Shared-SQ waiters stay scheduled, even if this EP has no CQE. */
-        ucs_arbiter_group_schedule(&iface->tx.arbiter, &ep->arb_group);
-    }
+    uct_rm_urma_pending_req_priv(req)->flags = flags;
+
+    ep->flags |= UCT_RM_URMA_EP_FLAG_HAS_PENDING;
+    uct_pending_req_arb_group_push(&ep->tx.pending.group, req);
+
+    ucs_arbiter_group_schedule(&iface->tx.pending_q, &ep->tx.pending.group);
+
+    uct_rm_urma_leave(iface);
     return UCS_OK;
 }
 
-static void uct_rm_urma_fc_req_release(uct_rm_urma_fc_pending_req_t *req)
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_is_last_pending_elem(uct_rm_urma_ep_t *ep, ucs_arbiter_elem_t *elem)
 {
-    uct_rm_urma_iface_t *iface = ucs_derived_of(req->super.ep->iface,
-                                              uct_rm_urma_iface_t);
-
-    if (req->desc != NULL) {
-        ucs_mpool_put(req->desc);
-    }
-    uct_rm_urma_iface_target_put(iface, req->target);
-    ucs_mpool_put(req);
+    return ((ucs_arbiter_elem_is_only(elem)) || ((elem->next == &ep->tx.pending.elem) &&
+            (ucs_arbiter_group_tail(&ep->tx.pending.group) == &ep->tx.pending.elem)));
 }
 
-static void uct_rm_urma_fc_send_completion(uct_urma_iface_send_op_t *op,
-                                          const void *resp)
+static ucs_arbiter_cb_result_t uct_rm_urma_ep_arbiter_purge_cb(ucs_arbiter_t *arbiter, ucs_arbiter_group_t *group,
+                                                               ucs_arbiter_elem_t *elem, void *arg)
 {
-    uct_rm_urma_fc_pending_req_t *req =
-        ucs_container_of(op, uct_rm_urma_fc_pending_req_t, send_op);
-
-    uct_rm_urma_fc_req_release(req);
-}
-
-static ucs_status_t
-uct_rm_urma_ep_fc_ctrl(uct_rm_urma_fc_pending_req_t *req)
-{
-    uct_ep_t *tl_ep = req->super.ep;
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    urma_jfs_wr_t *wr = &iface->super.send_wr;
-    urma_jfs_wr_t *bad_wr = NULL;
-    uct_ub_iface_send_desc_t *desc = NULL;
-    uct_ub_hdr_t *hdr;
-    urma_sge_t sge;
-    urma_status_t status;
-
-    if (iface->tx.error != UCS_OK) {
-        return iface->tx.error;
-    }
-    if (ep->super.flags & (UCT_RM_URMA_EP_FLAG_CLOSING |
-                           UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL |
-                           UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED)) {
-        return UCS_ERR_CANCELED;
-    }
-    /* A credit grant must not itself consume the peer's FC window. */
-    UCT_RM_URMA_CHECK_JFC_RET(iface, ep, UCS_ERR_NO_RESOURCE);
-    UCT_RM_URMA_CHECK_TX_QUEUE_RET(ep, UCS_ERR_NO_RESOURCE);
-    ucs_assert(ep == iface->tx.ctrl_ep);
-
-    if (iface->super.config.max_inline >= sizeof(*hdr)) {
-        hdr = &iface->super.am_inl_hdr.ub_hdr;
-        hdr->am_id = UCT_RM_URMA_EP_FC_PURE_GRANT;
-        hdr->ep_id = req->remote_ep_id;
-        UCT_UB_FILL_WR_SG_BUF(&wr->send.src, (uint64_t)hdr, sizeof(*hdr),
-                              NULL, 1, &sge);
-        uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_SEND, ep, 1,
-                                 URMA_INLINE_ENABLE, URMA_SOLICITED_ENABLE);
-    } else {
-        /* Each in-flight non-inline control message needs its own header. */
-        desc = ucs_mpool_get(&iface->super.tx.short_desc_mp);
-        if (desc == NULL) {
-            return UCS_ERR_NO_RESOURCE;
-        }
-        hdr = (uct_ub_hdr_t *)(desc + 1);
-        hdr->am_id = UCT_RM_URMA_EP_FC_PURE_GRANT;
-        hdr->ep_id = req->remote_ep_id;
-        UCT_UB_FILL_WR_SG_BUF(&wr->send.src, (uint64_t)hdr, sizeof(*hdr),
-                              desc->tseg, 1, &sge);
-        uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_SEND, ep, 1,
-                                 URMA_INLINE_DISABLE, URMA_SOLICITED_ENABLE);
-    }
-    wr->tjetty = req->target->jetty;
-    status = urma_post_jetty_send_wr(ep->rm_urma_jetty->jetty, wr, &bad_wr);
-    memset(wr, 0, sizeof(*wr));
-    if (status != URMA_SUCCESS) {
-        if (desc != NULL) {
-            ucs_mpool_put(desc);
-        }
-        return (status == URMA_ENOMEM || status == URMA_EAGAIN) ?
-               UCS_ERR_NO_RESOURCE : UCS_ERR_IO_ERROR;
-    }
-    uct_rm_urma_update_tx_resources_status(ep, iface, URMA_COMPLETE_ENABLE);
-    req->desc               = desc;
-    req->legacy_ep          = NULL; /* the posted WR owns only its target */
-    req->send_op.flags      = 0;
-    req->send_op.user_comp  = NULL;
-    req->send_op.handler    = uct_rm_urma_fc_send_completion;
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &req->send_op,
-                                          ep->super.status.pi);
-    return UCS_OK;
-}
-
-ucs_status_t uct_rm_urma_ep_fc_grant(uct_pending_req_t *self)
-{
-    uct_rm_urma_pending_req_t *pending =
-        ucs_derived_of(self, uct_rm_urma_pending_req_t);
-    uct_rm_urma_fc_pending_req_t *freq =
-        ucs_derived_of(pending, uct_rm_urma_fc_pending_req_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(pending->ep, uct_rm_urma_ep_t);
-    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface,
-                                                uct_rm_urma_iface_t);
-    ucs_status_t status;
-
-    ucs_assert_always(iface->super.config.fc_enabled);
-    status = uct_rm_urma_ep_fc_ctrl(freq);
-    if (status == UCS_OK) {
-        UCS_STATS_UPDATE_COUNTER(ep->super.fc.stats, UCT_UB_FC_STAT_TX_PURE_GRANT, 1);
-    }
-    /* A posted request owns its target until CQE, including inline sends.
-     * Only an unposted terminal error can release it immediately. */
-    if ((status != UCS_OK) && (status != UCS_ERR_NO_RESOURCE)) {
-        uct_rm_urma_fc_req_release(freq);
-    }
-    return (status == UCS_ERR_CANCELED) ? UCS_OK : status;
-}
-
-ucs_status_t uct_rm_urma_ep_post_flush_size_zero_bytes(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep, const void *payload,
-                                                 unsigned length, uint64_t remote_addr)
-{
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_status_t urma_status;
-    urma_sge_t dst_sge;
-    urma_sge_t src_sge;
-    ucs_status_t ret;
-
-    UCT_UB_FILL_WR_SG_BUF(&wr->rw.src, (uint64_t)payload, length, NULL, 1, &src_sge);
-    UCT_UB_FILL_WR_SG_BUF(&wr->rw.dst, remote_addr, length, ep->ka_tseg, 1, &dst_sge);
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_WRITE, ep, 1, URMA_INLINE_ENABLE, URMA_SOLICITED_DISABLE);
-    wr->next = NULL;
-
-    urma_status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (urma_status != URMA_SUCCESS) {
-        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-        ucs_fatal("In function uct_rm_urma_ep_post_flush_size_zero_bytes, urma_post_jetty_send_wr() failed code(0x%x)", urma_status);
-    }
-
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    ret = UCS_OK;
-
-    return ret;
-}
-
-ucs_status_t uct_rm_urma_ep_post_flush_by_fc(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep)
-{
-    urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
-    urma_jfs_wr_t *wr = &(iface->super.send_wr);
-    urma_jfs_wr_t *bad_wr = NULL;
-    urma_status_t urma_status;
-    uct_ub_hdr_t *hdr = NULL;
-    ucs_status_t ret;
-    urma_sge_t sge;
-
-    hdr = (uct_ub_hdr_t*)(iface->fc_desc + 1);
-    hdr->ep_id = ep->super.dep_id;
-    UCT_UB_FILL_WR_SG_BUF(&wr->send.src, (uint64_t)(iface->fc_desc + 1),
-                          sizeof(uct_ub_hdr_t), iface->fc_desc->tseg, 1, &sge);
-
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_SEND, ep, 1, URMA_INLINE_ENABLE, URMA_SOLICITED_DISABLE);
-    wr->next = NULL;
-
-    urma_status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
-    if (urma_status != URMA_SUCCESS) {
-        (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
-        ucs_fatal("In function uct_rm_urma_ep_post_flush_by_fc, urma_post_jetty_send_wr() failed code(0x%x)", urma_status);
-    }
-
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    ret = UCS_OK;
-
-    return ret;
-}
-
-static void uct_rm_urma_ep_post_flush(uct_rm_urma_ep_t *ep, uct_rm_urma_iface_t *iface)
-{
-    uint64_t dummy = 0;
-
-    if (iface->config.flush_by_fc || (iface->super.config.max_inline == 0)) {
-        uct_rm_urma_ep_post_flush_by_fc(iface, ep);
-    } else {
-        uct_rm_urma_ep_post_flush_size_zero_bytes(iface, ep, &dummy, 0, ep->ka_va_addr);
-    }
-}
-
-static ucs_status_t uct_rm_urma_ep_check_internal(uct_ep_h tl_ep)
-{
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-
-    /* in case if no TX resources are available then there is at least
-     * one signaled operation which provides actual peer status, in this case
-     * just return without any actions */
-    UCT_RM_URMA_CHECK_TX_QUEUE_RET(ep, UCS_OK);
-
-    /* in case of not iface resources available then return NO_RESOURCE
-     * to add request to pending queue */
-    UCT_RM_URMA_CHECK_JFC_RET(iface, ep, UCS_ERR_NO_RESOURCE);
-
-    uct_rm_urma_ep_post_flush(ep, iface);
-
-    return UCS_OK;
-}
-
-static ucs_status_t uct_rm_urma_ep_check_progress(uct_pending_req_t *self)
-{
-    uct_rm_urma_pending_req_t *req = ucs_derived_of(self, uct_rm_urma_pending_req_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(req->ep, uct_rm_urma_ep_t);
-    ucs_status_t status;
-
-    ucs_assert(ep->super.flags & UCT_RM_URMA_EP_FLAG_KEEPALIVE_PENDING);
-
-    status = uct_rm_urma_ep_check_internal(req->ep);
-    if (status == UCS_OK) {
-        ep->super.flags &= ~UCT_RM_URMA_EP_FLAG_KEEPALIVE_PENDING;
-        ucs_mpool_put(req);
-    } else {
-        ucs_assert(status == UCS_ERR_NO_RESOURCE);
-    }
-
-    return status;
-}
-
-ucs_arbiter_cb_result_t uct_rm_urma_ep_arbiter_purge_cb(ucs_arbiter_t *arbiter, ucs_arbiter_group_t *group,
-                                                        ucs_arbiter_elem_t *elem, void *arg)
-{
-    uct_rm_urma_ep_t UCS_V_UNUSED *ep = ucs_container_of(group, uct_rm_urma_ep_t, arb_group);
+    uct_rm_urma_ep_t *ep = ucs_container_of(group, uct_rm_urma_ep_t, tx.pending.group);
     uct_pending_req_t *req = ucs_container_of(elem, uct_pending_req_t, priv);
     uct_purge_cb_args_t *cb_args = arg;
     uct_pending_purge_callback_t cb = cb_args->cb;
-    uct_rm_urma_pending_req_t *pending;
-    uct_rm_urma_fc_pending_req_t *freq;
+    int is_last_pending_elem;
 
-    if (req->func == uct_rm_urma_ep_check_progress) {
-        ep->super.flags &= ~UCT_RM_URMA_EP_FLAG_KEEPALIVE_PENDING;
-        ucs_mpool_put(req);
-    } else if (ucs_likely(req->func != uct_rm_urma_ep_fc_grant)) {
-        /* Invoke user's callback only if it is not internal FC message */
-        if (cb != NULL) {
-            cb(req, cb_args->arg);
-        } else {
-            ucs_debug("Ep cancelling user pending request");
-        }
+    if (&ep->tx.pending.elem == elem) {
+        return UCS_ARBITER_CB_RESULT_REMOVE_ELEM;
+    }
+
+    if (cb) {
+        cb(req, cb_args->arg);
     } else {
-        pending = ucs_derived_of(req, uct_rm_urma_pending_req_t);
-        freq = ucs_derived_of(pending, uct_rm_urma_fc_pending_req_t);
-        uct_rm_urma_fc_req_release(freq);
+        ucs_debug("Ep cancelling user pending request.");
     }
+
+    is_last_pending_elem = uct_rm_urma_ep_is_last_pending_elem(ep, elem);
+    if (is_last_pending_elem) {
+        uct_rm_urma_ep_remove_has_pending_flag(ep);
+    }
+
     return UCS_ARBITER_CB_RESULT_REMOVE_ELEM;
-}
-
-static ucs_arbiter_cb_result_t
-uct_rm_urma_ep_purge_legacy_grant_cb(ucs_arbiter_t *arbiter,
-                                    ucs_arbiter_group_t *group,
-                                    ucs_arbiter_elem_t *elem, void *arg)
-{
-    uct_pending_req_t *pending = ucs_container_of(elem, uct_pending_req_t, priv);
-    uct_rm_urma_pending_req_t *base =
-        ucs_derived_of(pending, uct_rm_urma_pending_req_t);
-    uct_rm_urma_fc_pending_req_t *req =
-        ucs_derived_of(base, uct_rm_urma_fc_pending_req_t);
-
-    ucs_assert(pending->func == uct_rm_urma_ep_fc_grant);
-    if (req->legacy_ep != arg) {
-        return UCS_ARBITER_CB_RESULT_NEXT_GROUP;
-    }
-    uct_rm_urma_fc_req_release(req);
-    return UCS_ARBITER_CB_RESULT_REMOVE_ELEM;
-}
-
-static void uct_rm_urma_ep_purge_legacy_grants(uct_rm_urma_iface_t *iface,
-                                             uct_rm_urma_ep_t *ep)
-{
-    if ((iface->tx.ctrl_ep != NULL) && (ep != iface->tx.ctrl_ep)) {
-        /* No pointer to ep may remain in pending after its ID is recycled.
-         * Other destinations' replies stay queued on the control owner. */
-        ucs_arbiter_group_purge(&iface->tx.arbiter,
-                                &iface->tx.ctrl_ep->arb_group,
-                                uct_rm_urma_ep_purge_legacy_grant_cb, ep);
-    }
 }
 
 void uct_rm_urma_ep_pending_purge(uct_ep_h tl_ep, uct_pending_purge_callback_t cb, void *arg)
 {
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+    ucs_arbiter_group_t *group = &ep->tx.pending.group;
     uct_purge_cb_args_t args = { cb, arg };
 
-    ucs_arbiter_group_purge(&iface->tx.arbiter, &ep->arb_group,
-                            uct_rm_urma_ep_arbiter_purge_cb, &args);
-    uct_rm_urma_ep_purge_legacy_grants(iface, ep);
+    uct_rm_urma_enter(iface);
+    ucs_arbiter_group_purge(&iface->tx.pending_q, group, uct_rm_urma_ep_arbiter_purge_cb, &args);
+    if (uct_rm_urma_ep_ctl_op_isany(ep)) {
+        uct_rm_urma_ep_ctl_op_schedule(iface, ep);
+    }
+    uct_rm_urma_leave(iface);
 }
-
-ucs_status_t uct_rm_urma_ep_flush(uct_ep_h tl_ep, unsigned flags,
-                                  uct_completion_t *comp)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    uct_urma_iface_send_op_t *op;
-
-    if (flags & UCT_FLUSH_FLAG_REMOTE) {
-        return UCS_ERR_UNSUPPORTED;
-    }
-    if (iface->tx.error != UCS_OK) {
-        return iface->tx.error;
-    }
-    if (flags & UCT_FLUSH_FLAG_CANCEL) {
-        /* Cancellation still waits for local DMA completion. */
-        ep->super.flags |= UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL;
-        uct_rm_urma_ep_purge_legacy_grants(iface, ep);
-    }
-    /* PI covers posted WRs only. An earlier pending RMA request can still
-     * have unsent fragments: registering a flush at the current PI would let
-     * UCP complete while that request is unfinished. Queue flush behind it.
-     * The pending head itself may retry flush; CANCEL preserves its existing
-     * semantics and does not wait for unsent user requests. */
-    if (!(flags & UCT_FLUSH_FLAG_CANCEL) &&
-        !uct_rm_urma_iface_pending_can_send(iface, &ep->arb_group)) {
-        return UCS_ERR_NO_RESOURCE;
-    }
-    if (ep->reliable_outstanding != 0) {
-        /* All replay WRs complete on the iface control EP. A user EP flush
-         * must wait for its own remote ACK and local DMA, not its empty PI. */
-        return UCS_ERR_NO_RESOURCE;
-    }
-    if (ep->super.status.pi == ep->super.status.ci) {
-        UCT_TL_EP_STAT_FLUSH(&ep->super.super);
-        return UCS_OK;
-    }
-    if (comp != NULL) {
-        op = ucs_mpool_get(&iface->super.tx.send_op_mp);
-        if (op == NULL) {
-            return UCS_ERR_NO_MEMORY;
-        }
-        uct_ub_ep_init_send_op(op, 0, comp, uct_ub_ep_flush_op_completion_handler);
-        op->iface = &iface->super;
-        /* The common flush helper takes uint16_t; RM WR sequence is uint32_t. */
-        uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, op,
-                                              ep->super.status.pi);
-    }
-    UCT_TL_EP_STAT_FLUSH_WAIT(&ep->super.super);
-    return UCS_INPROGRESS;
-}
-
-ucs_arbiter_cb_result_t uct_rm_urma_ep_process_pending(ucs_arbiter_t *arbiter, ucs_arbiter_group_t *group,
-                                                       ucs_arbiter_elem_t *elem, void *arg)
-{
-    uct_pending_req_t *req = ucs_container_of(elem, uct_pending_req_t, priv);
-    uct_rm_urma_ep_t *ep = ucs_container_of(group, uct_rm_urma_ep_t, arb_group);
-    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
-    ucs_status_t status;
-    ucs_status_t *dispatch_status = arg;
-    int is_fc_grant = (req->func == uct_rm_urma_ep_fc_grant);
-
-    /* Stop before invoking another callback after a grant failed. Error
-     * notification must wait until the arbiter has removed the current elem. */
-    if (*dispatch_status != UCS_OK) {
-        return UCS_ARBITER_CB_RESULT_STOP;
-    }
-    status = uct_rm_urma_iface_invoke_pending_cb(iface, group, req);
-    if (status == UCS_OK) {
-        return UCS_ARBITER_CB_RESULT_REMOVE_ELEM;
-    } else if (status == UCS_INPROGRESS) {
-        return UCS_ARBITER_CB_RESULT_NEXT_GROUP;
-    } else if (is_fc_grant && (status != UCS_ERR_NO_RESOURCE)) {
-        /* fc_grant has released req; do not dereference it again. */
-        *dispatch_status = status;
-        return UCS_ARBITER_CB_RESULT_REMOVE_ELEM;
-    } else if (!(uct_ub_iface_has_tx_resources(&iface->super) &&
-                 (iface->super.tx.jfc_available > 0) &&
-                 (iface->rm_urma_jetty.available > 0))) {
-        /* No iface resources */
-        return UCS_ARBITER_CB_RESULT_STOP;
-    }
-
-    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
-        return UCS_ARBITER_CB_RESULT_RESCHED_GROUP;
-    }
-    /* No any other pending operations (except no-op, flush(CANEL), and others
-     * which don't consume TX resources) allowed to be still scheduled on an
-     * arbiter group for which flush(CANCEL) was done */
-    ucs_assert(!(ep->super.flags & UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL));
-
-    /* No ep resources */
-    if ((iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) ||
-        iface->config.native_write || iface->config.native_read ||
-        iface->config.native_rma ||
-        ((iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) ?
-         ((ep->peer != NULL) && (ep->peer->credits > 0)) :
-         uct_ub_fc_has_resources(&iface->super, &ep->super.fc))) {
-        if (iface->config.native_write || iface->config.native_read ||
-            iface->config.native_rma) {
-            /* Pending callbacks are opaque: the head may be a READ/WRITE even
-             * without AM credits. Retry on the NEXT progress call. NEXT_GROUP
-             * requeues on the active list and can spin forever before CQ/RX
-             * polling; RESCHED_GROUP defers it until dispatch returns. */
-            return UCS_ARBITER_CB_RESULT_RESCHED_GROUP;
-        }
-        /* A provider can report a full shared SQ even before the software WR
-         * budget reaches zero. Keep this group scheduled for any TX CQE. */
-        return UCS_ARBITER_CB_RESULT_STOP;
-    }
-    ucs_assertv(!uct_rm_urma_ep_can_send(ep),
-                "Pending callback returned error, but send resources are"
-                " available");
-    return UCS_ARBITER_CB_RESULT_DESCHED_GROUP;
-}
-
-ucs_status_t uct_rm_urma_ep_fence(uct_ep_h tl_ep, unsigned flags)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-
-    /* in case if fence is requested and enabled by configuration
-     * we need to schedule fence for next RDMA operation */
-    if (iface->super.config.fence_mode != UCT_UB_FENCE_MODE_NONE) {
-        ep->super.fi.fence_beat = iface->super.tx.fi.fence_beat - 1;
-    }
-
-    UCT_TL_EP_STAT_FENCE(ucs_derived_of(tl_ep, uct_base_ep_t));
-    return UCS_OK;
-}
-
-ucs_status_t uct_rm_urma_ep_check(uct_ep_h tl_ep, unsigned flags, uct_completion_t *comp)
-{
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    uct_rm_urma_pending_req_t *req = NULL;
-    ucs_status_t status;
-
-    UCT_EP_KEEPALIVE_CHECK_PARAM(flags, comp);
-
-    ucs_assert(ep->super.flags & UCT_RM_URMA_EP_FLAG_CONNECTED);
-
-    if (ep->super.flags & UCT_RM_URMA_EP_FLAG_KEEPALIVE_PENDING) {
-        /* keepalive request is in pending queue and will be
-         * processed when resources are available */
-        return UCS_OK;
-    }
-
-    status = uct_rm_urma_ep_check_internal(tl_ep);
-    if (status != UCS_ERR_NO_RESOURCE) {
-        ucs_assert(status == UCS_OK);
-        return status;
-    }
-
-    /* there are no iface resources, add pending request */
-    req = ucs_mpool_get(&iface->tx.pending_mp);
-    if (req == NULL) {
-        return UCS_ERR_NO_MEMORY;
-    }
-
-    req->ep = &ep->super.super.super;
-    req->super.func = uct_rm_urma_ep_check_progress;
-    status = uct_rm_urma_ep_pending_add(tl_ep, &req->super, 0);
-    ep->super.flags |= UCT_RM_URMA_EP_FLAG_KEEPALIVE_PENDING;
-    ucs_assert_always(status == UCS_OK);
-
-    return UCS_OK;
-}
-
-/* Preserve the existing 40-byte wire format without unaligned typed loads. */
-typedef struct uct_rm_urma_ep_wire_addr {
-    uint32_t              jetty_id;
-    uint32_t              tpn;
-    uint32_t              ep_id;
-    uint64_t              seg_va;
-    uint64_t              seg_len;
-    uint32_t              seg_flag;
-    uint32_t              seg_token_id;
-    urma_transport_mode_t trans_mode;
-} UCS_S_PACKED uct_rm_urma_ep_wire_addr_t;
 
 ucs_status_t uct_rm_urma_ep_get_address(uct_ep_h tl_ep, uct_ep_addr_t *addr)
 {
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface,
-                                               uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    const urma_seg_t *seg = &iface->super.ka_local_seg->tseg->seg;
-    uct_rm_urma_ep_wire_addr_t wire;
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+    uct_ub_rm_urma_ep_addr_t *ep_addr = (uct_ub_rm_urma_ep_addr_t *)addr;
 
-    if (iface->link.mode != UCT_RM_URMA_LINK_LEGACY) {
-        return UCS_ERR_UNSUPPORTED;
-    }
-    ucs_debug("RM legacy EP address export iface=%p ep=%p", iface, ep);
-    UCS_STATIC_ASSERT(sizeof(wire) == 40);
-    UCS_STATIC_ASSERT(sizeof(wire) == sizeof(uct_rm_urma_ep_addr_params_t));
-    wire.jetty_id     = ep->rm_urma_jetty->jetty->jetty_id.id;
-    wire.tpn          = ep->tp.tpn;
-    wire.ep_id        = ep->super.ep_id;
-    wire.seg_va       = seg->ubva.va;
-    wire.seg_len      = seg->len;
-    wire.seg_flag     = seg->attr.value;
-    wire.seg_token_id = seg->token_id;
-    wire.trans_mode   = ep->rm_urma_jetty->jetty->jetty_cfg.jfs_cfg.trans_mode;
-    memcpy(addr, &wire, sizeof(wire));
-    return UCS_OK;
-}
-
-static void
-uct_rm_urma_ep_addr_unpack(const uct_rm_urma_ep_addr_t *ep_addr,
-                           uct_rm_urma_ep_addr_params_t *params)
-{
-    uct_rm_urma_ep_wire_addr_t wire;
-
-    memcpy(&wire, ep_addr, sizeof(wire));
-    params->jetty_id     = wire.jetty_id;
-    params->ep_id        = wire.ep_id;
-    params->seg_va       = wire.seg_va;
-    params->seg_len      = wire.seg_len;
-    params->seg_flag     = wire.seg_flag;
-    params->seg_token_id = wire.seg_token_id;
-    params->trans_mode   = wire.trans_mode;
-}
-
-void uct_rm_urma_ka_seg(uct_rm_urma_ep_addr_params_t *ep_addr,
-                        const uct_ub_address_pack_params_t *dev_addr, urma_seg_t *ka_remote_seg)
-{
-    ka_remote_seg->ubva.eid = dev_addr->eid;
-    ka_remote_seg->ubva.uasid = dev_addr->uasid;
-    ka_remote_seg->ubva.va = ep_addr->seg_va;
-    ka_remote_seg->len = ep_addr->seg_len;
-    ka_remote_seg->attr.value = ep_addr->seg_flag;
-    ka_remote_seg->token_id = ep_addr->seg_token_id;
-}
-
-ucs_status_t uct_rm_urma_ep_ka_import_seg(uct_rm_urma_ep_t *ep, uct_ub_md_t *ub_md, urma_seg_t *ka_remote_seg)
-{
-    urma_import_seg_flag_t flag = {
-        .bs = {
-            .cacheable = URMA_NON_CACHEABLE,
-            .access    = URMA_ACCESS_READ |
-                         URMA_ACCESS_WRITE |
-                         URMA_ACCESS_ATOMIC,
-            .mapping   = URMA_SEG_NOMAP,
-            .reserved  = 0
-        }
-    };
-
-    ep->ka_tseg = urma_import_seg(ub_md->dev.urma_ctx, ka_remote_seg,
-                                  &ub_md->dev.token, 0, flag);
-    if (ep->ka_tseg == NULL) {
-        ucs_error("Failed to import segment");
-        return UCS_ERR_IO_ERROR;
-    }
+    ep_addr->iface_addr.jetty_id = iface->rm_urma_jetty.jetty->jetty_id.id;
+    ep_addr->iface_addr.trans_mode = iface->rm_urma_jetty.jetty->jetty_cfg.jfs_cfg.trans_mode;
+    ep_addr->ep_id = ep->super.ep_id;
 
     return UCS_OK;
 }
 
-ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep,
-                                          const uct_device_addr_t *dev_addr,
-                                          const uct_ep_addr_t *ep_addr)
+static void uct_rm_urma_ep_reset(uct_rm_urma_ep_t *ep)
 {
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    const uct_rm_urma_ep_addr_t *rm_urma_ep_addr =
-            (const uct_rm_urma_ep_addr_t *)ep_addr;
-    const uct_ub_address_t *ub_addr = (const uct_ub_address_t *)dev_addr;
+    ep->tx.psn         = UCT_RM_URMA_INITIAL_PSN;
+    ep->ca.cwnd        = UCT_RM_URMA_CA_MIN_WINDOW;
+    ep->ca.wmax        = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t)->config.max_window;
+    ep->tx.acked_psn   = UCT_RM_URMA_INITIAL_PSN - 1;
+    ep->tx.pending.ops = UCT_RM_URMA_EP_OP_NONE;
+    ep->tx.max_psn     = ep->tx.psn + ep->ca.cwnd;
+    uct_rm_urma_ep_reset_max_psn(ep);
+    ucs_queue_head_init(&ep->tx.window);
+
+    ep->resend.pos       = ucs_queue_iter_begin(&ep->tx.window);
+    ep->resend.psn       = ep->tx.psn;
+    ep->resend.max_psn   = ep->tx.acked_psn;
+    ep->tx.resend_count  = 0;
+    ep->rx_creq_count    = 0;
+
+    ep->rx.acked_psn     = UCT_RM_URMA_INITIAL_PSN - 1;
+    ucs_frag_list_init(ep->tx.psn - 1, &ep->rx.ooo_pkts, 0 /*TODO: ooo support */
+                       UCS_STATS_ARG(ep->super.super.stats));
+}
+
+static ucs_status_t uct_rm_urma_ep_free_by_timeout(uct_rm_urma_ep_t *ep,
+                                                   uct_rm_urma_iface_t *iface)
+{
+    uct_rm_urma_iface_ops_t *ops = NULL;
+    ucs_time_t diff;
+
+    diff = ucs_twheel_get_time(&iface->tx.timer) - ep->close_time;
+    if (diff > iface->config.peer_timeout) {
+        ucs_debug("Ur_urma_ep is destroyed after %fs with timeout %fs.", ucs_time_to_sec(diff),
+                  ucs_time_to_sec(iface->config.peer_timeout));
+        ops = ucs_derived_of(iface->ops, uct_rm_urma_iface_ops_t);
+        ops->ep_free(&ep->super.super.super);
+        return UCS_OK;
+    }
+    return UCS_INPROGRESS;
+}
+
+static ucs_status_t uct_rm_urma_ep_connect_to_iface(uct_rm_urma_ep_t *ep)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+    uct_ub_device_t UCS_V_UNUSED *dev = uct_ub_iface_device(&iface->super);
+
+    ucs_frag_list_cleanup(&ep->rx.ooo_pkts);
+    uct_rm_urma_ep_reset(ep);
+
+    return UCS_OK;
+}
+
+static ucs_status_t uct_rm_urma_ep_disconnect_from_iface(uct_ep_h tl_ep)
+{
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
+
+    ucs_frag_list_cleanup(&ep->rx.ooo_pkts);
+    uct_rm_urma_ep_reset(ep);
+
+    ep->super.dep_id = UCT_RM_URMA_EP_NULL_ID;
+    ep->flags &= ~UCT_RM_URMA_EP_FLAG_CONNECTED;
+
+    return UCS_OK;
+}
+
+void uct_rm_urma_rjetty_get_peer_address(uct_rm_urma_iface_t *iface, const uct_ub_address_t *dev_addr,
+                                         const uct_rm_urma_iface_addr_t *if_addr, void *address_p)
+{
+    uct_rm_urma_peer_address_t *peer_address = (uct_rm_urma_peer_address_t*)address_p;
+    uct_ub_address_pack_params_t ubdev_addr_param = {0};
+    urma_rjetty_t rjetty = {0};
+    khiter_t kh_iter;
+
+    uct_ub_address_unpack(dev_addr, &ubdev_addr_param);
+    rjetty.jetty_id.eid   = ubdev_addr_param.eid;
+    rjetty.jetty_id.uasid = ubdev_addr_param.uasid;
+    rjetty.jetty_id.id    = if_addr->jetty_id;
+    rjetty.trans_mode     = if_addr->trans_mode;
+    rjetty.type           = URMA_JETTY;
+    rjetty.tp_type        = URMA_CTP;
+    kh_iter = kh_get(uct_rm_urma_tjetty, &iface->peer_addr_hash, rjetty);
+    if (kh_iter != kh_end(&iface->peer_addr_hash)) {
+        *peer_address = kh_value(&iface->peer_addr_hash, kh_iter);
+    }
+}
+
+ucs_status_t uct_rm_urma_iface_unpack_peer_address(uct_rm_urma_iface_t *iface, const uct_ub_address_t *dev_addr,
+                                                   const uct_rm_urma_iface_addr_t *if_addr, void *address_p)
+{
+    uct_rm_urma_peer_address_t *peer_address = (uct_rm_urma_peer_address_t*)address_p;
     uct_ub_address_pack_params_t ubdev_addr_param = {0};
     uct_ub_md_t *ub_md = uct_ub_iface_md(&iface->super);
-    uct_rm_urma_ep_addr_params_t ep_addr_param = {0};
-    urma_seg_t ka_remote_seg = {0};
-    ucs_status_t status = UCS_OK;
     urma_rjetty_t rjetty = {0};
     urma_token_t token = {0};
+    khiter_t kh_iter;
+    int kh_ret;
 
-    if (ep->super.flags & (UCT_RM_URMA_EP_FLAG_CLOSING |
-                          UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL |
-                          UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED)) {
-        return UCS_ERR_CANCELED;
-    }
-
-    if (iface->link.mode != UCT_RM_URMA_LINK_LEGACY) {
-        return UCS_ERR_UNSUPPORTED;
-    }
-    ucs_debug("RM legacy connect_to_ep iface=%p ep=%p", iface, ep);
-    uct_ub_address_unpack(ub_addr, &ubdev_addr_param);
-    uct_rm_urma_ep_addr_unpack(rm_urma_ep_addr, &ep_addr_param);
-
-    if ((ep_addr_param.trans_mode != URMA_TM_RM) ||
-        (ep->super.flags & UCT_RM_URMA_EP_FLAG_CONNECTED)) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    if (ep_addr_param.ep_id >= UCT_UB_IFACE_MAX_EPS) {
-        ucs_error("Invalid dep_id:%u received", ep_addr_param.ep_id);
-        return UCS_ERR_NO_RESOURCE;
-    }
-
-    rjetty.jetty_id.eid = ubdev_addr_param.eid;
+    uct_ub_address_unpack(dev_addr, &ubdev_addr_param);
+    rjetty.jetty_id.eid   = ubdev_addr_param.eid;
     rjetty.jetty_id.uasid = ubdev_addr_param.uasid;
-    rjetty.jetty_id.id = ep_addr_param.jetty_id;
-    rjetty.trans_mode = ep_addr_param.trans_mode;
-    rjetty.type = URMA_JETTY;
-    rjetty.flag.bs.order_type = URMA_DEF_ORDER;
-    rjetty.tp_type = URMA_CTP;
-    token.token = ub_md->dev.token.token;
+    rjetty.jetty_id.id    = if_addr->jetty_id;
+    rjetty.trans_mode     = if_addr->trans_mode;
+    rjetty.type           = URMA_JETTY;
+    rjetty.tp_type        = URMA_CTP;
+    kh_iter = kh_get(uct_rm_urma_tjetty, &iface->peer_addr_hash, rjetty);
+    if (kh_iter == kh_end(&iface->peer_addr_hash)) {
+        kh_iter = kh_put(uct_rm_urma_tjetty, &iface->peer_addr_hash, rjetty, &kh_ret);
+        if (kh_iter == kh_end(&iface->peer_addr_hash)) {
+            ucs_error("Put hash error, eid="EID_FMT", uasid=%u, jetty_id=%u.",
+                      EID_ARGS(rjetty.jetty_id.eid), rjetty.jetty_id.uasid, rjetty.jetty_id.id);
+            return UCS_ERR_NO_MEMORY;
+        }
 
-    status = uct_rm_urma_iface_target_get(iface, &rjetty, &token, &ep->target);
-    if (status != UCS_OK) {
-        ucs_error("Failed to acquire RM target: %s, eid="EID_FMT
-                  ", uasid=%u, jetty_id=%u",
-                  ucs_status_string(status), EID_ARGS(rjetty.jetty_id.eid),
-                  rjetty.jetty_id.uasid, rjetty.jetty_id.id);
-        goto err_import_jetty;
+        token.token = ub_md->dev.token.token;
+        peer_address->tjetty_id = if_addr->jetty_id;
+        peer_address->tjetty = urma_import_jetty(ub_md->dev.urma_ctx, &rjetty, &token);
+        if (peer_address->tjetty == NULL) {
+            ucs_error("Failed to urma_import_jetty, eid="EID_FMT", uasid=%u, jetty_id=%u.",
+                      EID_ARGS(rjetty.jetty_id.eid), rjetty.jetty_id.uasid, rjetty.jetty_id.id);
+            return UCS_ERR_IO_ERROR;
+        }
+
+        kh_value(&iface->peer_addr_hash, kh_iter) = *peer_address;
+    } else {
+        *peer_address = kh_value(&iface->peer_addr_hash, kh_iter);
     }
 
-    if (ep->ka_tseg == NULL) {
-        uct_rm_urma_ka_seg(&ep_addr_param, &ubdev_addr_param, &ka_remote_seg);
-        status = uct_rm_urma_ep_ka_import_seg(ep, ub_md, &ka_remote_seg);
-        if (status != UCS_OK) {
-            goto err_import_seg;
+    return UCS_OK;
+}
+
+static uct_rm_urma_ep_t *uct_rm_urma_ep_create_passive(uct_rm_urma_iface_t *iface, uct_rm_urma_ctl_hdr_t *ctl)
+{
+    uct_ep_params_t params = {0};
+    uct_rm_urma_ep_t *ep = NULL;
+    uct_ep_t *ep_h = NULL;
+    ucs_status_t status;
+
+    /* create new endpoint */
+    params.field_mask = UCT_EP_PARAM_FIELD_IFACE;
+    params.iface = &iface->super.super.super;
+    status = uct_ep_create(&params, &ep_h);
+    ucs_assert_always(status == UCS_OK);
+    ep = ucs_derived_of(ep_h, uct_rm_urma_ep_t);
+
+    status = uct_ep_connect_to_ep(ep_h, (void*)uct_rm_urma_creq_ub_addr(ctl), (void*)&ctl->conn_req.ep_addr);
+    ucs_assert_always(status == UCS_OK);
+
+    uct_rm_urma_ep_set_state(ep, UCT_RM_URMA_EP_FLAG_PRIVATE);
+
+    ep->conn_sn = ctl->conn_req.conn_sn;
+    uct_rm_urma_iface_cep_insert_ep(iface, uct_rm_urma_creq_ub_addr(ctl), &ctl->conn_req.ep_addr.iface_addr,
+                                    ctl->conn_req.conn_sn, ep);
+
+    return ep;
+}
+
+static void uct_rm_urma_ep_set_dest_ep_id(uct_rm_urma_ep_t *ep, uint32_t dest_id)
+{
+    ucs_assert(dest_id != UCT_RM_URMA_EP_NULL_ID);
+    if (dest_id >= UCT_UB_IFACE_MAX_EPS) {
+        ucs_fatal("Invalid dest ep_id:%u received", dest_id);
+    }
+    ep->super.dep_id = dest_id;
+    ep->flags |= UCT_RM_URMA_EP_FLAG_CONNECTED;
+}
+
+uct_rm_urma_send_skb_t *uct_rm_urma_ep_prepare_creq(uct_rm_urma_ep_t *ep)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+    uct_ub_address_pack_params_t ubdev_addr_param = {0};
+    const uct_ub_address_t *ub_addr = NULL;
+    uct_rm_urma_send_skb_t *skb = NULL;
+    uct_rm_urma_ctl_hdr_t *creq = NULL;
+    uct_rm_urma_neth_t *neth = NULL;
+    uct_device_addr_t *addr = NULL;
+
+    ucs_assert_always(ep->super.dep_id == UCT_RM_URMA_EP_NULL_ID);
+    ucs_assert_always(ep->super.ep_id != UCT_RM_URMA_EP_NULL_ID);
+
+    skb = uct_rm_urma_iface_get_tx_skb(iface, ep);
+    if (!skb) {
+        return NULL;
+    }
+
+    neth = skb->neth;
+    neth->psn = ep->tx.psn;
+    neth->ack_psn = ep->rx.acked_psn = ucs_frag_list_sn(&ep->rx.ooo_pkts);
+    neth->packet_type  = UCT_RM_URMA_EP_NULL_ID;
+    neth->packet_type |= UCT_RM_URMA_PACKET_FLAG_CTL;
+
+    creq = (uct_rm_urma_ctl_hdr_t *)(neth + 1);
+    creq->type = UCT_RM_URMA_PACKET_CREQ;
+    creq->conn_req.conn_sn = ep->conn_sn;
+    uct_rm_urma_ep_get_address(&ep->super.super.super, (void*)&creq->conn_req.ep_addr);
+    uct_rm_urma_peer_name(ucs_unaligned_ptr(&creq->peer));
+
+    addr = (uct_device_addr_t *)uct_rm_urma_creq_ub_addr(creq);
+    uct_ub_iface_get_device_address(&iface->super.super.super, addr);
+
+    ub_addr = (const uct_ub_address_t *)addr;
+    uct_ub_address_unpack(ub_addr, &ubdev_addr_param);
+
+    skb->len = sizeof(*neth) + sizeof(*creq) + iface->super.addr_size;
+
+    return skb;
+}
+
+static uct_rm_urma_send_skb_t *uct_rm_urma_ep_prepare_crep(uct_rm_urma_ep_t *ep)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+    uct_rm_urma_send_skb_t *skb = NULL;
+    uct_rm_urma_ctl_hdr_t *crep = NULL;
+    uct_rm_urma_neth_t *neth = NULL;
+
+    ucs_assert_always(ep->super.dep_id != UCT_RM_URMA_EP_NULL_ID);
+    ucs_assert_always(ep->super.ep_id != UCT_RM_URMA_EP_NULL_ID);
+
+    skb = uct_rm_urma_iface_get_tx_skb(iface, ep);
+    if (!skb) {
+        return NULL;
+    }
+
+    neth = skb->neth;
+    neth->psn = ep->tx.psn;
+    neth->ack_psn = ep->rx.acked_psn = ucs_frag_list_sn(&ep->rx.ooo_pkts);
+    neth->packet_type = ep->super.dep_id | UCT_RM_URMA_PACKET_FLAG_ACK_REQ | UCT_RM_URMA_PACKET_FLAG_CTL;
+
+    crep = (uct_rm_urma_ctl_hdr_t *)(neth + 1);
+    crep->type = UCT_RM_URMA_PACKET_CREP;
+    crep->conn_rep.src_ep_id = ep->super.ep_id;
+    uct_rm_urma_peer_name(ucs_unaligned_ptr(&crep->peer));
+
+    skb->len = sizeof(*neth) + sizeof(*crep);
+
+    return skb;
+}
+
+static uint16_t uct_rm_urma_ep_send_ctl(uct_rm_urma_ep_t *ep, uct_rm_urma_send_skb_t *skb,
+                                        const uct_rm_urma_iov_t *iov, uint16_t iovcnt, int flags)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+    uint16_t iov_index;
+
+    if ((skb->len <= iface->super.config.max_inline) && iovcnt == 0) {
+        flags |= UCT_RM_URMA_IFACE_SEND_CTL_FLAG_INLINE;
+    }
+
+    for (iov_index = 0; iov_index < iovcnt; ++iov_index) {
+        iface->tx.sge[iov_index + 1].addr = (uint64_t)iov[iov_index].buffer;
+        iface->tx.sge[iov_index + 1].len = iov[iov_index].length;
+        iface->tx.sge[iov_index + 1].tseg = iov[iov_index].tseg;
+    }
+
+    iface->tx.wr_skb.send.src.num_sge = iovcnt + 1;
+
+    uct_rm_urma_ep_tx_skb(iface, ep, skb, flags);
+    iface->tx.wr_skb.send.src.num_sge = 1;
+
+    return iface->tx.send_sn;
+}
+
+static void uct_rm_urma_ep_send_creq_crep(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep, uct_rm_urma_send_skb_t *skb)
+{
+    uct_rm_urma_ep_send_ctl(ep, skb, NULL, 0, UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SOLICITED);
+
+    uct_rm_urma_iface_complete_tx_skb(iface, ep, skb);
+}
+
+void uct_rm_urma_ep_deal_creq(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *neth)
+{
+    uct_ub_address_pack_params_t ubdev_addr_param = {0};
+    uct_rm_urma_ctl_hdr_t *creq = NULL;
+    uct_ub_address_t *addr = NULL;
+    uct_rm_urma_ep_t *ep = NULL;
+
+    creq = (uct_rm_urma_ctl_hdr_t *)(neth + 1);
+    addr = (uct_ub_address_t *)(creq + 1);
+    uct_ub_address_unpack(addr, &ubdev_addr_param);
+
+    ucs_assert_always(creq->type == UCT_RM_URMA_PACKET_CREQ);
+
+    ep = uct_rm_urma_iface_cep_get_ep(iface, addr, &creq->conn_req.ep_addr.iface_addr, creq->conn_req.conn_sn, 0);
+    if (ep == NULL) {
+        ep = uct_rm_urma_ep_create_passive(iface, creq);
+        ucs_assert_always(ep != NULL);
+        ep->rx.ooo_pkts.head_sn = neth->psn;
+        uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_CREP);
+    } else if (ep->super.dep_id == UCT_RM_URMA_EP_NULL_ID) {
+        uct_rm_urma_ep_set_dest_ep_id(ep, creq->conn_req.ep_addr.ep_id);
+        ep->rx.ooo_pkts.head_sn = neth->psn;
+        if (UCT_RM_URMA_PSN_COMPARE(ep->tx.psn, >, UCT_RM_URMA_INITIAL_PSN)) {
+            uct_rm_urma_ep_process_ack(iface, ep, UCT_RM_URMA_INITIAL_PSN, 0);
+        }
+        uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_CREP);
+    }
+
+    if (UCT_RM_URMA_PSN_COMPARE(neth->psn, <, ep->rx.ooo_pkts.head_sn)) {
+        uct_rm_urma_ep_rx_ctl_drop_packet(ep, neth, UCT_RM_URMA_EP_FLAG_CREQ_RCVD | UCT_RM_URMA_EP_FLAG_CREP_RCVD,
+                                          "CREQ");
+        return;
+    }
+
+    if (uct_rm_urma_ep_ctl_op_check(ep, UCT_RM_URMA_EP_OP_CREQ)) {
+        uct_rm_urma_ep_set_state(ep, UCT_RM_URMA_EP_FLAG_CREQ_NOTSENT);
+    }
+
+    uct_rm_urma_ep_ctl_op_del(ep, UCT_RM_URMA_EP_OP_CREQ);
+    uct_rm_urma_ep_set_state(ep, UCT_RM_URMA_EP_FLAG_CREQ_RCVD);
+}
+
+void uct_rm_urma_ep_deal_crep(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep, uct_rm_urma_neth_t *neth)
+{
+    uct_rm_urma_ctl_hdr_t *ctl = (uct_rm_urma_ctl_hdr_t*)(neth + 1);
+
+    ucs_assert_always(ctl->type == UCT_RM_URMA_PACKET_CREP);
+
+    if (uct_rm_urma_ep_is_connected(ep)) {
+        ucs_assertv_always(ep->super.dep_id == ctl->conn_rep.src_ep_id,
+                           "Ep [id=%d dest_ep_id=%d flags=0x%x] "
+                           "Crep [dst_ep_id=%d src_ep_id=%d]",
+                           ep->super.ep_id, ep->super.dep_id, ep->flags,
+                           uct_rm_urma_neth_get_dest_id(neth), ctl->conn_rep.src_ep_id);
+    }
+
+    if (UCT_RM_URMA_PSN_COMPARE(neth->psn, <, ep->rx.ooo_pkts.head_sn)) {
+        uct_rm_urma_ep_rx_ctl_drop_packet(ep, neth, UCT_RM_URMA_EP_FLAG_CREP_RCVD, "CREP");
+        return;
+    }
+
+    ep->rx.ooo_pkts.head_sn = neth->psn;
+    uct_rm_urma_ep_set_dest_ep_id(ep, ctl->conn_rep.src_ep_id);
+    ucs_arbiter_group_schedule(&iface->tx.pending_q, &ep->tx.pending.group);
+    memcpy(&ep->peer, &ctl->peer, sizeof(ctl->peer));
+    uct_rm_urma_ep_set_state(ep, UCT_RM_URMA_EP_FLAG_CREP_RCVD);
+}
+
+void uct_rm_urma_ep_deal_am(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *neth,
+                            unsigned byte_len, uct_ub_iface_recv_desc_t *desc)
+{
+    uint32_t am_id = neth->packet_type >> UCT_RM_URMA_PACKET_AM_ID_SHIFT;
+    void *udesc = (char*)desc + iface->super.config.rx_headroom_offset;
+    ucs_status_t status;
+
+    if (uct_rm_urma_neth_get_dest_id(neth) == UCT_RM_URMA_EP_NULL_ID) {
+        return;
+    }
+
+    status = uct_iface_invoke_am(&iface->super.super, am_id, neth + 1,  byte_len - sizeof(uct_rm_urma_neth_t),
+                                 UCT_CB_PARAM_FLAG_DESC);
+    if (ucs_unlikely(status == UCS_INPROGRESS)) {
+        uct_recv_desc(udesc) = &iface->super.release_desc;
+    } else {
+        ucs_mpool_put_inline(desc);
+    }
+}
+
+static void uct_rm_urma_ep_resend(uct_rm_urma_ep_t *ep)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+    size_t max_len_without_nack = sizeof(uct_rm_urma_neth_t) + sizeof(uct_rm_urma_ctl_hdr_t) +
+                                  iface->super.addr_size;
+    uct_rm_urma_send_skb_t *sent_skb = NULL;
+    uct_rm_urma_zcopy_desc_t *zdesc = NULL;
+    uct_rm_urma_ctl_desc_t *cdesc = NULL;
+    uct_rm_urma_send_skb_t *skb = NULL;
+    ucs_queue_iter_t resend_pos = NULL;
+    uct_rm_urma_iov_t skb_iov = {0};
+    uct_rm_urma_iov_t *iov = NULL;
+    uint16_t iovcnt = 0;
+
+    if (UCT_RM_URMA_PSN_COMPARE(ep->resend.max_psn, <=, ep->tx.acked_psn)) {
+        uct_rm_urma_ep_resend_end(ep);
+        return;
+    }
+
+    /* check window */
+    resend_pos = ep->resend.pos;
+    if (ucs_queue_iter_end(&ep->tx.window, resend_pos)) {
+        uct_rm_urma_ep_resend_end(ep);
+        return;
+    }
+
+    sent_skb = ucs_queue_iter_elem(sent_skb, resend_pos, queue);
+    ucs_assert(((uintptr_t)sent_skb % UCT_RM_URMA_SKB_ALIGN) == 0);
+    if (UCT_RM_URMA_PSN_COMPARE(sent_skb->neth->psn, >=, ep->tx.max_psn)) {
+        ucs_debug("Ep: out of window(psn=%d/max_psn=%d) - can not resend more.",
+                  sent_skb ? sent_skb->neth->psn : -1, ep->tx.max_psn);
+        uct_rm_urma_ep_resend_end(ep);
+        return;
+    }
+
+    if (!(ep->flags & UCT_RM_URMA_EP_FLAG_TX_NACKED) && (sent_skb->len > max_len_without_nack)) {
+        uct_rm_urma_ep_resend_end(ep);
+        return;
+    }
+
+    ep->resend.pos = ucs_queue_iter_next(resend_pos);
+
+    if (sent_skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_RESENDING) {
+        ucs_debug("Ep: skb already being resent.");
+        return ;
+    }
+
+    if ((uct_rm_urma_neth_get_dest_id(sent_skb->neth) == UCT_RM_URMA_EP_NULL_ID) &&
+        !(sent_skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_CTL)) {
+        return ;
+    }
+
+    ucs_assertv_always(!(uct_rm_urma_ep_is_connected(ep) &&
+                       (uct_rm_urma_neth_get_dest_id(sent_skb->neth) == UCT_RM_URMA_EP_NULL_ID) &&
+                       !(sent_skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM)),
+                       "Ep: CREQ resend on endpoint which is already connected.");
+
+    skb = uct_rm_urma_iface_ctl_skb_get(iface);
+    skb->flags = UCT_RM_URMA_SEND_SKB_FLAG_CTL_RESEND;
+    sent_skb->flags |= UCT_RM_URMA_SEND_SKB_FLAG_RESENDING;
+    ep->resend.psn = sent_skb->neth->psn;
+    ep->tx.resend_time = uct_rm_urma_iface_get_time(iface);
+
+    if (sent_skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_ZCOPY) {
+        skb->len = sent_skb->len;
+        zdesc = uct_rm_urma_get_zcopy_desc(sent_skb);
+        iov = zdesc->iov;
+        iovcnt = zdesc->iovcnt;
+    } else {
+        ucs_assert(sent_skb->len >= sizeof(uct_rm_urma_neth_t));
+        skb->len = sizeof(uct_rm_urma_neth_t);
+        skb_iov.buffer = UCS_PTR_BYTE_OFFSET(sent_skb->neth, sizeof(uct_rm_urma_neth_t));
+        skb_iov.length = sent_skb->len - sizeof(uct_rm_urma_neth_t);
+        skb_iov.tseg = sent_skb->tseg;
+        iov = &skb_iov;
+        iovcnt = 1;
+    }
+    memcpy(skb->neth, sent_skb->neth, skb->len);
+    skb->neth->ack_psn = ep->rx.acked_psn;
+    cdesc              = uct_rm_urma_get_ctl_desc(skb);
+    cdesc->self_skb    = skb;
+    cdesc->resent_skb  = sent_skb;
+    cdesc->ep          = ep;
+
+    if ((skb->neth->psn % UCT_RM_URMA_RESENDS_PER_ACK) == 0 ||
+        UCT_RM_URMA_PSN_COMPARE(skb->neth->psn, ==, ep->tx.acked_psn + 1)) {
+        skb->neth->packet_type |= UCT_RM_URMA_PACKET_FLAG_ACK_REQ;
+    } else {
+        skb->neth->packet_type &= ~UCT_RM_URMA_PACKET_FLAG_ACK_REQ;
+    }
+
+    if (UCT_RM_URMA_PSN_COMPARE(ep->resend.psn, ==, ep->resend.max_psn)) {
+        ucs_debug("Ep: resending completed.");
+        ep->resend.psn = ep->resend.max_psn + 1;
+        uct_rm_urma_ep_resend_end(ep);
+    }
+
+    cdesc->sn = uct_rm_urma_ep_send_ctl(ep, skb, iov, iovcnt, UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SIGNALED|
+                                        UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SOLICITED);
+    uct_rm_urma_iface_add_ctl_desc(iface, cdesc);
+    ++ep->tx.resend_count;
+}
+
+static void uct_rm_urma_ep_send_ack(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep)
+{
+    uct_rm_urma_ctl_desc_t *cdesc = NULL;
+    uct_rm_urma_send_skb_t *skb = NULL;
+    int ctl_flags = 0;
+
+    if (!uct_rm_urma_ep_is_connected(ep)) {
+        goto out;
+    }
+    if (sizeof(uct_rm_urma_neth_t) <= iface->super.config.max_inline) {
+        skb = ucs_alloca(sizeof(*skb) + sizeof(uct_rm_urma_neth_t));
+        ctl_flags |= UCT_RM_URMA_IFACE_SEND_CTL_FLAG_INLINE;
+    } else {
+        skb = uct_rm_urma_iface_ctl_skb_get(iface);
+    }
+    uct_rm_urma_neth_init_data(ep, skb->neth);
+    skb->flags = UCT_RM_URMA_SEND_SKB_FLAG_CTL_ACK;
+    skb->len = sizeof(uct_rm_urma_neth_t);
+    skb->neth->packet_type = ep->super.dep_id;
+    if (uct_rm_urma_ep_ctl_op_check(ep, UCT_RM_URMA_EP_OP_ACK_REQ)) {
+        skb->neth->packet_type |= UCT_RM_URMA_PACKET_FLAG_ACK_REQ;
+        if (ep->tx.tick >= iface->config.min_poke_time) {
+            ctl_flags |= UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SOLICITED;
         }
     }
 
-    ep->tjetty        = ep->target->jetty;
-    ep->ka_va_addr    = ep_addr_param.seg_va;
-    ep->super.dep_id  = ep_addr_param.ep_id;
-    ep->super.flags |= UCT_RM_URMA_EP_FLAG_CONNECTED;
-    return UCS_OK;
+    if (uct_rm_urma_ep_ctl_op_check(ep, UCT_RM_URMA_EP_OP_NACK)) {
+        skb->neth->packet_type |= UCT_RM_URMA_PACKET_FLAG_NAK;
+    }
+    if (ctl_flags & UCT_RM_URMA_IFACE_SEND_CTL_FLAG_INLINE) {
+        uct_rm_urma_ep_send_ctl(ep, skb, NULL, 0, ctl_flags);
+    } else {
+        cdesc = uct_rm_urma_get_ctl_desc(skb);
+        cdesc->sn = uct_rm_urma_ep_send_ctl(ep, skb, NULL, 0, ctl_flags);
+        cdesc->self_skb = skb;
+        cdesc->resent_skb = NULL;
+        cdesc->ep = NULL;
+        uct_rm_urma_iface_add_ctl_desc(iface, cdesc);
+    }
 
-err_import_seg:
-    uct_rm_urma_iface_target_put(iface, ep->target);
-    ep->target = NULL;
-err_import_jetty:
+out:
+    uct_rm_urma_ep_ctl_op_del(ep, UCT_RM_URMA_EP_OP_CTL_ACK);
+}
+
+static void uct_rm_urma_ep_do_pending_ctl(uct_rm_urma_ep_t *ep, uct_rm_urma_iface_t *iface)
+{
+    uct_rm_urma_send_skb_t *skb = NULL;
+
+    if (ep->tx.pending.ops & UCT_RM_URMA_EP_OP_CREQ) {
+        skb = uct_rm_urma_ep_prepare_creq(ep);
+        if (skb) {
+            uct_rm_urma_ep_ctl_op_del(ep, UCT_RM_URMA_EP_OP_CREQ);
+            uct_rm_urma_ep_send_creq_crep(iface, ep, skb);
+        }
+        goto out;
+    }
+
+    if (ep->tx.pending.ops & UCT_RM_URMA_EP_OP_CREP) {
+        skb = uct_rm_urma_ep_prepare_crep(ep);
+        if (skb) {
+            uct_rm_urma_ep_ctl_op_del(ep, UCT_RM_URMA_EP_OP_CREP);
+            uct_rm_urma_ep_send_creq_crep(iface, ep, skb);
+        }
+        goto out;
+    }
+
+    if (ep->tx.pending.ops & UCT_RM_URMA_EP_OP_RESEND) {
+        uct_rm_urma_ep_resend(ep);
+        goto out;
+    }
+
+    if (ep->tx.pending.ops & UCT_RM_URMA_EP_OP_CTL_ACK) {
+        uct_rm_urma_ep_send_ack(iface, ep);
+        goto out;
+    }
+    ucs_assertv(!uct_rm_urma_ep_ctl_op_isany(ep), "Unsupported pending op mask: %x", ep->tx.pending.ops);
+out:
+    return;
+}
+
+static inline ucs_arbiter_cb_result_t uct_rm_urma_ep_ctl_op_next(uct_rm_urma_ep_t *ep)
+{
+    if (uct_rm_urma_ep_ctl_op_isany(ep)) {
+        /* can send more control - come here later */
+        return UCS_ARBITER_CB_RESULT_NEXT_GROUP;
+    }
+    /* no more control - nothing to do in
+     * this dispatch cycle. */
+    return UCS_ARBITER_CB_RESULT_RESCHED_GROUP;
+}
+
+ucs_arbiter_cb_result_t uct_rm_urma_ep_do_pending(ucs_arbiter_t *arbiter, ucs_arbiter_group_t *group,
+                                                  ucs_arbiter_elem_t *elem, void *arg)
+{
+    uct_rm_urma_iface_t *iface = ucs_container_of(arbiter, uct_rm_urma_iface_t, tx.pending_q);
+    uct_rm_urma_ep_t *ep = ucs_container_of(group, uct_rm_urma_ep_t, tx.pending.group);
+    intptr_t in_async_progress = (uintptr_t)arg;
+    uct_pending_req_t *req = NULL;
+    int async_before_pending;
+    int is_last_pending_elem;
+    ucs_status_t status;
+    int allow_callback;
+
+    if (!uct_rm_urma_iface_can_tx(iface)) {
+        return UCS_ARBITER_CB_RESULT_STOP;
+    }
+
+    if (!uct_rm_urma_iface_has_skbs(iface) && !uct_rm_urma_ep_ctl_op_isany(ep)) {
+        return UCS_ARBITER_CB_RESULT_STOP;
+    }
+
+    if (!uct_rm_urma_ep_ctl_op_isany(ep) &&
+        (!uct_rm_urma_ep_is_connected(ep) ||
+        uct_rm_urma_ep_no_window(ep))) {
+        return UCS_ARBITER_CB_RESULT_DESCHED_GROUP;
+    }
+
+    if (&ep->tx.pending.elem == elem) {
+        uct_rm_urma_ep_do_pending_ctl(ep, iface);
+        if (uct_rm_urma_ep_ctl_op_isany(ep)) {
+            /* there is still some ctl left. go to next group */
+            return UCS_ARBITER_CB_RESULT_NEXT_GROUP;
+        } else {
+            /* no more ctl - dummy elem can be removed */
+            return UCS_ARBITER_CB_RESULT_REMOVE_ELEM;
+        }
+    }
+    req = ucs_container_of(elem, uct_pending_req_t, priv);
+    allow_callback = !in_async_progress ||
+                     (uct_rm_urma_pending_req_priv(req)->flags & UCT_CB_FLAG_ASYNC);
+    if (allow_callback && !uct_rm_urma_ep_ctl_op_check(ep, UCT_RM_URMA_EP_OP_CTL_HI_PRIO)) {
+        ucs_assert(!(ep->flags & UCT_RM_URMA_EP_FLAG_IN_PENDING));
+        ep->flags |= UCT_RM_URMA_EP_FLAG_IN_PENDING;
+        async_before_pending = iface->tx.async_before_pending;
+        if (uct_rm_urma_pending_req_priv(req)->flags & UCT_CB_FLAG_ASYNC) {
+            /* temporary reset the flag to unblock sends from async context */
+            iface->tx.async_before_pending = 0;
+        }
+        /* temporary reset `UCT_RM_URMA_EP_HAS_PENDING` flag to unblock sends */
+        uct_rm_urma_ep_remove_has_pending_flag(ep);
+
+        is_last_pending_elem = uct_rm_urma_ep_is_last_pending_elem(ep, elem);
+
+        status = req->func(req);
+#if UCS_ENABLE_ASSERT
+            /* do not touch the request (or the arbiter element) after
+             * calling the callback if UCS_OK is returned from the callback */
+        if (status == UCS_OK) {
+            req  = NULL;
+            elem = NULL;
+        }
+#endif
+        uct_rm_urma_ep_set_has_pending_flag(ep);
+        iface->tx.async_before_pending = async_before_pending;
+        ep->flags &= ~UCT_RM_URMA_EP_FLAG_IN_PENDING;
+
+        if (status == UCS_INPROGRESS) {
+            return UCS_ARBITER_CB_RESULT_NEXT_GROUP;
+        } else if (status != UCS_OK) {
+            /* avoid deadlock: send low priority ctl if user cb failed
+             * no need to check for low prio here because we
+             * already checked above.
+             */
+            uct_rm_urma_ep_do_pending_ctl(ep, iface);
+            return uct_rm_urma_ep_ctl_op_next(ep);
+        }
+
+        if (is_last_pending_elem) {
+            uct_rm_urma_ep_remove_has_pending_flag(ep);
+        }
+
+        return UCS_ARBITER_CB_RESULT_REMOVE_ELEM;
+    }
+    /* try to send ctl messages */
+    uct_rm_urma_ep_do_pending_ctl(ep, iface);
+    if (in_async_progress) {
+        return uct_rm_urma_ep_ctl_op_next(ep);
+    } else {
+        /* we still didn't process the current pending request because of hi-prio
+         * control messages, so cannot stop sending yet. If we stop, not all
+         * resources will be exhausted and out-of-order with pending can occur.
+         * (pending control ops may be cleared by uct_rm_urma_ep_do_pending_ctl)
+         */
+        return UCS_ARBITER_CB_RESULT_NEXT_GROUP;
+    }
+}
+
+ucs_status_t uct_rm_urma_ep_create_connected_common(const uct_ep_params_t *ep_params, uct_ep_h *new_ep_p)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep_params->iface, uct_rm_urma_iface_t);
+    const uct_rm_urma_iface_addr_t *if_addr = NULL;
+    uct_rm_urma_peer_address_t address_p = {0};
+    const uct_ub_address_t *dev_addr = NULL;
+    uct_rm_urma_send_skb_t *skb = NULL;
+    uct_rm_urma_ep_conn_sn_t conn_sn;
+    uct_ep_params_t params = {};
+    uct_rm_urma_ep_t *ep = NULL;
+    uct_ep_h new_ep_h = NULL;
+    ucs_status_t status;
+    ucs_trace_func("");
+
+    uct_rm_urma_enter(iface);
+
+    UCT_EP_PARAMS_CHECK_DEV_IFACE_ADDRS(ep_params);
+    dev_addr = (const uct_ub_address_t *)ep_params->dev_addr;
+    if_addr = (const uct_rm_urma_iface_addr_t *)ep_params->iface_addr;
+
+    *new_ep_p = NULL;
+    status = uct_rm_urma_iface_cep_get_conn_sn(iface, dev_addr, if_addr, &conn_sn);
+    if (status != UCS_OK) {
+        goto out;
+    }
+
+    ep = uct_rm_urma_iface_cep_get_ep(iface, dev_addr, if_addr, conn_sn, 1);
+    if (ep != NULL) {
+        uct_rm_urma_ep_set_state(ep, UCT_RM_URMA_EP_FLAG_CREQ_NOTSENT);
+        ep->flags &= ~UCT_RM_URMA_EP_FLAG_PRIVATE;
+        status = UCS_OK;
+        uct_rm_urma_iface_cep_insert_ep(iface, dev_addr, if_addr, conn_sn, ep);
+        goto out_set_ep;
+    }
+
+    params.field_mask = UCT_EP_PARAM_FIELD_IFACE;
+    params.iface = &iface->super.super.super;
+
+    status = uct_ep_create(&params, &new_ep_h);
+    if (status != UCS_OK) {
+        goto ep_err;
+    }
+
+    ep = ucs_derived_of(new_ep_h, uct_rm_urma_ep_t);
+    ep->conn_sn = conn_sn;
+    status = uct_rm_urma_ep_connect_to_iface(ep);
+    if (status != UCS_OK) {
+        goto ep_err;
+    }
+
+    uct_rm_urma_iface_cep_insert_ep(iface, dev_addr, if_addr, conn_sn, ep);
+    status = uct_rm_urma_iface_unpack_peer_address(iface, dev_addr, if_addr, &ep->peer_address);
+    if (status != UCS_OK) {
+        if (ep->peer_address.tjetty != NULL) {
+            if (urma_unimport_jetty(ep->peer_address.tjetty) != URMA_SUCCESS) {
+                ucs_warn("Urma_unimport_jetty failed, eid="EID_FMT", uasid=%u, jetty_id=%u.",
+                         EID_ARGS(ep->peer_address.tjetty->id.eid), ep->peer_address.tjetty->id.uasid, ep->peer_address.tjetty->id.id);
+            }
+            ep->peer_address.tjetty = NULL;
+        }
+        uct_rm_urma_ep_disconnect_from_iface(&ep->super.super.super);
+        goto out;
+    }
+
+    skb = uct_rm_urma_ep_prepare_creq(ep);
+    if (skb != NULL) {
+        uct_rm_urma_ep_send_ctl(ep, skb, NULL, 0, UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SOLICITED);
+        uct_rm_urma_iface_complete_tx_skb(iface, ep, skb);
+        uct_rm_urma_ep_set_state(ep, UCT_RM_URMA_EP_FLAG_CREQ_SENT);
+    } else {
+        uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_CREQ);
+    }
+
+out_set_ep:
+    /* cppcheck-suppress autoVariables */
+    *new_ep_p = &ep->super.super.super;
+out:
+    uct_rm_urma_leave(iface);
+
     return status;
+ep_err:
+    uct_rm_urma_rjetty_get_peer_address(iface, dev_addr, if_addr, &address_p);
+    if (address_p.tjetty != NULL) {
+        if (urma_unimport_jetty(address_p.tjetty) != URMA_SUCCESS) {
+            ucs_warn("Urma_unimport_jetty failed, eid="EID_FMT", uasid=%u, jetty_id=%u.",
+                     EID_ARGS(address_p.tjetty->id.eid), address_p.tjetty->id.uasid, address_p.tjetty->id.id);
+        }
+        address_p.tjetty = NULL;
+    }
+    uct_rm_urma_leave(iface);
+
+    return status;
+}
+
+ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep, const uct_device_addr_t *dev_addr,
+                                          const uct_ep_addr_t *uct_ep_addr)
+{
+    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+    const uct_ub_rm_urma_ep_addr_t *ep_addr = (const uct_ub_rm_urma_ep_addr_t*)uct_ep_addr;
+    const uct_ub_address_t *ub_addr = (const uct_ub_address_t*)dev_addr;
+
+    ucs_assert_always(ep->super.dep_id == UCT_RM_URMA_EP_NULL_ID);
+    ucs_trace_func("");
+
+    uct_rm_urma_ep_set_dest_ep_id(ep, ep_addr->ep_id);
+
+    ucs_frag_list_cleanup(&ep->rx.ooo_pkts);
+    uct_rm_urma_ep_reset(ep);
+
+    return uct_rm_urma_iface_unpack_peer_address(iface, ub_addr, &ep_addr->iface_addr, (void *)&ep->peer_address);
 }
 
 ucs_status_t uct_rm_urma_ep_connect_to_ep_v2(uct_ep_h tl_ep, const uct_device_addr_t *dev_addr,
@@ -1564,224 +1403,475 @@ ucs_status_t uct_rm_urma_ep_connect_to_ep_v2(uct_ep_h tl_ep, const uct_device_ad
     return uct_rm_urma_ep_connect_to_ep(tl_ep, dev_addr, ep_addr);
 }
 
-void uct_rm_urma_ep_txqp_purge_outstanding(uct_rm_urma_iface_t *iface, uct_ub_tx_queue_t *txqp,
-                                           ucs_status_t status, uint32_t sn, int warn)
+static UCS_F_ALWAYS_INLINE uct_rm_urma_comp_desc_t *uct_rm_urma_get_comp_desc(uct_rm_urma_send_skb_t *skb)
 {
-    uct_urma_iface_send_op_t *op = NULL;
-    ucs_status_t ret = UCS_OK;
+    ucs_assert(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_COMP);
+    ucs_assert(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_INVALID));
 
-    ucs_queue_for_each_extract(op, &txqp->outstanding, queue, UCS_CIRCULAR_COMPARE32(op->sn, <=, sn)) {
-        if (op->handler == uct_rm_urma_reliable_complete) {
-            uct_rm_urma_reliable_complete(op, NULL);
-            continue;
+    return (uct_rm_urma_comp_desc_t*)((char*)skb->neth + skb->len);
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_add_async_comp(uct_rm_urma_iface_t *iface,
+                                                                 uct_rm_urma_send_skb_t *skb, ucs_status_t status)
+{
+    uct_rm_urma_comp_desc_t *cdesc = uct_rm_urma_get_comp_desc(skb);
+
+    cdesc->status = status;
+    ucs_queue_push(&iface->tx.async_comp_q, &skb->queue);
+}
+
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_skb_is_completed(uct_rm_urma_send_skb_t *skb, uct_rm_urma_psn_t ack_psn)
+{
+    ucs_assert(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_INVALID));
+
+    return UCT_RM_URMA_PSN_COMPARE(skb->neth->psn, <=, ack_psn) && !(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_RESENDING);
+}
+
+static void uct_rm_urma_ep_window_release_inline(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
+                                                 uct_rm_urma_psn_t ack_psn, ucs_status_t status,
+                                                 int is_async, int invalidate_resend)
+{
+    uct_rm_urma_send_skb_t *skb = NULL;
+
+    ucs_queue_for_each_extract(skb, &ep->tx.window, queue, uct_rm_urma_skb_is_completed(skb, ack_psn)) {
+        if (invalidate_resend && (ep->resend.pos == &skb->queue.next)) {
+            ep->resend.pos = ucs_queue_iter_begin(&ep->tx.window);
+            ep->resend.psn = ep->tx.acked_psn + 1;
         }
-        if (op->handler == uct_rm_urma_link_complete) {
-            uct_rm_urma_link_complete(op, NULL);
-            continue;
-        }
-        if (op->handler == uct_rm_urma_fc_send_completion) {
-            /* The common URMA purge recognizes only its own handlers. A
-             * control target must also be released on error/shutdown CQEs. */
-            uct_rm_urma_fc_send_completion(op, NULL);
-            continue;
-        }
-        ret = uct_ub_iface_txqp_purge_process(&iface->super, txqp, status, op, warn);
-        if (ret != UCS_OK) {
-            ucs_warn("rm_urma ub purge outstanding failed");
+
+        if (ucs_likely(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_COMP))) {
+            uct_rm_urma_skb_release(skb, 1);
+        } else if (ucs_likely(!is_async)) {
+            uct_rm_urma_iface_dispatch_comp(iface, uct_rm_urma_get_comp_desc(skb)->comp, status);
+            uct_rm_urma_skb_release(skb, 1);
+        } else {
+            uct_rm_urma_iface_add_async_comp(iface, skb, status);
         }
     }
+}
+
+void uct_rm_urma_ep_process_ack(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
+                                uct_rm_urma_psn_t ack_psn, int is_async)
+{
+    if (ucs_unlikely(UCT_RM_URMA_PSN_COMPARE(ack_psn, <=, ep->tx.acked_psn))) {
+        return;
+    }
+
+    ep->tx.acked_psn = ack_psn;
+    uct_rm_urma_ep_window_release_inline(iface, ep, ack_psn, UCS_OK, is_async, 0);
+    uct_rm_urma_ep_ca_ack(ep);
+    uct_rm_urma_ep_resend_ack(iface, ep);
+
+    ucs_arbiter_group_schedule(&iface->tx.pending_q, &ep->tx.pending.group);
+
+    ep->tx.tick = iface->tx.tick;
+    ep->tx.send_time = uct_rm_urma_iface_get_time(iface);
+}
+
+void uct_rm_urma_ep_window_release_completed(uct_rm_urma_ep_t *ep, int is_async)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+
+    uct_rm_urma_ep_window_release_inline(iface, ep, ep->tx.acked_psn, UCS_OK, is_async, 1);
+}
+
+void uct_rm_urma_ep_window_release(uct_rm_urma_ep_t *ep, ucs_status_t status, int is_async)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+
+    uct_rm_urma_ep_window_release_inline(iface, ep, ep->tx.acked_psn, status, is_async, 0);
+}
+
+static void uct_rm_urma_ep_purge_outstanding(uct_rm_urma_ep_t *ep)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+    uct_rm_urma_ctl_desc_t *cdesc = NULL;
+    ucs_queue_iter_t iter = NULL;
+
+    ucs_queue_for_each_safe(cdesc, iter, &iface->tx.outstanding_q, queue) {
+        if (cdesc->ep == ep) {
+            ucs_queue_del_iter(&iface->tx.outstanding_q, iter);
+            uct_rm_urma_iface_ctl_skb_complete(iface, cdesc, 0);
+        }
+    }
+
+    ucs_assert_always(ep->tx.resend_count == 0);
+}
+
+static void uct_rm_urma_ep_purge(uct_rm_urma_ep_t *ep, ucs_status_t status)
+{
+    uct_rm_urma_ep_reset_max_psn(ep);
+    uct_rm_urma_ep_purge_outstanding(ep);
+    ep->tx.acked_psn = (uct_rm_urma_psn_t)(ep->tx.psn - 1);
+    uct_rm_urma_ep_window_release(ep, status, 0);
+    ucs_assert(ucs_queue_is_empty(&ep->tx.window));
+}
+
+void uct_rm_urma_ep_disconnect(uct_ep_h tl_ep)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
+    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
+
+    uct_rm_urma_enter(iface);
+
+    uct_rm_urma_ep_pending_purge(tl_ep, NULL, NULL);
+    uct_rm_urma_ep_flush(tl_ep, 0, NULL);
+
+    ep->close_time = ucs_twheel_get_time(&iface->tx.timer);
+    ep->flags |= UCT_RM_URMA_EP_FLAG_DISCONNECTED;
+    ucs_wtimer_add(&iface->tx.timer, &ep->timer, UCT_RM_URMA_SLOW_TIMER_MAX_TICK(iface));
+    uct_rm_urma_leave(iface);
+}
+
+void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *neth, unsigned byte_len,
+                               uct_rm_urma_recv_skb_t* skb, int is_async)
+{
+    ucs_frag_list_ooo_type_t ooo_type;
+    uct_rm_urma_ep_t *ep = NULL;
+    uint32_t dest_id;
+    uint32_t is_am;
+    uint32_t am_id;
+
+    dest_id = uct_rm_urma_neth_get_dest_id(neth);
+    am_id = uct_rm_urma_neth_get_am_id(neth);
+    is_am = neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM;
+
+    if (ucs_unlikely(dest_id == UCT_RM_URMA_EP_NULL_ID)) {
+        uct_rm_urma_ep_deal_creq(iface, neth);
+        goto out;
+    } else if (ucs_unlikely(!ucs_ptr_array_lookup(&iface->super.eps, dest_id, ep) || (ep->super.ep_id != dest_id))) {
+        ucs_trace("RX: failed to find ep %u, dropping packet.", dest_id);
+        goto out;
+    }
+
+    ucs_assert(ep->super.ep_id != UCT_RM_URMA_EP_NULL_ID);
+
+    uct_rm_urma_ep_process_ack(iface, ep, neth->ack_psn, is_async);
+
+    if (ucs_unlikely(neth->packet_type & UCT_RM_URMA_PACKET_FLAG_ACK_REQ)) {
+        uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_ACK);
+        ucs_trace_data("ACK_REQ - schedule ack, head_sn=%u sn=%u", ep->rx.ooo_pkts.head_sn, neth->psn);
+    }
+
+    if (ucs_unlikely(UCT_RM_URMA_PSN_COMPARE(neth->psn, >, ep->rx.ooo_pkts.head_sn +1))) {
+        uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_NACK);
+    }
+
+    if (ucs_unlikely(!is_am)) {
+        if (neth->packet_type & UCT_RM_URMA_PACKET_FLAG_NAK) {
+            uct_rm_urma_ep_set_state(ep, UCT_RM_URMA_EP_FLAG_TX_NACKED);
+            goto out;
+        }
+
+        if ((size_t)byte_len == sizeof(*neth)) {
+            goto out;
+        }
+
+        if (neth->packet_type & UCT_RM_URMA_PACKET_FLAG_CTL) {
+            uct_rm_urma_ep_deal_crep(iface, ep, neth);
+            goto out;
+        }
+    }
+
+    ooo_type = ucs_frag_list_insert(&ep->rx.ooo_pkts, &skb->u.ooo.elem, neth->psn);
+    if (ucs_unlikely(ooo_type != UCS_FRAG_LIST_INSERT_FAST)) {
+        if ((ooo_type != UCS_FRAG_LIST_INSERT_DUP) &&
+            (ooo_type != UCS_FRAG_LIST_INSERT_FAIL)) {
+            ucs_fatal("Out of order is not implemented: got %d.", ooo_type);
+        }
+        ucs_trace_data("DUP/OOB - schedule ack, head_sn=%d sn=%d.", ep->rx.ooo_pkts.head_sn, neth->psn);
+        goto out;
+    }
+
+    if (ucs_unlikely(!is_am && (neth->packet_type & UCT_RM_URMA_PACKET_FLAG_PUT))) {
+        uct_rm_urma_ep_rx_put(neth, byte_len);
+        goto out;
+    }
+
+    if (ucs_unlikely(is_async && !(iface->super.super.am[am_id].flags & UCT_CB_FLAG_ASYNC))) {
+        skb->u.am.len = byte_len - sizeof(*neth);
+        ucs_queue_push(&iface->rx.pending_q, &skb->u.am.queue);
+    } else {
+        uct_rm_urma_iface_raise_pending_async_ev(iface);
+        uct_rm_urma_ep_deal_am(iface, neth, byte_len, &skb->super);
+    }
+
+    return;
+out:
+    ucs_mpool_put(skb);
+}
+
+
+ucs_status_t uct_rm_urma_ep_put_comp(uct_rm_urma_ep_t *ep, uct_rm_urma_iface_t *iface, uct_completion_t *comp)
+{
+    uct_rm_urma_send_skb_t *skb = NULL;
+
+    if (comp == NULL) {
+        return UCS_INPROGRESS;
+    }
+
+    ucs_assert(comp->count > 0);
+
+    skb = ucs_mpool_get(&iface->tx.mp);
+    if (skb == NULL) {
+        return UCS_ERR_NO_RESOURCE;
+    }
+
+    skb->flags = UCT_RM_URMA_SEND_SKB_FLAG_COMP;
+    skb->len = sizeof(skb->neth[0]);
+    skb->neth->packet_type = 0;
+    skb->neth->psn = (uct_rm_urma_psn_t)(ep->tx.psn - 1);
+    uct_rm_urma_neth_set_dest_id(skb->neth, UCT_RM_URMA_EP_NULL_ID);
+    uct_rm_urma_get_comp_desc(skb)->comp = comp;
+
+    if (!ucs_queue_is_empty(&ep->tx.window)) {
+        ucs_queue_push(&ep->tx.window, &skb->queue);
+    } else {
+        ucs_assert(ep->tx.resend_count == 0);
+        uct_rm_urma_iface_add_async_comp(iface, skb, UCS_OK);
+    }
+    ucs_trace_data("Added dummy flush skb psn %d.", skb->neth->psn);
+    return UCS_INPROGRESS;
+}
+
+ucs_status_t uct_rm_urma_ep_flush_nolock(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
+                                         uct_completion_t *comp)
+{
+    uct_rm_urma_send_skb_t *skb = NULL;
+
+    if (ucs_unlikely(!uct_rm_urma_ep_is_connected(ep))) {
+        if (uct_rm_urma_ep_ctl_op_check(ep, UCT_RM_URMA_EP_OP_CREQ) || !ucs_queue_is_empty(&ep->tx.window)) {
+            return UCS_ERR_NO_RESOURCE;
+        }
+        return UCS_OK;
+    }
+
+    if (!uct_rm_urma_iface_can_tx(iface) || !uct_rm_urma_iface_has_skbs(iface) || uct_rm_urma_ep_no_window(ep)) {
+        return UCS_ERR_NO_RESOURCE;
+    }
+
+    if (ucs_queue_is_empty(&ep->tx.window) && ucs_queue_is_empty(&iface->tx.async_comp_q)) {
+        ucs_assert(ep->tx.resend_count == 0);
+        return UCS_OK;
+    }
+
+    if (uct_rm_urma_ep_is_last_ack_received(ep)) {
+        uct_rm_urma_ep_ctl_op_del(ep, UCT_RM_URMA_EP_OP_ACK_REQ);
+    } else {
+        ucs_assert(!ucs_queue_is_empty(&ep->tx.window));
+        skb = ucs_queue_tail_elem_non_empty(&ep->tx.window, uct_rm_urma_send_skb_t, queue);
+        if (!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_ACK_REQ)) {
+            ep->tx.pending.ops |= UCT_RM_URMA_EP_OP_ACK_REQ;
+            if (uct_rm_urma_ep_ctl_op_check_ex(ep, UCT_RM_URMA_EP_OP_ACK_REQ)) {
+                uct_rm_urma_ep_do_pending_ctl(ep, iface);
+            }
+            skb->flags |= UCT_RM_URMA_SEND_SKB_FLAG_ACK_REQ;
+        }
+    }
+
+    return uct_rm_urma_ep_put_comp(ep, iface, comp);
+}
+
+ucs_status_t uct_rm_urma_ep_flush(uct_ep_h tl_ep, unsigned flags, uct_completion_t *comp)
+{
+    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+    ucs_status_t status;
+
+    uct_rm_urma_enter(iface);
+
+    if (ucs_unlikely(flags & UCT_FLUSH_FLAG_CANCEL)) {
+        uct_ep_pending_purge(tl_ep, NULL, 0);
+        uct_rm_urma_iface_dispatch_async_comps(iface);
+        uct_rm_urma_ep_purge(ep, UCS_ERR_CANCELED);
+        status = UCS_OK;
+        goto out;
+    }
+
+    if (ucs_unlikely(uct_rm_urma_iface_has_pending_async_ev(iface))) {
+        status = UCS_ERR_NO_RESOURCE;
+        goto out;
+    }
+
+    status = uct_rm_urma_ep_flush_nolock(iface, ep, comp);
+    if (status == UCS_OK) {
+        UCT_TL_EP_STAT_FLUSH(&ep->super.super);
+    } else if (status == UCS_INPROGRESS) {
+        UCT_TL_EP_STAT_FLUSH_WAIT(&ep->super.super);
+    }
+
+out:
+    uct_rm_urma_leave(iface);
+
+    return status;
+}
+
+static unsigned uct_rm_urma_ep_deferred_timeout_handler(void *arg)
+{
+    uct_rm_urma_ep_t *ep = arg;
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+    ucs_status_t status;
+
+    if (ep->flags & UCT_RM_URMA_EP_FLAG_DISCONNECTED) {
+        uct_rm_urma_ep_purge(ep, UCS_ERR_ENDPOINT_TIMEOUT);
+        return 0;
+    }
+
+    if (ep->flags & UCT_RM_URMA_EP_FLAG_PRIVATE) {
+        ucs_assert(ucs_queue_is_empty(&ep->tx.window));
+        uct_ep_destroy(&ep->super.super.super);
+        return 0;
+    }
+
+    uct_rm_urma_ep_purge(ep, UCS_ERR_ENDPOINT_TIMEOUT);
+
+    status = uct_iface_handle_ep_err(&iface->super.super.super, &ep->super.super.super, UCS_ERR_ENDPOINT_TIMEOUT);
+    if (status != UCS_OK) {
+        ucs_fatal("Ur_urma endpoint to "UCT_RM_URMA_EP_PEER_NAME_FMT": "
+                  "unhandled timeout error.", UCT_RM_URMA_EP_PEER_NAME_ARG(ep));
+    }
+
+    return 1;
+}
+
+static void uct_rm_urma_ep_timer_backoff(uct_rm_urma_ep_t *ep)
+{
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+
+    ep->tx.tick = ucs_min(ep->tx.tick * iface->tx.timer_backoff, UCT_RM_URMA_SLOW_TIMER_MAX_TICK(iface));
+    ucs_wtimer_add(&iface->tx.timer, &ep->timer, ep->tx.tick);
+}
+
+static void uct_rm_urma_ep_timer(ucs_wtimer_t *self)
+{
+    uct_rm_urma_ep_t *ep = ucs_container_of(self, uct_rm_urma_ep_t, timer);
+    uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
+    ucs_time_t last_send;
+    ucs_status_t status;
+    ucs_time_t diff;
+    ucs_time_t now;
+
+    if (uct_rm_urma_ep_is_last_ack_received(ep)) {
+        if (ep->flags & UCT_RM_URMA_EP_FLAG_DISCONNECTED) {
+            status = uct_rm_urma_ep_free_by_timeout(ep, iface);
+            if (status == UCS_INPROGRESS) {
+                uct_rm_urma_ep_timer_backoff(ep);
+            }
+        }
+        return;
+    }
+
+    ucs_assert(!ucs_queue_is_empty(&ep->tx.window));
+
+    now  = ucs_twheel_get_time(&iface->tx.timer);
+    diff = now - ep->tx.send_time;
+    if (diff > iface->config.peer_timeout) {
+        ucs_debug("Ep: timeout of %.2f sec, config::peer_timeout - %.2f sec.", ucs_time_to_sec(diff),
+                  ucs_time_to_sec(iface->config.peer_timeout));
+        ucs_callbackq_add_safe(&iface->super.super.worker->super.progress_q, uct_rm_urma_ep_deferred_timeout_handler,
+                               ep, UCS_CALLBACKQ_FLAG_ONESHOT);
+        return;
+    }
+
+    if ((ep->tx.pending.ops & (UCT_RM_URMA_EP_OP_ACK_REQ|UCT_RM_URMA_EP_OP_RESEND)) || (ep->tx.resend_count > 0)) {
+        ucs_trace("Ep: resend still in progress, ops 0x%x tx_count %d.",
+                  ep->tx.pending.ops, ep->tx.resend_count);
+        uct_rm_urma_ep_timer_backoff(ep);
+        return;
+    }
+
+    last_send = ucs_max(ep->tx.send_time, ep->tx.resend_time);
+    diff      = now - last_send;
+
+    if (diff > iface->tx.tick) {
+        if (diff > 3 * iface->tx.tick) {
+            ucs_trace("Scheduling resend now: %lu last_send: %lu diff: %lu tick: %lu.",
+                      now, last_send, diff, ep->tx.tick);
+            uct_rm_urma_ep_ca_drop(ep);
+            uct_rm_urma_ep_resend_start(iface, ep);
+        }
+
+        if (uct_rm_urma_ep_is_connected(ep)) {
+            uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_ACK_REQ);
+        }
+    }
+
+    uct_rm_urma_ep_timer_backoff(ep);
 }
 
 UCS_CLASS_INIT_FUNC(uct_rm_urma_ep_t, const uct_ep_params_t *params)
 {
     uct_rm_urma_iface_t *iface = ucs_derived_of(params->iface, uct_rm_urma_iface_t);
 
+    memset(self, 0, sizeof(*self));
     UCS_CLASS_CALL_SUPER_INIT(uct_ub_ep_t, &iface->super);
-    self->rm_urma_jetty = &iface->rm_urma_jetty;
+
+    uct_rm_urma_enter(iface);
+
+    uct_rm_urma_ep_reset(self);
+    self->tx.tick = iface->tx.tick;
+    ucs_wtimer_init(&self->timer, uct_rm_urma_ep_timer);
+    ucs_arbiter_group_init(&self->tx.pending.group);
+    ucs_arbiter_elem_init(&self->tx.pending.elem);
+
+    self->super.dep_id = UCT_RM_URMA_EP_NULL_ID;
     ucs_arbiter_group_init(&self->arb_group);
-    ucs_list_head_init(&self->retired_list);
     self->ka_tseg = NULL;
     self->ka_va_addr = 0;
-    self->tjetty = NULL;
-    self->target = NULL;
-    self->peer = NULL;
-    self->reliable_outstanding = 0;
-    ucs_list_head_init(&self->peer_list);
-    memset(&self->tp, 0, sizeof(self->tp));
-    if (iface->link.mode != UCT_RM_URMA_LINK_LEGACY) {
-        unsigned mask = UCT_EP_PARAM_FIELD_DEV_ADDR | UCT_EP_PARAM_FIELD_IFACE_ADDR;
+    self->peer_address.tjetty = NULL;
 
-        if ((params->field_mask & mask) == mask) {
-            return uct_rm_urma_link_connect(self, params->dev_addr,
-                                            params->iface_addr);
-        }
-        if (params->field_mask & mask) {
-            return UCS_ERR_INVALID_PARAM;
-        }
-        /* Only the iface-owned control sender uses an unconnected EP. */
-        if (!iface->link.creating_control) {
-            return UCS_ERR_INVALID_PARAM;
-        }
-    }
+    uct_rm_urma_leave(iface);
+
     return UCS_OK;
+}
+
+static ucs_arbiter_cb_result_t uct_rm_urma_ep_pending_cancel_cb(ucs_arbiter_t *arbiter, ucs_arbiter_group_t *group,
+                                                                ucs_arbiter_elem_t *elem, void *arg)
+{
+    uct_rm_urma_ep_t *ep = ucs_container_of(group, uct_rm_urma_ep_t, tx.pending.group);
+
+    if (&ep->tx.pending.elem == elem) {
+        return UCS_ARBITER_CB_RESULT_REMOVE_ELEM;
+    }
+
+    if (uct_rm_urma_ep_is_last_pending_elem(ep, elem)) {
+        uct_rm_urma_ep_remove_has_pending_flag(ep);
+    }
+
+    return UCS_ARBITER_CB_RESULT_REMOVE_ELEM;
+}
+
+static int uct_rm_urma_ep_remove_timeout_filter(const ucs_callbackq_elem_t *elem, void *arg)
+{
+    return (elem->cb == uct_rm_urma_ep_deferred_timeout_handler) && (elem->arg == arg);
 }
 
 static UCS_CLASS_CLEANUP_FUNC(uct_rm_urma_ep_t)
 {
-    uct_rm_urma_iface_t *iface = ucs_derived_of(self->super.super.super.iface,
-                                              uct_rm_urma_iface_t);
+    uct_rm_urma_iface_t *iface = ucs_derived_of(self->super.super.super.iface, uct_rm_urma_iface_t);
+    uct_rm_urma_enter(iface);
 
-    /* Only GC, or iface shutdown after deleting the shared Jetty, gets here. */
-    ucs_assert(self->super.status.pi == self->super.status.ci);
-    uct_rm_urma_ep_txqp_purge_outstanding(iface, &self->super.txqp,
-                                         UCS_ERR_CANCELED,
-                                         self->super.status.pi, 0);
-    ucs_arbiter_group_cleanup(&self->arb_group);
-    if (self->peer != NULL) {
-        ucs_list_del(&self->peer_list);
-    }
-    if ((self->peer == NULL) && (self->ka_tseg != NULL) &&
-        (urma_unimport_seg(self->ka_tseg) != URMA_SUCCESS)) {
-        ucs_warn("Failed to unimport RM keepalive segment");
-    }
-    if (self->target != NULL) {
-        uct_rm_urma_iface_target_put(iface, self->target);
-    }
-}
+    iface->super.tx.jfc_available += self->super.status.pi - self->super.status.ci;
+    ucs_callbackq_remove_if(&iface->super.super.worker->super.progress_q,
+                            uct_rm_urma_ep_remove_timeout_filter, self);
+    uct_rm_urma_ep_purge(self, UCS_ERR_CANCELED);
 
-void uct_rm_urma_ep_destroy(uct_ep_h tl_ep)
-{
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
+    ucs_wtimer_remove(&iface->tx.timer, &self->timer);
+    uct_rm_urma_iface_cep_remove_ep(iface, self);
+    ucs_frag_list_cleanup(&self->rx.ooo_pkts);
 
-    if (ep->super.flags & UCT_RM_URMA_EP_FLAG_CLOSING) {
-        return;
+    ucs_arbiter_group_purge(&iface->tx.pending_q, &self->tx.pending.group, uct_rm_urma_ep_pending_cancel_cb, 0);
+
+    if (!ucs_queue_is_empty(&self->tx.window)) {
+        ucs_debug("Ep id=%d conn_sn=%d has %d unacked packets.", self->super.ep_id, self->conn_sn,
+                  (int)ucs_queue_length(&self->tx.window));
     }
-    ep->super.flags |= UCT_RM_URMA_EP_FLAG_CLOSING;
-    uct_rm_urma_ep_pending_purge(tl_ep, NULL, NULL);
-    ucs_list_add_tail(&iface->tx.retired_eps, &ep->retired_list);
-    /* Keep EP ID, target and DMA descriptors alive until all its CQEs arrive. */
-    if (iface->tx.progress_depth == 0) {
-        uct_rm_urma_iface_gc(iface);
-    }
+
+    ucs_arbiter_group_cleanup(&self->tx.pending.group);
+
+    uct_rm_urma_leave(iface);
 }
 
 UCS_CLASS_DEFINE(uct_rm_urma_ep_t, uct_ub_ep_t);
 UCS_CLASS_DEFINE_NEW_FUNC(uct_rm_urma_ep_t, uct_ep_t, const uct_ep_params_t *);
 UCS_CLASS_DEFINE_DELETE_FUNC(uct_rm_urma_ep_t, uct_ep_t);
-
-ucs_status_t uct_rm_urma_ep_link_post(uct_rm_urma_iface_t *iface,
-                                     uct_rm_urma_link_req_t *req)
-{
-    uct_rm_urma_ep_t *ep;
-    uct_ub_iface_send_desc_t *desc = NULL;
-    unsigned char frame[sizeof(uct_ub_hdr_t) + UCT_RM_URMA_FC_REQ_V2_SIZE];
-    uct_ub_hdr_t *hdr;
-    urma_jfs_wr_t *wr = &iface->super.send_wr;
-    urma_jfs_wr_t *bad = NULL;
-    urma_sge_t sge;
-    urma_status_t result;
-    ucs_status_t status;
-    unsigned length = sizeof(*hdr) + req->length;
-    int use_inline = length <= iface->super.config.max_inline;
-
-    if (iface->tx.ctrl_ep == NULL) {
-        status = uct_rm_urma_iface_control_ep_get(iface);
-        if (status != UCS_OK) {
-            return status;
-        }
-    }
-    ep = iface->tx.ctrl_ep;
-    if ((iface->rm_urma_jetty.available <= 0) ||
-        (iface->super.tx.jfc_available <= 0)) {
-        return UCS_ERR_NO_RESOURCE;
-    }
-    if (!use_inline) {
-        desc = ucs_mpool_get(&iface->super.tx.mp);
-        if (desc == NULL) {
-            return UCS_ERR_NO_RESOURCE;
-        }
-    }
-    hdr = use_inline ? (uct_ub_hdr_t *)frame : (uct_ub_hdr_t *)(desc + 1);
-    hdr->am_id = UCT_RM_URMA_EP_FC_PURE_GRANT;
-    hdr->ep_id = 0;
-    memcpy(hdr + 1, req->payload, req->length);
-    UCT_UB_FILL_WR_SG_BUF(&wr->send.src, (uint64_t)hdr, length,
-                         use_inline ? NULL : desc->tseg, 1, &sge);
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_SEND, ep, 1,
-                             use_inline ? URMA_INLINE_ENABLE : URMA_INLINE_DISABLE,
-                             URMA_SOLICITED_ENABLE);
-    wr->tjetty = req->target->jetty;
-    result = urma_post_jetty_send_wr(ep->rm_urma_jetty->jetty, wr, &bad);
-    memset(wr, 0, sizeof(*wr));
-    if (result != URMA_SUCCESS) {
-        if ((result == URMA_ENOMEM) || (result == URMA_EAGAIN)) {
-            if (desc != NULL) {
-                ucs_mpool_put(desc);
-            }
-            return UCS_ERR_NO_RESOURCE;
-        }
-        /* A terminal provider error must not recycle a possibly DMA-owned
-         * descriptor. Pending cleanup runs only after the Jetty stops. */
-        req->desc = desc;
-        return UCS_ERR_IO_ERROR;
-    }
-    ucs_debug("RM iface control post kind=%u id=%lu credits=%u iface=%p",
-              req->kind, req->id, req->credits, iface);
-    req->desc = desc;
-    req->op.flags = 0;
-    req->op.iface = &iface->super;
-    req->op.user_comp = NULL;
-    req->op.handler = uct_rm_urma_link_complete;
-    uct_rm_urma_update_tx_resources_status(ep, iface, URMA_COMPLETE_ENABLE);
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &req->op,
-                                           ep->super.status.pi);
-    return UCS_OK;
-}
-
-ucs_status_t uct_rm_urma_ep_reliable_post(uct_rm_urma_iface_t *iface,
-                                         uct_rm_urma_replay_t *entry)
-{
-    uct_rm_urma_ep_t *ep;
-    urma_jfs_wr_t *wr = &iface->super.send_wr;
-    urma_jfs_wr_t *bad = NULL;
-    urma_sge_t sge;
-    urma_status_t result;
-    ucs_status_t status;
-    int use_inline = entry->length <= iface->super.config.max_inline;
-
-    if (iface->tx.ctrl_ep == NULL) {
-        status = uct_rm_urma_iface_control_ep_get(iface);
-        if (status != UCS_OK) {
-            return status;
-        }
-    }
-    ep = iface->tx.ctrl_ep;
-    if ((iface->rm_urma_jetty.available <= 0) ||
-        (iface->super.tx.jfc_available <= 0)) {
-        return UCS_ERR_NO_RESOURCE;
-    }
-    UCT_UB_FILL_WR_SG_BUF(&wr->send.src, (uint64_t)(entry->desc + 1),
-                          entry->length,
-                          use_inline ? NULL : entry->desc->tseg, 1, &sge);
-    /* Retain the replay copy and CQE lifetime for both submission modes. */
-    uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_SEND, ep, 1,
-                             use_inline ? URMA_INLINE_ENABLE : URMA_INLINE_DISABLE,
-                             URMA_SOLICITED_ENABLE);
-    wr->tjetty = entry->peer->target->jetty;
-    result = urma_post_jetty_send_wr(ep->rm_urma_jetty->jetty, wr, &bad);
-    memset(wr, 0, sizeof(*wr));
-    if (result != URMA_SUCCESS) {
-        if ((result != URMA_ENOMEM) && (result != URMA_EAGAIN)) {
-            /* No retry of an uncertain terminal provider submission. */
-            entry->quarantined = 1;
-        }
-        return ((result == URMA_ENOMEM) || (result == URMA_EAGAIN)) ?
-               UCS_ERR_NO_RESOURCE : UCS_ERR_IO_ERROR;
-    }
-    entry->in_flight = 1;
-    uct_rm_urma_update_tx_resources_status(ep, iface, URMA_COMPLETE_ENABLE);
-    uct_ub_outstanding_queue_add_send_op_sn(&ep->super.txqp, &entry->op,
-                                           ep->super.status.pi);
-    return UCS_OK;
-}

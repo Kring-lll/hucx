@@ -1,0 +1,74 @@
+--- um_urma_ep.c (normalized)
++++ rm_urma_ep.c
+@@ -297,0 +298,12 @@
++    /* Apply the same RM budget to DATA, connection controls and retries. */
++    {
++        size_t length = 0;
++        unsigned i;
++        for (i = 0; i < wr->send.src.num_sge; ++i) {
++            length += wr->send.src.sge[i].len;
++        }
++        if (length > iface->super.config.seg_size) {
++            ucs_fatal("RM SEND exceeds segment budget: %zu > %zu", length,
++                      iface->super.config.seg_size);
++        }
++    }
+@@ -383 +395 @@
+-    UCT_CHECK_LENGTH(skb->len, 0, uct_ub_mtu_value(iface->super.config.mtu), "am_bcopy");
++    UCT_CHECK_LENGTH(skb->len, 0, iface->super.config.seg_size, "am_bcopy");
+--- um_urma_iface.c (normalized)
++++ rm_urma_iface.c
+@@ -48 +48 @@
+-    {"URMA_", "", NULL,
++    {"URMA_", "SEG_SIZE=4096", NULL,
+@@ -481,4 +481,22 @@
+-    iface_attr->cap.flags             &= ~UCT_IFACE_FLAG_PUT_BCOPY;
+-    iface_attr->cap.flags             &= ~UCT_IFACE_FLAG_PUT_ZCOPY;
+-    iface_attr->cap.am.max_short       = iface->super.config.max_inline -
+-                                         sizeof(uct_rm_urma_neth_t) - sizeof(uct_rm_urma_am_short_hdr_t);
++    /* This branch accepts SEND AM short/bcopy only. UM software PUT and
++     * AM_ZCOPY stay unadvertised until their own RM/CTP acceptance. */
++    iface_attr->cap.flags &= ~(UCT_IFACE_FLAG_PUT_SHORT |
++                              UCT_IFACE_FLAG_PUT_BCOPY |
++                              UCT_IFACE_FLAG_PUT_ZCOPY |
++                              UCT_IFACE_FLAG_GET_BCOPY |
++                              UCT_IFACE_FLAG_GET_ZCOPY |
++                              UCT_IFACE_FLAG_AM_ZCOPY |
++                              UCT_IFACE_FLAG_ATOMIC_DEVICE |
++                              UCT_IFACE_FLAG_EP_CHECK |
++                              UCT_IFACE_FLAG_ERRHANDLE_PEER_FAILURE);
++    if (iface->super.config.seg_size <= sizeof(uct_rm_urma_neth_t) +
++                                       sizeof(uct_rm_urma_am_short_hdr_t)) {
++        return UCS_ERR_INVALID_PARAM;
++    }
++    iface_attr->cap.am.max_short = ucs_min(iface->super.config.max_inline,
++                                         iface->super.config.seg_size);
++    iface_attr->cap.am.max_short =
++        (iface_attr->cap.am.max_short > sizeof(uct_rm_urma_neth_t) +
++                                       sizeof(uct_rm_urma_am_short_hdr_t)) ?
++        iface_attr->cap.am.max_short - sizeof(uct_rm_urma_neth_t) -
++        sizeof(uct_rm_urma_am_short_hdr_t) : 0;
+@@ -486,2 +504,8 @@
+-    iface_attr->cap.put.max_short      = iface->super.config.max_inline -
+-                                         sizeof(uct_rm_urma_neth_t) - sizeof(uct_rm_urma_put_hdr_t);
++    if (iface_attr->cap.am.max_short == 0) {
++        iface_attr->cap.flags &= ~UCT_IFACE_FLAG_AM_SHORT;
++    }
++    iface_attr->cap.put.max_short      = 0;
++    iface_attr->cap.put.max_bcopy      = 0;
++    iface_attr->cap.put.max_zcopy      = 0;
++    iface_attr->cap.get.max_bcopy      = 0;
++    iface_attr->cap.get.max_zcopy      = 0;
+@@ -489 +513 @@
+-    iface_attr->cap.am.max_zcopy       = iface->super.config.seg_size - sizeof(uct_rm_urma_neth_t);
++    iface_attr->cap.am.max_zcopy       = 0;
+@@ -693 +717 @@
+-        .priority = UB_URMA_MAX_PRIORITY,
++        .priority = 1,
+@@ -821,0 +846,6 @@
++    if (iface->super.config.seg_size > 4096 ||
++        iface->super.config.seg_size <= sizeof(uct_rm_urma_neth_t) +
++                                       sizeof(uct_rm_urma_am_short_hdr_t)) {
++        ucs_error("RM SEND SEG_SIZE must be >16 and <=4096 bytes");
++        return UCS_ERR_INVALID_PARAM;
++    }

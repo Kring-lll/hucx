@@ -8,295 +8,361 @@
 #define UCT_RM_URMA_EP_H
 
 #include <uct/api/uct.h>
+#include <ucs/datastruct/frag_list.h>
 #include <ucs/datastruct/arbiter.h>
+#include <ucs/datastruct/conn_match.h>
+#include <ucs/time/timer_wheel.h>
 #include <ucs/sys/compiler_def.h>
 #include <uct/base/uct_iface.h>
 #include <uct/urma/base/urma_iface.h>
 #include <uct/urma/base/urma_ep.h>
 #include <uct/urma/rm_urma/rm_urma_iface.h>
+#include "rm_urma_def.h"
 
-#include "rm_urma_link.h"
-#include "rm_urma_reliable.h"
+#define UCT_RM_URMA_INITIAL_PSN             1   /* initial packet serial number */
+#define UCT_RM_URMA_CA_MIN_WINDOW           2
+#define UCT_RM_URMA_EP_NULL_ID              ((1<<24)-1)
 
-#define RM_URMA_UNSIGNALED_INF UINT16_MAX
+#if ENABLE_DEBUG_DATA
+#  define UCT_RM_URMA_EP_PEER_NAME_FMT        "%s:%d"
+#  define UCT_RM_URMA_EP_PEER_NAME_ARG(_ep)   (_ep)->peer.name, (_ep)->peer.pid
+#else
+#  define UCT_RM_URMA_EP_PEER_NAME_FMT        "%s"
+#  define UCT_RM_URMA_EP_PEER_NAME_ARG(_ep)   "<no debug data>"
+#endif
+
+typedef struct uct_rm_urma_am_short_hdr {
+    uint64_t hdr;
+} uct_rm_urma_am_short_hdr_t;
+
+typedef struct uct_rm_urma_put_hdr {
+    uint64_t rva;
+} uct_rm_urma_put_hdr_t;
+
+typedef struct uct_ub_rm_urma_ep_addr {
+    uct_rm_urma_iface_addr_t    iface_addr;
+    uint32_t                    ep_id;
+} uct_ub_rm_urma_ep_addr_t;
+
+typedef uint16_t    uct_rm_urma_psn_t;
+
+typedef struct uct_rm_urma_peer_name {
+    char    name[16];
+    int     pid;
+} uct_rm_urma_peer_name_t;
+
+typedef struct uct_rm_urma_ctl_hdr {
+    uint8_t                             type;
+    uint8_t                             reserved[3];
+    union {
+        struct {
+            uct_ub_rm_urma_ep_addr_t    ep_addr;
+            uct_rm_urma_ep_conn_sn_t    conn_sn;
+        } conn_req;
+        struct {
+            uint32_t                    src_ep_id;
+        } conn_rep;
+        uint32_t                        data;
+    };
+    uct_rm_urma_peer_name_t             peer;
+    /* For CREQ packet, IB address follows */
+} UCS_S_PACKED uct_rm_urma_ctl_hdr_t;
+
+typedef struct uct_rm_urma_ep_pending_op {
+    ucs_arbiter_group_t     group;
+    uint32_t                ops;    /* bitmask that describes what control ops are sceduled */
+    ucs_arbiter_elem_t      elem;
+} uct_rm_urma_ep_pending_op_t;
 
 struct uct_rm_urma_ep {
     uct_ub_ep_t                     super;
-    uct_rm_urma_jetty_t             *rm_urma_jetty; /* borrowed from iface */
-    ucs_list_link_t                 retired_list;
+    ucs_time_t                      send_time;
+    ucs_time_t                      resend_time;
+    ucs_time_t                      tick;
+    uct_rm_urma_peer_address_t      peer_address;
     uint64_t                        ka_va_addr;
     urma_target_seg_t               *ka_tseg;
+    struct {
+        uct_rm_urma_psn_t           psn;          /* Next PSN to send */
+        uct_rm_urma_psn_t           max_psn;      /* Largest PSN that can be sent */
+        uct_rm_urma_psn_t           acked_psn;    /* last psn that was acked by remote side */
+        uint16_t                    resend_count; /* number of in-flight resends on the ep */
+        ucs_queue_head_t            window;       /* send window: [acked_psn+1, psn-1] */
+        ucs_time_t                  send_time;
+        ucs_time_t                  resend_time;
+        ucs_time_t                  tick;
+        uct_rm_urma_ep_pending_op_t pending;      /* pending ops */
+    } tx;
+    struct {
+        uct_rm_urma_psn_t           acked_psn;    /* Last psn we acked */
+        ucs_frag_list_t             ooo_pkts;     /* Out of order packets that can not be processed yet,
+                                                   * also keeps last psn we successfully received and processed */
+    } rx;
+    struct {
+        uct_rm_urma_psn_t           wmax;
+        uct_rm_urma_psn_t           cwnd;
+        ucs_wtimer_t                timer;
+        ucs_time_t                  close_time;
+    } ca;
+    struct UCS_S_PACKED {
+        ucs_queue_iter_t           pos;       /* points to the part of tx window that needs to be resent */
+        uct_rm_urma_psn_t          psn;       /* last psn that was retransmitted */
+        uct_rm_urma_psn_t          max_psn;   /* max psn that should be retransmitted */
+    } resend;
+    ucs_conn_match_elem_t           conn_match;
+    uct_rm_urma_ep_conn_sn_t        conn_sn;      /* connection sequence number. assigned in connect_to_iface() */
+    uint16_t                        flags;
+    uint8_t                         rx_creq_count; /* TODO: remove when reason for DUP/OOO CREQ is found */
     ucs_arbiter_group_t             arb_group;
-    urma_target_jetty_t             *tjetty;
-    uct_rm_urma_target_t            *target; /* iface-owned; held through CQEs */
-    urma_tp_t                       tp;
-    uct_rm_urma_peer_t              *peer;
-    ucs_list_link_t                  peer_list;
-    unsigned                        reliable_outstanding;
+    uct_rm_urma_peer_name_t         peer;
+    ucs_wtimer_t                    timer;
+    ucs_time_t                      close_time;
 };
 
-typedef struct uct_rm_urma_ep_addr {
-    uint32_t jetty_id;
-    uint32_t tpn;
-    /* Following fields appear in this order (if specified by jetty_idd).
-     * - uint32_t ep_id
-     * - uint64_t seg_va
-     * - uint64_t seg_len
-     * - uint32_t seg_flag
-     * - uint32_t seg_token_id
-     * - urma_transport_mode_t trans_mode;
-     */
-} UCS_S_PACKED uct_rm_urma_ep_addr_t;
+/*
+ * Call user completion handler
+ */
+typedef struct uct_rm_urma_comp_desc {
+    uct_completion_t            *comp;
+    ucs_status_t                status;     /* used in case of failure */
+} uct_rm_urma_comp_desc_t;
 
-typedef struct uct_rm_urma_ep_addr_params {
-    uint32_t              jetty_id;
-    uint32_t              ep_id;
-    uint64_t              seg_va;
-    uint64_t              seg_len;
-    uint32_t              seg_flag;
-    uint32_t              seg_token_id;
-    urma_transport_mode_t trans_mode;
-} uct_rm_urma_ep_addr_params_t;
+typedef struct uct_rm_urma_iov {
+    void                        *buffer;    /**< Data buffer */
+    urma_target_seg_t           *tseg;
+    uint16_t                    length;     /**< Length of the buffer in bytes */
+} UCS_S_PACKED uct_rm_urma_iov_t;
+
+typedef struct uct_rm_urma_zcopy_desc {
+    uct_rm_urma_comp_desc_t     super;
+    uct_rm_urma_iov_t           iov[UCT_UB_MAX_IOV];
+    uint16_t                    iovcnt;     /* Count of the iov[] array valid elements */
+} uct_rm_urma_zcopy_desc_t;
+
+enum {
+    UCT_RM_URMA_EP_OP_NONE       = 0,
+    UCT_RM_URMA_EP_OP_ACK        = UCS_BIT(0),  /* ack data */
+    UCT_RM_URMA_EP_OP_ACK_REQ    = UCS_BIT(1),  /* request ack of sent packets */
+    UCT_RM_URMA_EP_OP_RESEND     = UCS_BIT(2),  /* resend un acked packets */
+    UCT_RM_URMA_EP_OP_CREP       = UCS_BIT(3),  /* send connection reply */
+    UCT_RM_URMA_EP_OP_CREQ       = UCS_BIT(4),  /* send connection request */
+    UCT_RM_URMA_EP_OP_NACK       = UCS_BIT(5),  /* send NACK */
+};
+
+#define UCT_RM_URMA_EP_OP_CTL_ACK (UCT_RM_URMA_EP_OP_ACK|UCT_RM_URMA_EP_OP_ACK_REQ|UCT_RM_URMA_EP_OP_NACK)
+#define UCT_RM_URMA_EP_OP_CTL_HI_PRIO  (UCT_RM_URMA_EP_OP_CREQ|UCT_RM_URMA_EP_OP_CREP|UCT_RM_URMA_EP_OP_RESEND)
 
 /*
  * Auxillary AM ID bits used by FC protocol.
  */
 enum {
-    /* Keepalive Request scheduled: indicates that keepalive request
-     * is scheduled in pending queue and no more keepalive actions
-     * are needed */
-    UCT_RM_URMA_EP_FLAG_KEEPALIVE_PENDING   = UCS_BIT(0),
+    UCT_RM_URMA_EP_FLAG_DISCONNECTED      = UCS_BIT(0),  /* EP was disconnected */
+    UCT_RM_URMA_EP_FLAG_PRIVATE           = UCS_BIT(1),  /* EP was created as internal */
+    UCT_RM_URMA_EP_FLAG_HAS_PENDING       = UCS_BIT(2),  /* EP has some pending requests */
+    UCT_RM_URMA_EP_FLAG_CONNECTED         = UCS_BIT(3),  /* EP was connected to the peer */
+    UCT_RM_URMA_EP_FLAG_ON_CEP            = UCS_BIT(4),  /* EP was inserted to connection
+                                                          * matching context */
 
-    /* EP is connected to peer */
-    UCT_RM_URMA_EP_FLAG_CONNECTED           = UCS_BIT(1),
+    /* debug flags */
+    UCT_RM_URMA_EP_FLAG_CREQ_RCVD         = UCS_BIT(5),  /* CREQ message was received */
+    UCT_RM_URMA_EP_FLAG_CREP_RCVD         = UCS_BIT(6),  /* CREP message was received */
+    UCT_RM_URMA_EP_FLAG_CREQ_SENT         = UCS_BIT(7),  /* CREQ message was sent */
+    UCT_RM_URMA_EP_FLAG_CREP_SENT         = UCS_BIT(8),  /* CREP message was sent */
+    UCT_RM_URMA_EP_FLAG_CREQ_NOTSENT      = UCS_BIT(9),  /* CREQ message is NOT sent, because
+                                                          * connection establishment process
+                                                          * is driven by remote side. */
+    UCT_RM_URMA_EP_FLAG_TX_NACKED         = UCS_BIT(10), /* Last psn was acked with NAK */
 
-    /* Flush cancel was executed on EP */
-    UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL        = UCS_BIT(2),
-
-    /* Error handler already called or flush(CANCEL) disabled it */
-    UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED = UCS_BIT(3),
-
-    UCT_RM_URMA_EP_FLAG_CLOSING             = UCS_BIT(4),
-
-    /* Soft Credit Request: indicates that peer needs to piggy-back credits
-     * grant to counter AM (if any). Can be bundled with
-     * UCT_RC_EP_FLAG_FC_GRANT  */
-    UCT_RM_URMA_EP_FLAG_FC_SOFT_REQ         = UCS_BIT(UCT_AM_ID_BITS),
-
-    /* Hard Credit Request: indicates that wnd is close to be exhausted.
-     * The peer must send separate AM with credit grant as soon as it
-     * receives AM  with this bit set. Can be bundled with
-     * UCT_RC_EP_FLAG_FC_GRANT */
-    UCT_RM_URMA_EP_FLAG_FC_HARD_REQ         = UCS_BIT((UCT_AM_ID_BITS) + 1),
-
-    /* Credit Grant: ep should update its FC wnd as soon as it receives AM with
-     * this bit set. Can be bundled with either soft or hard request bits */
-    UCT_RM_URMA_EP_FLAG_FC_GRANT            = UCS_BIT((UCT_AM_ID_BITS) + 2),
-
-    /* Special FC AM with Credit Grant: Just an empty message indicating
-     * credit grant. Can't be bundled with any other FC flag (as it consumes
-     * all 3 FC bits). */
-    UCT_RM_URMA_EP_FC_PURE_GRANT            = (UCT_RM_URMA_EP_FLAG_FC_HARD_REQ |
-                                               UCT_RM_URMA_EP_FLAG_FC_SOFT_REQ |
-                                               UCT_RM_URMA_EP_FLAG_FC_GRANT)
+    /* Endpoint is currently executing the pending queue */
+#if UCS_ENABLE_ASSERT
+    UCT_RM_URMA_EP_FLAG_IN_PENDING        = UCS_BIT(11),
+#else
+    UCT_RM_URMA_EP_FLAG_IN_PENDING        = 0,
+#endif
 };
 
-/*
- * FC protocol header mask
- */
-#define UCT_RM_URMA_EP_FC_MASK UCT_RM_URMA_EP_FC_PURE_GRANT
+enum {
+    UCT_RM_URMA_PACKET_ACK_REQ_SHIFT   = 25,
+    UCT_RM_URMA_PACKET_AM_ID_SHIFT     = 27,
+    UCT_RM_URMA_PACKET_DEST_ID_SHIFT   = 24,
+    UCT_RM_URMA_PACKET_PUT_SHIFT       = 28,
+};
 
-static inline int16_t uct_rm_urma_outstanding_queue_available(uct_rm_urma_ep_t *ep)
-{
-    return ep->rm_urma_jetty->available;
-}
+enum {
+    UCT_RM_URMA_PACKET_FLAG_AM      = UCS_BIT(24),
+    UCT_RM_URMA_PACKET_FLAG_ACK_REQ = UCS_BIT(25),
+    UCT_RM_URMA_PACKET_FLAG_ECN     = UCS_BIT(26),
+    UCT_RM_URMA_PACKET_FLAG_NAK     = UCS_BIT(27),
+    UCT_RM_URMA_PACKET_FLAG_PUT     = UCS_BIT(28),
+    UCT_RM_URMA_PACKET_FLAG_CTL     = UCS_BIT(29),
 
-static UCS_F_ALWAYS_INLINE uint8_t
-uct_rm_urma_fc_req_moderation(uct_ub_fc_t *fc, uct_rm_urma_iface_t *iface)
-{
-    return (fc->fc_wnd == iface->super.config.fc_hard_thresh) ?
-            UCT_RM_URMA_EP_FLAG_FC_HARD_REQ :
-           (fc->fc_wnd == iface->config.fc_soft_thresh) ?
-            UCT_RM_URMA_EP_FLAG_FC_SOFT_REQ : 0;
-}
+    UCT_RM_URMA_PACKET_AM_ID_MASK     = UCS_MASK(UCT_RM_URMA_PACKET_AM_ID_SHIFT),
+    UCT_RM_URMA_PACKET_DEST_ID_MASK   = UCS_MASK(UCT_RM_URMA_PACKET_DEST_ID_SHIFT),
+};
 
-static UCS_F_ALWAYS_INLINE uint8_t uct_rm_urma_fc_get_fc_hdr(uint8_t id)
-{
-    return id & UCT_RM_URMA_EP_FC_MASK;
-}
+enum {
+    UCT_RM_URMA_PACKET_CREQ = 1,
+    UCT_RM_URMA_PACKET_CREP = 2,
+};
 
-#define UCT_RM_URMA_CHECK_TX_QUEUE_RET(_ep, _ret) \
-    if (ucs_unlikely(uct_rm_urma_outstanding_queue_available(_ep) <= 0)) { \
-        UCS_STATS_UPDATE_COUNTER((_ep)->super.super.stats, UCT_EP_STAT_NO_RES, 1); \
-        return _ret; \
-    }
+ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr, const void *buffer, unsigned length);
 
-/*
- * Check for send resources
- */
-#define UCT_RM_URMA_CHECK_JFC_RET(_iface, _ep, _ret) \
-    /* jfc_moderation == 0 for TLs which don't support it */ \
-    if (ucs_unlikely((_iface)->super.tx.jfc_available <= \
-        (signed)(_iface)->super.config.tx_jfc_moderation)) { \
-        if (!uct_rm_urma_have_jfc_avail(_iface)) { \
-            UCS_STATS_UPDATE_COUNTER((_iface)->stats, UCT_RM_URMA_IFACE_STAT_NO_CQE, 1); \
-            UCS_STATS_UPDATE_COUNTER((_ep)->super.super.stats, UCT_EP_STAT_NO_RES, 1); \
-            return _ret; \
-        } \
-        (_ep)->super.status.uncompltes = RM_URMA_UNSIGNALED_INF; \
-    }
+ssize_t uct_rm_urma_ep_am_bcopy(uct_ep_h tl_ep, uint8_t id, uct_pack_callback_t pack_cb, void *arg, unsigned flags);
 
-#define UCT_RM_URMA_CHECK_RES(_iface, _ep) \
-    { \
-        if (ucs_unlikely((_iface)->tx.error != UCS_OK)) { \
-            return (_iface)->tx.error; \
-        } \
-        if (ucs_unlikely((_ep)->super.flags & \
-                         (UCT_RM_URMA_EP_FLAG_CLOSING | \
-                          UCT_RM_URMA_EP_FLAG_FLUSH_CANCEL | \
-                          UCT_RM_URMA_EP_FLAG_ERR_HANDLER_INVOKED))) { \
-            return UCS_ERR_CANCELED; \
-        } \
-        ucs_assert(_ep->super.flags & UCT_RM_URMA_EP_FLAG_CONNECTED); \
-        UCT_RM_URMA_CHECK_JFC_RET(_iface, _ep, UCS_ERR_NO_RESOURCE) \
-        UCT_RM_URMA_CHECK_TX_QUEUE_RET(_ep, UCS_ERR_NO_RESOURCE) \
-    }
+ucs_status_t uct_rm_urma_ep_am_zcopy(uct_ep_h tl_ep, uint8_t id, const void *header, unsigned header_length,
+                                     const uct_iov_t *iov, size_t iovcnt, unsigned flags, uct_completion_t *comp);
 
-/*
- * check for FC credits and add FC protocol bits (if any)
- */
-#define UCT_RM_URMA_CHECK_FC_WND(_fc, _stats) \
-    if ((_fc)->fc_wnd <= 0) { \
-        UCS_STATS_UPDATE_COUNTER((_fc)->stats, UCT_UB_FC_STAT_NO_CRED, 1); \
-        UCS_STATS_UPDATE_COUNTER(_stats, UCT_EP_STAT_NO_RES, 1); \
-        return UCS_ERR_NO_RESOURCE; \
-    } \
-
-#define UCT_RM_URMA_CHECK_FC(_iface, _ep, _am_id) \
-    { \
-        if (ucs_unlikely((_ep)->super.fc.fc_wnd <= (_iface)->config.fc_soft_thresh)) { \
-            if ((_iface)->super.config.fc_enabled) { \
-                UCT_RM_URMA_CHECK_FC_WND(&(_ep)->super.fc, (_ep)->super.super.stats); \
-                (_am_id) |= uct_rm_urma_fc_req_moderation(&(_ep)->super.fc, _iface); \
-            } else { \
-                /* Set fc_wnd to max, to send as much as possible without checks */ \
-                (_ep)->super.fc.fc_wnd = INT16_MAX; \
-            } \
-        } \
-        (_am_id) |= uct_rm_urma_fc_get_fc_hdr((_ep)->super.flags); /* take grant bit */ \
-    }
-
-#define UCT_RM_URMA_CHECK_RES_AND_FC(_iface, _ep, _am_id) \
-    UCT_RM_URMA_CHECK_RES(_iface, _ep) \
-    /* Restored shared credits do not let a new AM bypass queued requests. */ \
-    if (ucs_unlikely(!uct_rm_urma_iface_pending_can_send( \
-                         _iface, &(_ep)->arb_group))) { \
-        UCS_STATS_UPDATE_COUNTER((_ep)->super.super.stats, UCT_EP_STAT_NO_RES, 1); \
-        return UCS_ERR_NO_RESOURCE; \
-    } \
-    if ((_iface)->link.mode == UCT_RM_URMA_LINK_IFACE_V2) { \
-        ucs_status_t _link_status = uct_rm_urma_link_check(_ep); \
-        if (_link_status != UCS_OK) { \
-            return _link_status; \
-        } \
-    } else { \
-        UCT_RM_URMA_CHECK_FC(_iface, _ep, _am_id) \
-    } \
-    uct_rm_urma_iface_check_pending(_iface, &(_ep)->arb_group);
-
-#define UCT_RM_URMA_UPDATE_FC_WND(_iface, _fc) \
-    { \
-        /* For performance reasons, prefer to update fc_wnd unconditionally */ \
-        (_fc)->fc_wnd--; \
-        \
-        if ((_iface)->super.config.fc_enabled) { \
-            UCS_STATS_SET_COUNTER((_fc)->stats, UCT_UB_FC_STAT_FC_WND, \
-                                  (_fc)->fc_wnd); \
-        } \
-    }
-
-#define UCT_RM_URMA_UPDATE_FC(_iface, _ep, _fc_hdr) \
-    if ((_iface)->link.mode == UCT_RM_URMA_LINK_IFACE_V2) { \
-        uct_rm_urma_link_sent(_ep); \
-    } else { \
-        if ((_fc_hdr) & UCT_RM_URMA_EP_FLAG_FC_GRANT) { \
-            UCS_STATS_UPDATE_COUNTER((_ep)->super.fc.stats, UCT_UB_FC_STAT_TX_GRANT, 1); \
-        } \
-        if ((_fc_hdr) & UCT_RM_URMA_EP_FLAG_FC_SOFT_REQ) { \
-            UCS_STATS_UPDATE_COUNTER((_ep)->super.fc.stats, UCT_UB_FC_STAT_TX_SOFT_REQ, 1); \
-        } else if ((_fc_hdr) & UCT_RM_URMA_EP_FLAG_FC_HARD_REQ) { \
-            UCS_STATS_UPDATE_COUNTER((_ep)->super.fc.stats, UCT_UB_FC_STAT_TX_HARD_REQ, 1); \
-        } \
-        \
-        (_ep)->super.flags &= ~UCT_RM_URMA_EP_FC_MASK; \
-        \
-        UCT_RM_URMA_UPDATE_FC_WND(_iface, &(_ep)->super.fc) \
-    }
-
-ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr,
-                                     const void *buffer, unsigned length);
-ssize_t uct_rm_urma_ep_am_bcopy(uct_ep_h tl_ep, uint8_t id,
-                                uct_pack_callback_t pack_cb, void *arg,
-                                unsigned flags);
-ucs_status_t uct_rm_urma_ep_am_zcopy(uct_ep_h tl_ep, uint8_t id, const void *header,
-                                     unsigned header_length, const uct_iov_t *iov,
-                                     size_t iovcnt, unsigned flags,
-                                     uct_completion_t *comp);
-ucs_status_t uct_rm_urma_ep_put_short(uct_ep_h tl_ep, const void *payload,
-                                      unsigned length, uint64_t remote_addr,
+ucs_status_t uct_rm_urma_ep_put_short(uct_ep_h tl_ep, const void *payload, unsigned length, uint64_t remote_addr,
                                       uct_rkey_t rkey);
-ssize_t uct_rm_urma_ep_put_bcopy(uct_ep_h tl_ep, uct_pack_callback_t pack_cb,
-                                 void *arg, uint64_t remote_addr, uct_rkey_t rkey);
-ucs_status_t uct_rm_urma_ep_put_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov, size_t iovcnt,
-                                      uint64_t remote_addr, uct_rkey_t rkey,
-                                      uct_completion_t *comp);
 
-ucs_status_t uct_rm_urma_ep_get_bcopy(uct_ep_h tl_ep,
-                                      uct_unpack_callback_t unpack_cb,
-                                      void *arg, size_t length,
-                                      uint64_t remote_addr, uct_rkey_t rkey,
-                                      uct_completion_t *comp);
-ucs_status_t uct_rm_urma_ep_get_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov,
-                                      size_t iovcnt, uint64_t remote_addr,
-                                      uct_rkey_t rkey, uct_completion_t *comp);
-ucs_status_t uct_rm_urma_ep_atomic_cswap64(uct_ep_h tl_ep, uint64_t compare, uint64_t swap,
-                                           uint64_t remote_addr, uct_rkey_t rkey,
-                                           uint64_t *result, uct_completion_t *comp);
-ucs_status_t uct_rm_urma_ep_atomic_cswap32(uct_ep_h tl_ep, uint32_t compare, uint32_t swap,
-                                           uint64_t remote_addr, uct_rkey_t rkey,
-                                           uint32_t *result, uct_completion_t *comp);
-ucs_status_t uct_rm_urma_ep_atomic64_post(uct_ep_h ep, unsigned opcode, uint64_t value,
-                                          uint64_t remote_addr, uct_rkey_t rkey);
-ucs_status_t uct_rm_urma_ep_atomic32_post(uct_ep_h ep, unsigned opcode, uint32_t value,
-                                          uint64_t remote_addr, uct_rkey_t rkey);
-ucs_status_t uct_rm_urma_ep_atomic64_fetch(uct_ep_h ep, uct_atomic_op_t opcode,
-                                           uint64_t value, uint64_t *result,
-                                           uint64_t remote_addr, uct_rkey_t rkey,
-                                           uct_completion_t *comp);
-ucs_status_t uct_rm_urma_ep_atomic32_fetch(uct_ep_h ep, uct_atomic_op_t opcode,
-                                           uint32_t value, uint32_t *result,
-                                           uint64_t remote_addr, uct_rkey_t rkey,
-                                           uct_completion_t *comp);
 ucs_status_t uct_rm_urma_ep_pending_add(uct_ep_h tl_ep, uct_pending_req_t *r, unsigned flags);
+
 void uct_rm_urma_ep_pending_purge(uct_ep_h tl_ep, uct_pending_purge_callback_t cb, void *arg);
-ucs_status_t uct_rm_urma_ep_flush(uct_ep_h tl_ep, unsigned flags,
-                                  uct_completion_t *comp);
-ucs_status_t uct_rm_urma_ep_fence(uct_ep_h tl_ep, unsigned flags);
-ucs_status_t uct_rm_urma_ep_check(uct_ep_h tl_ep, unsigned flags, uct_completion_t *comp);
+
+ucs_status_t uct_rm_urma_ep_flush_nolock(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep, uct_completion_t *comp);
+
+ucs_status_t uct_rm_urma_ep_flush(uct_ep_h tl_ep, unsigned flags, uct_completion_t *comp);
+
 ucs_status_t uct_rm_urma_ep_get_address(uct_ep_h tl_ep, uct_ep_addr_t *addr);
-ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep,
-                                          const uct_device_addr_t *dev_addr,
+
+ucs_status_t uct_rm_urma_ep_connect_to_ep(uct_ep_h tl_ep, const uct_device_addr_t *dev_addr,
                                           const uct_ep_addr_t *ep_addr);
-ucs_status_t uct_rm_urma_ep_fc_grant(uct_pending_req_t *self);
-ucs_arbiter_cb_result_t uct_rm_urma_ep_process_pending(ucs_arbiter_t *arbiter, ucs_arbiter_group_t *group,
-                                                       ucs_arbiter_elem_t *elem, void *arg);
-void uct_rm_urma_ep_txqp_purge_outstanding(uct_rm_urma_iface_t *iface, uct_ub_tx_queue_t *txqp,
-                                           ucs_status_t status, uint32_t sn, int warn);
-void uct_rm_urma_ep_destroy(uct_ep_h tl_ep);
+
+ucs_status_t uct_rm_urma_ep_create_connected_common(const uct_ep_params_t *params, uct_ep_h *new_ep_p);
+
+ucs_status_t uct_rm_urma_iface_unpack_peer_address(uct_rm_urma_iface_t *iface, const uct_ub_address_t *dev_addr,
+                                                   const uct_rm_urma_iface_addr_t *if_addr, void *address_p);
+
+uct_rm_urma_send_skb_t *uct_rm_urma_ep_prepare_creq(uct_rm_urma_ep_t *ep);
+
+void uct_rm_urma_ep_deal_creq(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *neth);
+
+void uct_rm_urma_ep_deal_crep(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep, uct_rm_urma_neth_t *neth);
+
+void uct_rm_urma_ep_deal_am(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *neth, unsigned byte_len,
+                            uct_ub_iface_recv_desc_t *desc);
+
+ucs_arbiter_cb_result_t uct_rm_urma_ep_do_pending(ucs_arbiter_t *arbiter, ucs_arbiter_group_t *group,
+                                                  ucs_arbiter_elem_t *elem, void *arg);
+
+void uct_rm_urma_ep_process_ack(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
+                                uct_rm_urma_psn_t ack_psn, int is_async);
+
+void uct_rm_urma_ep_disconnect(uct_ep_h tl_ep);
+
+void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *neth, unsigned byte_len,
+                               uct_rm_urma_recv_skb_t* skb, int is_async);
+
+void uct_rm_urma_ep_window_release_completed(uct_rm_urma_ep_t *ep, int is_async);
 
 ucs_status_t uct_rm_urma_ep_connect_to_ep_v2(uct_ep_h tl_ep, const uct_device_addr_t *dev_addr,
                                              const uct_ep_addr_t *ep_addr,
                                              const uct_ep_connect_to_ep_params_t *param);
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_ep_ctl_op_schedule(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep)
+{
+    ucs_arbiter_group_push_elem(&ep->tx.pending.group, &ep->tx.pending.elem);
+    ucs_arbiter_group_schedule(&iface->tx.pending_q, &ep->tx.pending.group);
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_ep_ctl_op_add(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep, int op)
+{
+    ep->tx.pending.ops |= op;
+    uct_rm_urma_ep_ctl_op_schedule(iface, ep);
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_ep_ctl_op_del(uct_rm_urma_ep_t *ep, uint32_t ops)
+{
+    ep->tx.pending.ops &= ~ops;
+}
+
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_ctl_op_isany(uct_rm_urma_ep_t *ep)
+{
+    return ep->tx.pending.ops;
+}
+
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_ctl_op_check_ex(uct_rm_urma_ep_t *ep, uint32_t ops)
+{
+    return (ep->tx.pending.ops & ops) && ((ep->tx.pending.ops & ~ops) == 0);
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_ep_remove_has_pending_flag(uct_rm_urma_ep_t *ep)
+{
+    ucs_assert(ep->flags & UCT_RM_URMA_EP_FLAG_HAS_PENDING);
+    ep->flags &= ~UCT_RM_URMA_EP_FLAG_HAS_PENDING;
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_skb_release(uct_rm_urma_send_skb_t *skb, int is_inline)
+{
+    ucs_assert(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_INVALID));
+    skb->flags = UCT_RM_URMA_SEND_SKB_FLAG_INVALID;
+
+    if (is_inline) {
+        ucs_mpool_put_inline(skb);
+    } else {
+        ucs_mpool_put(skb);
+    }
+}
+
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_iface_has_skbs(uct_rm_urma_iface_t *iface)
+{
+    return iface->tx.skb || !ucs_mpool_is_empty(&iface->tx.mp);
+}
+
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_no_window(uct_rm_urma_ep_t *ep)
+{
+    return UCT_RM_URMA_PSN_COMPARE(ep->tx.psn, >=, ep->tx.max_psn);
+}
+
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_is_last_ack_received(uct_rm_urma_ep_t *ep)
+{
+    return UCT_RM_URMA_PSN_COMPARE(ep->tx.acked_psn, ==, ep->tx.psn - 1);
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_neth_set_dest_id(uct_rm_urma_neth_t *neth, uint32_t id)
+{
+    neth->packet_type |= id;
+}
+
+static UCS_F_ALWAYS_INLINE uint32_t uct_rm_urma_neth_get_dest_id(uct_rm_urma_neth_t *neth)
+{
+    return neth->packet_type & UCT_RM_URMA_PACKET_DEST_ID_MASK;
+}
+
+static UCS_F_ALWAYS_INLINE uct_ub_address_t* uct_rm_urma_creq_ub_addr(uct_rm_urma_ctl_hdr_t *conn_req)
+{
+    ucs_assert(conn_req->type == UCT_RM_URMA_PACKET_CREQ);
+
+    return (uct_ub_address_t*)(conn_req + 1);
+}
+
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_is_connected(uct_rm_urma_ep_t *ep)
+{
+    ucs_assert((ep->super.dep_id == UCT_RM_URMA_EP_NULL_ID) == !(ep->flags & UCT_RM_URMA_EP_FLAG_CONNECTED));
+
+    return ep->flags & UCT_RM_URMA_EP_FLAG_CONNECTED;
+}
+
+typedef struct {
+    uct_pending_req_priv_arb_t arb;
+    unsigned                   flags;
+} uct_rm_urma_pending_req_priv_t;
+
+static UCS_F_ALWAYS_INLINE uct_rm_urma_pending_req_priv_t *uct_rm_urma_pending_req_priv(uct_pending_req_t *req)
+{
+    return (uct_rm_urma_pending_req_priv_t *)&(req)->priv;
+}
+
+static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_is_connected_and_no_pending(uct_rm_urma_ep_t *ep)
+{
+    return (ep->flags & (UCT_RM_URMA_EP_FLAG_CONNECTED | UCT_RM_URMA_EP_FLAG_HAS_PENDING))
+        == UCT_RM_URMA_EP_FLAG_CONNECTED;
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_ep_set_has_pending_flag(uct_rm_urma_ep_t *ep)
+{
+    ep->flags |= UCT_RM_URMA_EP_FLAG_HAS_PENDING;
+}
 
 UCS_CLASS_DECLARE(uct_rm_urma_ep_t, const uct_ep_params_t *);
 UCS_CLASS_DECLARE_NEW_FUNC(uct_rm_urma_ep_t, uct_ep_t, const uct_ep_params_t *);
