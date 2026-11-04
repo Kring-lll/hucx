@@ -1,0 +1,22 @@
+{
+  "prior_product": "a2b4b07c12be5401afaf427877aadd6752871810",
+  "base_commit": "1368e50ea238a6ec2cf50d10576237bd3926a414",
+  "scope": "reuse existing pending_mp; node pending",
+  "files": {
+    "src/uct/urma/Makefile.am": "b8331b12f178f908f74fd8647dd18063226f46dc31bbd0a900579d0e7e1c6629",
+    "src/uct/urma/base/urma_iface.c": "149da5132d434da9f6050ed50035520c237fc840295d610e2486d86a795bdd33",
+    "src/uct/urma/base/urma_iface.h": "9c1002be4e66ccce0ce1a7690d0864781d6b25e7da7c6b1e84b66d644b2e59af",
+    "src/uct/urma/base/urma_md.c": "44d3ac6beb0efa49807ab5abb97a70be400c704822474af93e1a32f16b211c7e",
+    "src/uct/urma/base/urma_md.h": "676da7577ef35a3a6d45a4b206d763e9fe0f15c9c99ed8d0c5fe8e42736c5976",
+    "src/uct/urma/rm_urma/rm_urma_addr.c": "109a554ca40b88d0c9824634fe172eb51c6496a32cabb480e518aead6d2d0162",
+    "src/uct/urma/rm_urma/rm_urma_addr.h": "d3f127384282707dab9f5626961e7f02dd2df0177246d99f95fe170703281250",
+    "src/uct/urma/rm_urma/rm_urma_ep.c": "9878a1a42cc128da6c60de10ebc4e1390fd6eabdc26599017f4177e48c5e2cfd",
+    "src/uct/urma/rm_urma/rm_urma_ep.h": "551f7eb1f0399e9e1d23fbdf398b0c476018da0633f4e685c5ca2e99420eea3b",
+    "src/uct/urma/rm_urma/rm_urma_iface.c": "34a429aace3ba0e959a01c1ebaac51793d61d024efa86ab7c7d1dca969ecc9c6",
+    "src/uct/urma/rm_urma/rm_urma_iface.h": "a0815d928090b480fffa07040f05871c887609e6953490c95381ac2f7812a6b9",
+    "src/uct/urma/rm_urma/rm_urma_link.c": "bd21a5c6977bab21d33c9ad161a3095019b705db897f8821904e982e75286432",
+    "src/uct/urma/rm_urma/rm_urma_link.h": "b9e92ce5d1e165943622beff8256ed2ef5b7f3e6388ba7cc596acd76a37fbfba",
+    "src/uct/urma/rm_urma/rm_urma_reliable.c": "a0a6cf465dbb77be6bcb5325f8c5bf43949cee85aa1bdec43baa22061ef55f26",
+    "src/uct/urma/rm_urma/rm_urma_reliable.h": "444fb6cd89dbe0bb6b885928e3bb018ea2146b4bb52185c4e61393026d321151"
+  }
+}

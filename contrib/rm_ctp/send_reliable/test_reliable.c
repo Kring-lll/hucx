@@ -43,6 +43,11 @@ static void fixture(control_fixture_t *f, unsigned id)
 {
     iface_v2_fixture_init(f, id, 128);
     f->iface.link.mode = UCT_RM_URMA_LINK_RELIABLE_V3;
+    ucs_mpool_cleanup(&f->iface.tx.pending_mp, 1);
+    pool_init(&f->iface.tx.pending_mp,
+              ucs_max(ucs_max(sizeof(uct_rm_urma_fc_pending_req_t),
+                              sizeof(uct_rm_urma_link_req_t)),
+                      sizeof(uct_rm_urma_replay_t)), 0);
     f->iface.super.config.seg_size = 4096;
     ucs_mpool_cleanup(&f->iface.super.tx.mp, 1);
     pool_init(&f->iface.super.tx.mp, sizeof(uct_ub_iface_send_desc_t) + 4096, 1);

@@ -100,7 +100,7 @@ static void rel_release(uct_rm_urma_iface_t *iface, uct_rm_urma_replay_t *entry)
         entry->peer->reliable.ack_in_flight = 0;
     }
     ucs_mpool_put(entry->desc);
-    ucs_free(entry);
+    ucs_mpool_put(entry);
 }
 
 void uct_rm_urma_reliable_complete(uct_urma_iface_send_op_t *op,
@@ -119,13 +119,15 @@ static uct_rm_urma_replay_t *rel_alloc(uct_rm_urma_iface_t *iface,
                                       uct_rm_urma_peer_t *peer, unsigned kind)
 {
     uct_rm_urma_replay_t *entry;
-    entry = ucs_calloc(1, sizeof(*entry), "rm_send_replay");
+    entry = ucs_mpool_get(&iface->tx.pending_mp);
     if (entry == NULL) {
         return NULL;
     }
+    /* Reused entries must not inherit ACK, CQE, retry or quarantine state. */
+    memset(entry, 0, sizeof(*entry));
     entry->desc = ucs_mpool_get(&iface->super.tx.mp);
     if (entry->desc == NULL) {
-        ucs_free(entry);
+        ucs_mpool_put(entry);
         return NULL;
     }
     entry->peer = peer;
@@ -202,7 +204,7 @@ static ucs_status_t rel_accept(uct_rm_urma_ep_t *ep,
             ucs_list_add_tail(&iface->reliable.quarantine, &entry->list);
         } else {
             ucs_mpool_put(entry->desc);
-            ucs_free(entry);
+            ucs_mpool_put(entry);
         }
         if (status != UCS_ERR_NO_RESOURCE) {
             uct_rm_urma_iface_set_failed(iface, status);
@@ -269,7 +271,7 @@ ssize_t uct_rm_urma_reliable_bcopy(uct_rm_urma_ep_t *ep, uint8_t id,
     if (length > iface->super.config.seg_size - sizeof(uct_ub_hdr_t) -
                  UCT_RM_URMA_REL_HEADER) {
         ucs_mpool_put(entry->desc);
-        ucs_free(entry);
+        ucs_mpool_put(entry);
         return UCS_ERR_INVALID_PARAM;
     }
     status = rel_accept(ep, entry, id, length);
@@ -380,7 +382,7 @@ void uct_rm_urma_reliable_progress(uct_rm_urma_iface_t *iface, ucs_time_t now)
                     ucs_list_add_tail(&iface->reliable.quarantine, &entry->list);
                 } else {
                     ucs_mpool_put(entry->desc);
-                    ucs_free(entry);
+                    ucs_mpool_put(entry);
                 }
                 if (status != UCS_ERR_NO_RESOURCE) {
                     uct_rm_urma_iface_set_failed(iface, status);
@@ -438,7 +440,7 @@ void uct_rm_urma_reliable_cleanup(uct_rm_urma_iface_t *iface)
         entry = ucs_list_extract_head(&iface->reliable.quarantine,
                                       uct_rm_urma_replay_t, list);
         ucs_mpool_put(entry->desc);
-        ucs_free(entry);
+        ucs_mpool_put(entry);
     }
     ucs_list_for_each(peer, &iface->link.peers, list) {
         ucs_list_for_each_safe(entry, next, &peer->reliable.replay, list) {

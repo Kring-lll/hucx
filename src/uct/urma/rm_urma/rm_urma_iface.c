@@ -1058,6 +1058,11 @@ static ucs_status_t uct_rm_urma_iface_pending_mpool_init(uct_rm_urma_iface_t *if
     ucs_mpool_params_reset(&mp_params);
     mp_params.elem_size = ucs_max(sizeof(uct_rm_urma_fc_pending_req_t),
                                   sizeof(uct_rm_urma_link_req_t));
+    if (iface->link.mode == UCT_RM_URMA_LINK_RELIABLE_V3) {
+        /* Replay records share this existing software-operation pool. */
+        mp_params.elem_size = ucs_max(mp_params.elem_size,
+                                      sizeof(uct_rm_urma_replay_t));
+    }
     mp_params.elems_per_chunk = 128;
     mp_params.alignment = sizeof(uint64_t);
     mp_params.ops = &uct_rm_urma_pending_mpool_ops;
