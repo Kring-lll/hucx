@@ -1,0 +1,14 @@
+{
+  "cleanup_tests": 4,
+  "prior_inline_tests": 10,
+  "prior_pool_tests": 14,
+  "total": 28,
+  "codec_old_new_differential": "PASS",
+  "codec_golden_asan_ubsan": "PASS",
+  "control_creation_failure_recovery_reuse_and_inline_post_model": "PASS",
+  "pool_lifetime_assert_on_off_asan_ubsan": "PASS",
+  "lsan": "UNAVAILABLE; detect_leaks=0; explicit ownership checks",
+  "local_full_sdk_build": "NOT_RUN; SDK absent",
+  "arm_build_and_node_regression": "PENDING",
+  "performance_rerun": "NOT_REQUESTED"
+}

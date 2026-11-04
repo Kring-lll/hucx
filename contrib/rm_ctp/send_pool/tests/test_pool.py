@@ -31,16 +31,14 @@ class PoolTests(unittest.TestCase):
     p=subprocess.run(cmd,text=True,capture_output=True);self.assertEqual(p.returncode,0,p.stderr)
     p=subprocess.run([str(out/'test')],env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'),text=True,capture_output=True)
     self.assertEqual(p.returncode,0,p.stderr);self.assertIn('PRODUCTION_POOL_',p.stdout)
- def test_product_scope_and_all_release_paths(self):
+ def test_existing_pool_ownership_functions_are_unchanged(self):
   path='src/uct/urma/rm_urma/rm_urma_reliable.c'
-  old=subprocess.check_output(['git','-C',str(REPO),'show','1368e50ea238a6ec2cf50d10576237bd3926a414:'+path]).decode()
+  old=subprocess.check_output(['git','-C',str(REPO),'show','bdc1e36e9ee75d97dee2d3e93b9e83b6bd10b49f:'+path]).decode()
   new=(REPO/path).read_text()
-  expected=old.replace('entry = ucs_calloc(1, sizeof(*entry), "rm_send_replay");','entry = ucs_mpool_get(&iface->tx.pending_mp);')
-  expected=expected.replace('ucs_free(entry);','ucs_mpool_put(entry);')
-  expected=expected.replace('    entry->desc = ucs_mpool_get', '    /* Reused entries must not inherit ACK, CQE, retry or quarantine state. */\n    memset(entry, 0, sizeof(*entry));\n    entry->desc = ucs_mpool_get')
-  self.assertEqual(new,expected)
-  self.assertEqual(old.count('ucs_free(entry);'),6)
-  self.assertNotIn('ucs_free(entry)',new)
+  for sig in ('static void rel_release(', 'void uct_rm_urma_reliable_complete(',
+              'static uct_rm_urma_replay_t *rel_alloc(', 'static ucs_status_t rel_accept(',
+              'void uct_rm_urma_reliable_cleanup('):
+   self.assertEqual(extract(old,sig),extract(new,sig))
  def test_old_comparison_requests_inline_validation(self):
   from unittest.mock import patch
   spec=importlib.util.spec_from_file_location('pool_candidate_one',ROOT/'run_candidate.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)

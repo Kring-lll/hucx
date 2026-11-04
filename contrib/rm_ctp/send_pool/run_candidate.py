@@ -21,6 +21,8 @@ osu=previous.osu
 EXPERIMENT=integration.DEFAULT_CASE.parent
 OLD_CASE=EXPERIMENT / 'r1_shared_a2b4b07c1_Z1tIOO'
 LABELS=('old_reliable','new_reliable','rc')
+SUCCESS_STATUS='SELECTED_REPLAY_POOL_FUNCTIONAL_AND_REQUESTED_OSU_PASS_REVIEW_REQUIRED'
+RUN_PREFIX='send_pool_accept_'
 
 
 def sdk_headers():
@@ -184,7 +186,8 @@ def compare(rows,item):
 def write_table(out,report):
     lines=['# 可靠SEND元数据复用候选对照','',
            '旧可靠为已开inline的a2b安装；新可靠复用pending_mp；RC使用新候选安装。',
-           '同一窗口原版OSU7.5.2，轮换模式顺序，各5轮，不删异常、不混入旧样本。',
+           ('同一窗口原版OSU7.5.2，轮换模式顺序，各5轮，不删异常、不混入旧样本。'
+            if report['timing_requested'] else '本轮仅功能回归，不追加性能测量。'),
            '计时无WR/故障/资源观察器和调试日志；均保留相同Init/Finalize身份探针。',
            'RSS为各rank Finalize前采样求和，两节点合计、未同步；不是设备内存。',
            'RM4KiB、RC8KiB片长沿用原方案；本轮未改ACK策略/格式、正常RTO或回收条件。','',
@@ -284,8 +287,8 @@ def execute(case,build,out,timing):
                 group=compare(report['trials'][first:],item);report['comparisons'].append(group);save()
                 print('正式OSU=%s PPN=%d 8B_MEDIAN_US=%s 新版对旧可靠时延降低=%+.2f%%'%(benchmark,ppn,
                       json.dumps({k:v['median_us'] for k,v in group['profiles'].items()}),group['new_vs_old_latency_reduction_pct']),flush=True)
-        report['status']='SELECTED_REPLAY_POOL_FUNCTIONAL_AND_REQUESTED_OSU_PASS_REVIEW_REQUIRED';save()
-        print('所选记录复用功能通过；性能保留全部样本待审阅，完整C/D/硬件故障未验收',flush=True)
+        report['status']=SUCCESS_STATUS;save()
+        print('所选SEND功能通过；'+('性能样本保留待审阅；' if timing else '本轮未追加性能测量；')+'完整C/D/硬件故障未验收',flush=True)
     except BaseException as exc:
         report.update(status='STOPPED_INCOMPLETE',error=type(exc).__name__+': '+str(exc));save();raise
     finally:
@@ -304,7 +307,7 @@ def main():
     case=args.case.resolve()
     if os.geteuid()!=0 or socket.gethostname()!='node89':raise ValueError('run only as root on node89')
     build=validate_candidate(case)
-    out=Path(tempfile.mkdtemp(prefix='send_pool_accept_',dir=case))
+    out=Path(tempfile.mkdtemp(prefix=RUN_PREFIX,dir=case))
     print('SEND_POOL_DIR='+str(out),flush=True)
     try:execute(case,build,out,args.timing)
     except Exception as exc:

@@ -27,15 +27,16 @@ typedef struct {struct {struct {int super;} super;struct {unsigned max_inline;} 
     jetty_t rm_urma_jetty;} uct_rm_urma_iface_t;
 typedef struct {uct_ub_iface_send_desc_t *desc;unsigned length,in_flight,quarantined;
     peer_t *peer;int op;} uct_rm_urma_replay_t;
-static unsigned posts,queued,updated,observed_inline,observed_complete,observed_length;
+static unsigned posts,queued,updated,observed_inline,observed_complete,observed_length,constructors;
 static void *observed_tseg,*observed_target;
 static urma_status_t provider_status;
 static ucs_status_t constructor_status;
 static uct_rm_urma_ep_t constructor_ep;
 static unsigned char observed_bytes[4096];
+#define ucs_debug(...) ((void)0)
 #define ucs_derived_of(pointer,type) ((type *)(pointer))
 static int new_ep(uct_ep_h *ep,uct_ep_params_t *params)
-{assert(params->field_mask==UCT_EP_PARAM_FIELD_IFACE);*ep=&constructor_ep;return constructor_status;}
+{++constructors;assert(params->field_mask==UCT_EP_PARAM_FIELD_IFACE);*ep=&constructor_ep;return constructor_status;}
 #define UCS_CLASS_NEW(type,result,params) new_ep(result,params)
 #define UCT_UB_FILL_WR_SG_BUF(dst,address,length,segment,count,sg) do { \
     (sg)->addr=(address);(sg)->len=(length);(sg)->tseg=(segment); \
@@ -86,8 +87,22 @@ static void one(unsigned length,unsigned limit,int status,int create)
  }
  free(desc);
 }
+static void control_failure_and_reuse(void)
+{
+ uct_rm_urma_iface_t iface={0};constructors=0;constructor_status=UCS_ERR_IO_ERROR;
+ assert(uct_rm_urma_iface_control_ep_get(&iface)==UCS_ERR_IO_ERROR);
+ assert(!iface.tx.ctrl_ep && !iface.link.creating_control && constructors==1);
+ constructor_status=UCS_OK;
+ assert(uct_rm_urma_iface_control_ep_get(&iface)==UCS_OK);
+ assert(iface.tx.ctrl_ep==&constructor_ep && !iface.link.creating_control);
+ assert(constructor_ep.super.fc.fc_wnd==INT16_MAX && constructors==2);
+ constructor_status=UCS_ERR_IO_ERROR;
+ assert(uct_rm_urma_iface_control_ep_get(&iface)==UCS_OK && constructors==2);
+ puts("CONTROL_EP_FAILURE_RECOVERY_AND_REUSE=PASS");
+}
 int main(void)
 {
+ control_failure_and_reuse();
  unsigned lengths[]={39,115,123,127,128,129,4096},limits[]={0,38,39,64,127,128,256};
  unsigned cases=0;
  for(unsigned i=0;i<sizeof(lengths)/sizeof(lengths[0]);++i)

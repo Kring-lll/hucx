@@ -4,63 +4,8 @@
  */
 #include "rm_urma_ep.h"
 #include "rm_urma_reliable.h"
-#include <endian.h>
 
 #define RM_REL_MAGIC 0x33524d53u
-
-/* Never dereference unaligned wire integers. Encoding is little endian. */
-static void rel_put32(void *p, unsigned offset, uint32_t value)
-{
-    value = htole32(value);
-    memcpy((uint8_t *)p + offset, &value, sizeof(value));
-}
-
-static void rel_put64(void *p, unsigned offset, uint64_t value)
-{
-    value = htole64(value);
-    memcpy((uint8_t *)p + offset, &value, sizeof(value));
-}
-
-static uint32_t rel_get32(const void *p, unsigned offset)
-{
-    uint32_t value;
-    memcpy(&value, (const uint8_t *)p + offset, sizeof(value));
-    return le32toh(value);
-}
-
-static uint64_t rel_get64(const void *p, unsigned offset)
-{
-    uint64_t value;
-    memcpy(&value, (const uint8_t *)p + offset, sizeof(value));
-    return le64toh(value);
-}
-
-ucs_status_t uct_rm_urma_reliable_address_pack(void *buffer, size_t capacity,
-                        const uct_rm_urma_iface_addr_v2_t *address)
-{
-    ucs_status_t status = uct_rm_urma_iface_addr_v2_pack(buffer, capacity, address);
-    if (status == UCS_OK) {
-        ((uint8_t *)buffer)[28] = 3;
-        ((uint8_t *)buffer)[30] = 2;
-    }
-    return status;
-}
-
-ucs_status_t uct_rm_urma_reliable_address_unpack(const void *buffer, size_t length,
-                        uct_rm_urma_iface_addr_v2_t *address)
-{
-    uint8_t wire[UCT_RM_URMA_IFACE_ADDR_V2_SIZE];
-    if ((buffer == NULL) || (length != sizeof(wire)) ||
-        (((const uint8_t *)buffer)[28] != 3) ||
-        (((const uint8_t *)buffer)[30] != 2) ||
-        (((const uint8_t *)buffer)[31] != 0)) {
-        return UCS_ERR_INVALID_PARAM;
-    }
-    memcpy(wire, buffer, sizeof(wire));
-    wire[28] = UCT_RM_URMA_ADDR_VERSION;
-    wire[30] = UCT_RM_URMA_ADDR_PEER_FC;
-    return uct_rm_urma_iface_addr_v2_unpack(wire, sizeof(wire), address);
-}
 
 void uct_rm_urma_reliable_peer_init(uct_rm_urma_peer_t *peer)
 {
@@ -148,18 +93,18 @@ static void rel_header(uct_rm_urma_iface_t *iface,
     ub->am_id = UCT_RM_URMA_EP_FC_PURE_GRANT;
     ub->ep_id = 0;
     memset(wire, 0, UCT_RM_URMA_REL_PREFIX);
-    rel_put32(wire, 0, RM_REL_MAGIC);
+    uct_rm_urma_addr_put32(wire, 0, RM_REL_MAGIC);
     wire[4] = 3;
     wire[5] = entry->kind;
     wire[6] = id;
-    rel_put64(wire, 8, iface->link.instance);
-    rel_put64(wire, 16, entry->peer->remote.iface.instance);
-    rel_put64(wire, 24, entry->psn);
-    rel_put32(wire, 32, length);
+    uct_rm_urma_addr_put64(wire, 8, iface->link.instance);
+    uct_rm_urma_addr_put64(wire, 16, entry->peer->remote.iface.instance);
+    uct_rm_urma_addr_put64(wire, 24, entry->psn);
+    uct_rm_urma_addr_put32(wire, 32, length);
     entry->length = sizeof(*ub) + UCT_RM_URMA_REL_PREFIX;
     if (entry->kind == UCT_RM_URMA_REL_DATA) {
         memcpy(wire + 36, iface->super.eid.raw, 16);
-        rel_put32(wire, 52, iface->super.uasid);
+        uct_rm_urma_addr_put32(wire, 52, iface->super.uasid);
         /* Validated once in link_ready; encode the return address on EVERY
          * DATA, so losing the first DATA does not lose bootstrap state. */
         uct_rm_urma_reliable_address_pack(wire + 56, 48, &iface->link.address);
@@ -292,16 +237,16 @@ ucs_status_t uct_rm_urma_reliable_receive(uct_rm_urma_iface_t *iface,
         return UCS_OK;
     }
     if ((length < UCT_RM_URMA_REL_PREFIX) ||
-        (rel_get32(wire, 0) != RM_REL_MAGIC) || (wire[4] != 3) || wire[7]) {
+        (uct_rm_urma_addr_get32(wire, 0) != RM_REL_MAGIC) || (wire[4] != 3) || wire[7]) {
         return UCS_ERR_INVALID_PARAM;
     }
     /* Stale, well-formed instances cannot complete current transmissions. */
-    if (rel_get64(wire, 16) != iface->link.instance) {
+    if (uct_rm_urma_addr_get64(wire, 16) != iface->link.instance) {
         return UCS_OK;
     }
-    source = rel_get64(wire, 8);
-    psn = rel_get64(wire, 24);
-    payload = rel_get32(wire, 32);
+    source = uct_rm_urma_addr_get64(wire, 8);
+    psn = uct_rm_urma_addr_get64(wire, 24);
+    payload = uct_rm_urma_addr_get32(wire, 32);
     if ((wire[5] == UCT_RM_URMA_REL_ACK) &&
         (length == UCT_RM_URMA_REL_PREFIX) && !wire[6] && !payload) {
         ucs_list_for_each(peer, &iface->link.peers, list) {
@@ -331,7 +276,7 @@ ucs_status_t uct_rm_urma_reliable_receive(uct_rm_urma_iface_t *iface,
         return UCS_ERR_INVALID_PARAM;
     }
     memcpy(remote.eid, wire + 36, 16);
-    remote.uasid = rel_get32(wire, 52);
+    remote.uasid = uct_rm_urma_addr_get32(wire, 52);
     status = uct_rm_urma_reliable_address_unpack(wire + 56, 48, &remote.iface);
     if ((status != UCS_OK) || (remote.iface.instance != source)) {
         return UCS_ERR_INVALID_PARAM;

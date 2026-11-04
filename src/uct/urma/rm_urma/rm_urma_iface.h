@@ -161,7 +161,7 @@ struct uct_rm_urma_iface {
         unsigned               native_rma;
     } config;
     struct {
-        ucs_mpool_t            pending_mp; /* pool for FC grant and keepalive pending requests */
+        ucs_mpool_t            pending_mp; /* pool for FC/link requests and reliable replay records */
         ucs_arbiter_t          arbiter;
         uct_rm_urma_ep_t      *ctrl_ep; /* software completion owner, no Jetty */
         ucs_list_link_t        retired_eps;
@@ -256,7 +256,7 @@ uct_rm_urma_iface_check_pending(uct_rm_urma_iface_t *iface, ucs_arbiter_group_t 
     ucs_assert(uct_rm_urma_iface_pending_can_send(iface, arb_group));
 }
 
-void uct_rm_urma_available_set(uct_rm_urma_iface_t *iface, uint8_t jfs_idx, int16_t val);
+ucs_status_t uct_rm_urma_iface_control_ep_get(uct_rm_urma_iface_t *iface);
 void uct_rm_urma_iface_set_failed(uct_rm_urma_iface_t *iface, ucs_status_t status);
 void uct_rm_urma_iface_gc(uct_rm_urma_iface_t *iface);
 ucs_status_t uct_rm_urma_iface_target_get(uct_rm_urma_iface_t *iface,

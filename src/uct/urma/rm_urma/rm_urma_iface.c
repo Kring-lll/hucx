@@ -429,6 +429,32 @@ void uct_rm_urma_iface_target_put(uct_rm_urma_iface_t *iface,
     ucs_free(target);
 }
 
+ucs_status_t uct_rm_urma_iface_control_ep_get(uct_rm_urma_iface_t *iface)
+{
+    uct_ep_params_t params = {
+        .field_mask = UCT_EP_PARAM_FIELD_IFACE,
+        .iface      = &iface->super.super.super
+    };
+    uct_ep_h tl_ep;
+    ucs_status_t status;
+
+    if (iface->tx.ctrl_ep != NULL) {
+        return UCS_OK;
+    }
+    /* One unconnected software EP owns control CQEs, never another Jetty. */
+    iface->link.creating_control = 1;
+    status = UCS_CLASS_NEW(uct_rm_urma_ep_t, &tl_ep, &params);
+    iface->link.creating_control = 0;
+    if (status != UCS_OK) {
+        return status;
+    }
+    iface->tx.ctrl_ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
+    iface->tx.ctrl_ep->super.fc.fc_wnd = INT16_MAX;
+    ucs_debug("RM control sender created iface=%p ep=%p", iface,
+              iface->tx.ctrl_ep);
+    return UCS_OK;
+}
+
 static ucs_status_t
 uct_rm_urma_iface_send_fc_grant_owned(uct_rm_urma_iface_t *iface,
                                      const urma_rjetty_t *remote,
@@ -436,12 +462,7 @@ uct_rm_urma_iface_send_fc_grant_owned(uct_rm_urma_iface_t *iface,
                                      uint32_t remote_ep_id,
                                      uct_rm_urma_ep_t *legacy_ep)
 {
-    uct_ep_params_t params = {
-        .field_mask = UCT_EP_PARAM_FIELD_IFACE,
-        .iface      = &iface->super.super.super
-    };
     uct_rm_urma_fc_pending_req_t *req;
-    uct_ep_t *tl_ep;
     ucs_status_t status;
 
     if (iface->tx.error != UCS_OK) {
@@ -468,18 +489,12 @@ uct_rm_urma_iface_send_fc_grant_owned(uct_rm_urma_iface_t *iface,
     req->legacy_ep    = legacy_ep;
 
     if (iface->tx.ctrl_ep == NULL) {
-        /* Reuse the ordinary software EP constructor and CQE routing. It
-         * borrows the existing Jetty and has no connected business peer. */
-        status = UCS_CLASS_NEW(uct_rm_urma_ep_t, &tl_ep, &params);
+        status = uct_rm_urma_iface_control_ep_get(iface);
         if (status != UCS_OK) {
             uct_rm_urma_iface_target_put(iface, req->target);
             ucs_mpool_put(req);
             return status;
         }
-        iface->tx.ctrl_ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-        iface->tx.ctrl_ep->super.fc.fc_wnd = INT16_MAX;
-        ucs_debug("RM control sender created iface=%p ep=%p", iface,
-                  iface->tx.ctrl_ep);
     }
 
     req->super.ep         = &iface->tx.ctrl_ep->super.super.super;

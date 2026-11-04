@@ -1,0 +1,22 @@
+{
+  "prior_product": "bdc1e36e9ee75d97dee2d3e93b9e83b6bd10b49f",
+  "base_commit": "bdc1e36e9ee75d97dee2d3e93b9e83b6bd10b49f",
+  "scope": "RM SEND cleanup; ARM functional regression pending",
+  "files": {
+    "src/uct/urma/Makefile.am": "b8331b12f178f908f74fd8647dd18063226f46dc31bbd0a900579d0e7e1c6629",
+    "src/uct/urma/base/urma_iface.c": "149da5132d434da9f6050ed50035520c237fc840295d610e2486d86a795bdd33",
+    "src/uct/urma/base/urma_iface.h": "9c1002be4e66ccce0ce1a7690d0864781d6b25e7da7c6b1e84b66d644b2e59af",
+    "src/uct/urma/base/urma_md.c": "44d3ac6beb0efa49807ab5abb97a70be400c704822474af93e1a32f16b211c7e",
+    "src/uct/urma/base/urma_md.h": "676da7577ef35a3a6d45a4b206d763e9fe0f15c9c99ed8d0c5fe8e42736c5976",
+    "src/uct/urma/rm_urma/rm_urma_addr.c": "a267696d616c3c63f05376423f64af7b5437ff3a3001d15a1db4aa025eb33459",
+    "src/uct/urma/rm_urma/rm_urma_addr.h": "647110c8ee20163f9e8cdc4c59fa4a0240c18eff90c70d861997cd8e12a8ed50",
+    "src/uct/urma/rm_urma/rm_urma_ep.c": "3fd4d5e6b11f720b9dbc7b507c3b6e61b0f94f35c49191487c5b3485a49f7986",
+    "src/uct/urma/rm_urma/rm_urma_ep.h": "ab0bded6edd67fa863053255df4bcb9ddae3b225968be5f4d8ae044bff09b42b",
+    "src/uct/urma/rm_urma/rm_urma_iface.c": "b9f19ebcb1ff2087f8264c2a181519da1884ac211545c945bd2a73645d08600c",
+    "src/uct/urma/rm_urma/rm_urma_iface.h": "e3074cf41020ae052e9ffe8a18744253b8a84fcb60806a9ca4592935463eb3ca",
+    "src/uct/urma/rm_urma/rm_urma_link.c": "bd21a5c6977bab21d33c9ad161a3095019b705db897f8821904e982e75286432",
+    "src/uct/urma/rm_urma/rm_urma_link.h": "b9e92ce5d1e165943622beff8256ed2ef5b7f3e6388ba7cc596acd76a37fbfba",
+    "src/uct/urma/rm_urma/rm_urma_reliable.c": "3092f3dd343301c84031c53b5be24b48e891157b78c2320a7a70c3f566dab09b",
+    "src/uct/urma/rm_urma/rm_urma_reliable.h": "6dcdc828cb090cd93320e22b2389d6aee4c7b598c7c980fce71fd835ade2af05"
+  }
+}

@@ -15,40 +15,12 @@ static void uct_rm_urma_addr_put16(void *buffer, size_t offset, uint16_t value)
     memcpy((uint8_t *)buffer + offset, &value, sizeof(value));
 }
 
-static void uct_rm_urma_addr_put32(void *buffer, size_t offset, uint32_t value)
-{
-    value = htole32(value);
-    memcpy((uint8_t *)buffer + offset, &value, sizeof(value));
-}
-
-static void uct_rm_urma_addr_put64(void *buffer, size_t offset, uint64_t value)
-{
-    value = htole64(value);
-    memcpy((uint8_t *)buffer + offset, &value, sizeof(value));
-}
-
 static uint16_t uct_rm_urma_addr_get16(const void *buffer, size_t offset)
 {
     uint16_t value;
 
     memcpy(&value, (const uint8_t *)buffer + offset, sizeof(value));
     return le16toh(value);
-}
-
-static uint32_t uct_rm_urma_addr_get32(const void *buffer, size_t offset)
-{
-    uint32_t value;
-
-    memcpy(&value, (const uint8_t *)buffer + offset, sizeof(value));
-    return le32toh(value);
-}
-
-static uint64_t uct_rm_urma_addr_get64(const void *buffer, size_t offset)
-{
-    uint64_t value;
-
-    memcpy(&value, (const uint8_t *)buffer + offset, sizeof(value));
-    return le64toh(value);
 }
 
 static ucs_status_t
@@ -245,4 +217,31 @@ uct_rm_urma_ctrl_v2_unpack(const void *buffer, size_t length,
     }
     *control = candidate;
     return UCS_OK;
+}
+
+ucs_status_t uct_rm_urma_reliable_address_pack(void *buffer, size_t capacity,
+                        const uct_rm_urma_iface_addr_v2_t *address)
+{
+    ucs_status_t status = uct_rm_urma_iface_addr_v2_pack(buffer, capacity, address);
+    if (status == UCS_OK) {
+        ((uint8_t *)buffer)[28] = 3;
+        ((uint8_t *)buffer)[30] = 2;
+    }
+    return status;
+}
+
+ucs_status_t uct_rm_urma_reliable_address_unpack(const void *buffer, size_t length,
+                        uct_rm_urma_iface_addr_v2_t *address)
+{
+    uint8_t wire[UCT_RM_URMA_IFACE_ADDR_V2_SIZE];
+    if ((buffer == NULL) || (length != sizeof(wire)) ||
+        (((const uint8_t *)buffer)[28] != 3) ||
+        (((const uint8_t *)buffer)[30] != 2) ||
+        (((const uint8_t *)buffer)[31] != 0)) {
+        return UCS_ERR_INVALID_PARAM;
+    }
+    memcpy(wire, buffer, sizeof(wire));
+    wire[28] = UCT_RM_URMA_ADDR_VERSION;
+    wire[30] = UCT_RM_URMA_ADDR_PEER_FC;
+    return uct_rm_urma_iface_addr_v2_unpack(wire, sizeof(wire), address);
 }

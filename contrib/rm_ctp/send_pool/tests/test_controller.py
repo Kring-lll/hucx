@@ -105,7 +105,7 @@ assert ctypes.CDLL(None).urma_post_jetty_send_wr(ctypes.byref(j),ctypes.byref(w)
 
 
 class OrchestrationTests(unittest.TestCase):
-    def exercise(self,out,fail=False):
+    def exercise(self,out,fail=False,timing=True):
         candidate=Path('/isolated_inline_case')
         build={'source_commit':'b'*40,'module_sha256':'c'*64}
         old_build={'source_commit':runner.integration.matrix.COMMIT,'module_sha256':runner.integration.matrix.MODULE}
@@ -155,9 +155,9 @@ class OrchestrationTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(target,name,value))
             with redirect_stdout(io.StringIO()):
                 if fail:
-                    with self.assertRaises(RuntimeError):runner.execute(candidate,build,out,True)
+                    with self.assertRaises(RuntimeError):runner.execute(candidate,build,out,timing)
                 else:
-                    runner.execute(candidate,build,out,True)
+                    runner.execute(candidate,build,out,timing)
         return json.loads((out/'results.json').read_text()),called,base
 
     def test_complete_controller_rebinds_two_installs_and_retains_groups(self):
@@ -168,6 +168,15 @@ class OrchestrationTests(unittest.TestCase):
             self.assertEqual(len(report['comparisons']),2)
             self.assertEqual(sum(phase=='timing' for phase,case in called),30)
             self.assertIn(('timing',runner.OLD_CASE),called)
+            base.normal_regression.assert_called_once()
+
+    def test_functional_only_does_not_launch_timing_or_resource_tasks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report,called,base=self.exercise(Path(directory),timing=False)
+            self.assertEqual(len(report['trials']),14)
+            self.assertEqual(len(report['failures']),6)
+            self.assertEqual(report['comparisons'],[])
+            self.assertTrue(all(phase=='validation' for phase,case in called))
             base.normal_regression.assert_called_once()
 
     def test_first_data_failure_stops_before_all_timing(self):

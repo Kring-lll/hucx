@@ -1673,11 +1673,6 @@ UCS_CLASS_DEFINE_DELETE_FUNC(uct_rm_urma_ep_t, uct_ep_t);
 ucs_status_t uct_rm_urma_ep_link_post(uct_rm_urma_iface_t *iface,
                                      uct_rm_urma_link_req_t *req)
 {
-    uct_ep_params_t params = {
-        .field_mask = UCT_EP_PARAM_FIELD_IFACE,
-        .iface = &iface->super.super.super
-    };
-    uct_ep_h tl_ep;
     uct_rm_urma_ep_t *ep;
     uct_ub_iface_send_desc_t *desc = NULL;
     unsigned char frame[sizeof(uct_ub_hdr_t) + UCT_RM_URMA_FC_REQ_V2_SIZE];
@@ -1691,16 +1686,10 @@ ucs_status_t uct_rm_urma_ep_link_post(uct_rm_urma_iface_t *iface,
     int use_inline = length <= iface->super.config.max_inline;
 
     if (iface->tx.ctrl_ep == NULL) {
-        iface->link.creating_control = 1;
-        status = UCS_CLASS_NEW(uct_rm_urma_ep_t, &tl_ep, &params);
-        iface->link.creating_control = 0;
+        status = uct_rm_urma_iface_control_ep_get(iface);
         if (status != UCS_OK) {
             return status;
         }
-        iface->tx.ctrl_ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-        iface->tx.ctrl_ep->super.fc.fc_wnd = INT16_MAX;
-        ucs_debug("RM control sender created iface=%p ep=%p", iface,
-                  iface->tx.ctrl_ep);
     }
     ep = iface->tx.ctrl_ep;
     if ((iface->rm_urma_jetty.available <= 0) ||
@@ -1753,11 +1742,6 @@ ucs_status_t uct_rm_urma_ep_link_post(uct_rm_urma_iface_t *iface,
 ucs_status_t uct_rm_urma_ep_reliable_post(uct_rm_urma_iface_t *iface,
                                          uct_rm_urma_replay_t *entry)
 {
-    uct_ep_params_t params = {
-        .field_mask = UCT_EP_PARAM_FIELD_IFACE,
-        .iface = &iface->super.super.super
-    };
-    uct_ep_h tl_ep;
     uct_rm_urma_ep_t *ep;
     urma_jfs_wr_t *wr = &iface->super.send_wr;
     urma_jfs_wr_t *bad = NULL;
@@ -1767,14 +1751,10 @@ ucs_status_t uct_rm_urma_ep_reliable_post(uct_rm_urma_iface_t *iface,
     int use_inline = entry->length <= iface->super.config.max_inline;
 
     if (iface->tx.ctrl_ep == NULL) {
-        iface->link.creating_control = 1;
-        status = UCS_CLASS_NEW(uct_rm_urma_ep_t, &tl_ep, &params);
-        iface->link.creating_control = 0;
+        status = uct_rm_urma_iface_control_ep_get(iface);
         if (status != UCS_OK) {
             return status;
         }
-        iface->tx.ctrl_ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-        iface->tx.ctrl_ep->super.fc.fc_wnd = INT16_MAX;
     }
     ep = iface->tx.ctrl_ep;
     if ((iface->rm_urma_jetty.available <= 0) ||

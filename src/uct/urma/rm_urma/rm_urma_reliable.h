@@ -31,10 +31,6 @@ typedef struct uct_rm_urma_replay {
     unsigned quarantined;
 } uct_rm_urma_replay_t;
 
-ucs_status_t uct_rm_urma_reliable_address_pack(void *buffer, size_t capacity,
-                      const uct_rm_urma_iface_addr_v2_t *address);
-ucs_status_t uct_rm_urma_reliable_address_unpack(const void *buffer, size_t length,
-                      uct_rm_urma_iface_addr_v2_t *address);
 void uct_rm_urma_reliable_peer_init(uct_rm_urma_peer_t *peer);
 int uct_rm_urma_reliable_can_send(uct_rm_urma_ep_t *ep);
 ucs_status_t uct_rm_urma_reliable_short(uct_rm_urma_ep_t *ep, uint8_t id,
