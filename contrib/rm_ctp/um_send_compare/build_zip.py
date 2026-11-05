@@ -9,15 +9,19 @@ import zipfile
 ROOT = Path(__file__).resolve().parent
 
 
-def build(destination):
+def build(destination, scale=False):
     destination = Path(destination)
     if destination.exists():
         raise ValueError('output exists; preserve previous package')
     runner = (ROOT.parent/'um_send/run_candidate.py').read_bytes()
     entries = {name:(ROOT/name).read_bytes() for name in ('policy.py','run_compare.py','bootstrap.py','load_snapshot.py')}
+    if scale:
+        for name in ('scale_policy.py', 'run_scale_compare.py'):
+            entries[name] = (ROOT/name).read_bytes()
     entries['pinned_guard.py'] = (ROOT.parent/'um_send/resume_timefix.py').read_bytes()
     entries['pinned_runner.py'] = runner
-    entries['__main__.py'] = b'import sys\nsys.dont_write_bytecode=True\nfrom bootstrap import entry\nentry()\n'
+    entries['__main__.py'] = (b'import sys\nsys.dont_write_bytecode=True\nfrom bootstrap import verify_zip\nfrom pathlib import Path\nverify_zip(Path(__file__).parent)\nfrom run_scale_compare import main\nmain()\n' if scale else
+                            b'import sys\nsys.dont_write_bytecode=True\nfrom bootstrap import entry\nentry()\n')
     commit = subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD'],text=True).strip()
     entries['metadata.json'] = (json.dumps({'tool_commit':commit,
         'product_commit':'a4d07599bd5b66b84c5de8257e5f7fe15e3a6f63',
@@ -37,4 +41,6 @@ def build(destination):
 
 if __name__ == '__main__':
     parser=argparse.ArgumentParser();parser.add_argument('destination',type=Path)
-    build(parser.parse_args().destination)
+    parser.add_argument('--scale', action='store_true')
+    args = parser.parse_args()
+    build(args.destination, args.scale)

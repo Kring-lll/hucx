@@ -48,15 +48,15 @@ def config_summary(run, profile):
     return result
 
 
-def run_trial(engine, out, commands, evidence, item, index, capture=False):
+def run_trial(engine, out, commands, evidence, item, index, capture=False, trial_args=None):
     group, benchmark, ppn, size, phase, repeat, profile = item
     osu = engine['osu']
     engine['PROFILE'] = profile
     engine['OBSERVE'] = engine['FAULT'] = False
     mode = 'rc' if profile == 'rc' else 'rm'
-    args = SimpleNamespace(iterations=10000 if benchmark == 'osu_multi_lat' else 1000,
+    args = trial_args or SimpleNamespace(iterations=10000 if benchmark == 'osu_multi_lat' else 1000,
                            warmup=1000 if benchmark == 'osu_multi_lat' else 100, timeout=120)
-    if phase == 'validation':
+    if phase == 'validation' and trial_args is None:
         args.iterations, args.warmup = 100, 10
     before=capture_load(osu,out,index,'before') if capture else None
     row = osu.one_trial(out, commands, evidence, benchmark, mode, ppn, phase, index, args, message_bytes=size)

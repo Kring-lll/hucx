@@ -1,5 +1,9 @@
 # RC／RM／UM：原版 OSU 正常 SEND 性能与资源
 
+2026-11-05 新阶段：祝博确认 latency/bw/bibw 只做双节点各一进程，只有 Alltoall 扩高PPN。
+新包使用独立入口 run_scale_compare.py，计划255个MPI任务；详见 [SCALE_20261105.md](SCALE_20261105.md)。
+当前产品不变，READ/WRITE与PSN精简均不在本轮范围。以下129/183项为此前阶段，保留原计划和结果口径。
+
 2026-11-05：首批129项及510个实际rank身份已由节点只读复核通过，原结果SHA为dd6693098648d59db8ab4ac548be8efaddad84b4fbbbbce80c8dc087e1767a17。
 PPN4 Alltoall的RM五轮[12.01,4.55,4.71,4.54,8.45]us波动，64KiB双向RM比RC低28.58%，不能隐去。
 新增--repeat-study：三模式各30轮Alltoall及12轮bw/bibw，183个任务；产品不变，新结果um_osu_repeat_单独保存。
