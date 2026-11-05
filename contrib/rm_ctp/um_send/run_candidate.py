@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Isolated UM-derived RM/CTP SEND candidate; original OMB, explicit execution."""
 import argparse
+from decimal import Decimal
 import hashlib
 import json
 import os
@@ -61,6 +62,19 @@ def environment(saved, mode, install, unused):
     return env
 
 
+
+def time_seconds(value):
+    """Compare UCX's formatted time by value, not by its selected display unit."""
+    match = re.fullmatch(r'([0-9]+(?:\.[0-9]*)?|\.[0-9]+)\s*(ns|us|ms|s|m|h|d)',
+                         value.strip(), re.I)
+    if not match:
+        raise ValueError('invalid finite UCX time: ' + repr(value))
+    factors = {'ns': Decimal('0.000000001'), 'us': Decimal('0.000001'),
+               'ms': Decimal('0.001'), 's': Decimal(1), 'm': Decimal(60),
+               'h': Decimal(3600), 'd': Decimal(86400)}
+    return Decimal(match[1]) * factors[match[2].lower()]
+
+
 def check_config(text, env):
     parsed = dict(re.findall(r'^(UCX_[A-Z0-9_]+)=(.*?)\s*$', text, re.M))
     prefix = 'UCX_' + PROFILE.upper() + '_URMA_'
@@ -68,8 +82,7 @@ def check_config(text, env):
         if not k.startswith(prefix): continue
         actual = parsed.get(k, '')
         if k.endswith('_TIMEOUT'):
-            # UCX pretty printer may convert 10s to 10.00s.
-            equal = re.fullmatch(r'10(?:\.0+)?s', actual, re.I) is not None
+            equal = time_seconds(actual) == time_seconds(v)
         else:
             equal = actual.lower() == v.lower()
         if not equal: raise ValueError('effective configuration differs: %s=%s expected=%s' % (k, actual, v))

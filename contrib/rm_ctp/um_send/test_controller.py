@@ -46,6 +46,24 @@ class Gates(unittest.TestCase):
         self.assertEqual(max(r[3] for r in p),1048576)
         self.assertTrue(all(n in [r[3] for r in p] for n in (4079,4080,4081,8135,8136,8137)))
         self.assertEqual(sum(r[4] for r in p),1)
+    def test_ucx_time_units(self):
+        for actual, expected in [('10000000.00us','10s'),('10000ms','10.00s'),
+                ('10000000000ns','10s'),('1m','60s'),('1h','3600s'),
+                ('1d','86400s'),('0.1us','100ns'),(' 10.00S ','10000ms')]:
+            with self.subTest(actual=actual):
+                self.assertEqual(m.time_seconds(actual),m.time_seconds(expected))
+    def test_invalid_ucx_time_rejected(self):
+        for value in ('', 'nan', 'inf', '-1s', '10', '10fortnights', 'x10s', '10s extra'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                m.time_seconds(value)
+    def test_actual_node_config_and_wrong_value(self):
+        env=m.environment({},'iface',Path('/candidate/install'),{})
+        text='\n'.join(k+'='+v for k,v in env.items() if k.startswith('UCX_RM_URMA_'))
+        text=text.replace('TIMEOUT=10s','TIMEOUT=10000000.00us')+'\nUCX_RM_URMA_SEG_SIZE=4K\n'
+        m.check_config(text,env)
+        for wrong in ('1000000.00us','10000001.00us','20s','inf'):
+            with self.subTest(wrong=wrong), self.assertRaises(ValueError):
+                m.check_config(text.replace('10000000.00us',wrong),env)
     def test_original_osu_parser(self):
         t='# OSU MPI Multi Latency Test v7.5.2\n8 2.5 Pass\n'
         self.assertTrue(m.osu.parse_output(t,'osu_multi_lat',True,100)['validation_pass'])
