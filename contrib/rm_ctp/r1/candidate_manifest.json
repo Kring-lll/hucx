@@ -1,7 +1,7 @@
 {
   "basis": "UM-derived RM/CTP SEND candidate; no inherited node acceptance",
   "files": {
-    "contrib/rm_ctp/REQUIREMENTS.md": "25506edaa40f763ecbefc2fed5f323c4793b5e6b123ed004e77be292ad417333",
+    "contrib/rm_ctp/REQUIREMENTS.md": "2f457ba41170b6ae4a1803a21c883efdd66dc487cb823883bc38730760e094f0",
     "contrib/rm_ctp/a89/.gitignore": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793",
     "contrib/rm_ctp/a89/B_NEXT.md": "4c5a387877471410b72990a1aca4a801d190d0016321efd8de7e866081754104",
     "contrib/rm_ctp/a89/README.md": "ee5217f235392fb6578c5ccad25983a36a3ba433ccd072913bd054f2187210d5",
@@ -110,6 +110,13 @@
     "contrib/rm_ctp/um_send/resume_probe.py": "45a998a07ba5fc67ad569b231eabf2ab2a2aeeef10693f70a3d637c84315d303",
     "contrib/rm_ctp/um_send/test_probe_layout.c": "1da0bac862e079d7715e4ac85e74f099a26517f930b95ffd20719e006bfea759",
     "contrib/rm_ctp/um_send/probe_layout.h": "e220631dd1e6eaaa4b85883a1a7c3f052340d6b02a41b6bccaa7c56585cd0274",
-    "contrib/rm_ctp/um_send/PROBE_FIX_20261105.md": "95b1f08fae27bc84a19ebc3b898ad4b2d3cf619d70770258084f01010051b3d5"
+    "contrib/rm_ctp/um_send/PROBE_FIX_20261105.md": "95b1f08fae27bc84a19ebc3b898ad4b2d3cf619d70770258084f01010051b3d5",
+    "contrib/rm_ctp/um_send/ACCEPTANCE_20261105.md": "fb27e79468a2fe8a8b565e63cb9af74a7ee6c117760485e34872402dd621e2d5",
+    "contrib/rm_ctp/um_send_compare/README.md": "1fad9b7bfb4ea7c4988d7feeaf1b54f867987465808c8b60336e831933db6737",
+    "contrib/rm_ctp/um_send_compare/bootstrap.py": "60955cca43ce572e766bf1875a8d8e3ba89d5f292f28a67a31de609265b995a8",
+    "contrib/rm_ctp/um_send_compare/build_zip.py": "b900c599a6291dcd358ba3495cb9d5053b6b735ed8c7aa66a9da0146aafe4924",
+    "contrib/rm_ctp/um_send_compare/policy.py": "1787c6c5a6dae1a0263c5e7f9ba16c2811c039011b945ae37b492c84bef235c3",
+    "contrib/rm_ctp/um_send_compare/run_compare.py": "119bcf6c00b9c346dd6ad120724753bdcf716be0e653ddb5de08a42c2ccd7f23",
+    "contrib/rm_ctp/um_send_compare/test_compare.py": "b1273b22fafef8dac198b282397708719ad51b16e8f4cfb928018614e9e87f8d"
   }
 }
