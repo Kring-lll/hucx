@@ -19,5 +19,5 @@ void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *f,uct_rm_urma_neth_t *h,
     ucs_mpool_put(s);
 }
 urma_status_t urma_post_jetty_send_wr(urma_jetty_t *j,urma_jfs_wr_t *w,urma_jfs_wr_t **b)
-{(void)j;(void)w;(void)b;return URMA_SUCCESS;}
+{(void)j;(void)b;return w->user_ctx == 0xf00d ? (urma_status_t)-1 : URMA_SUCCESS;}
 void fixture_check(void){assert(delivered==10);assert(freed==14);puts("PROBE_FORWARD_DROP_DUPLICATE_FREE=PASS");}

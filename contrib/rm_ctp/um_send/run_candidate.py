@@ -16,6 +16,7 @@ import tempfile
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parent
+PROBE_SOURCE = ROOT / 'probe.c'
 PROJECT = ROOT.parent
 sys.path.insert(0, str(PROJECT / 'wr_probe'))
 import run_probe as wr
@@ -143,7 +144,14 @@ def fetch_protocol(run, row):
         p=run/('protocol_rank%d_pid%d.json' % (rank,pids[rank]))
         value=json.loads(p.read_text())
         if (value['rank']!=rank or value['pid']!=pids[rank] or value['nonce']!=row['configuration']['nonce']
-            or value['header_bytes']!=8 or value['key_overflow'] or value['duplicate_failed']):
+            or value['header_bytes']!=8 or value.get('schema')!=2
+            or value.get('retry_method')!='PINNED_UM_SGE_LAYOUT'
+            or value.get('unknown_data_layout',1)!=0 or value['duplicate_failed']
+            or not all(type(value.get(k)) is int and value[k]>=0 for k in
+                ('data_attempts','data_success','retry_data_posts','unknown_data_layout'))
+            or value.get('data_success',0)<=0
+            or value.get('retry_data_posts',0)>value.get('data_success',0)
+            or value.get('data_attempts')!=value.get('data_success')):
             raise ValueError('protocol receipt identity/coverage failed')
         rows.append(value)
     return rows
@@ -202,7 +210,7 @@ def main():
         PROBE=out/'libum_send_probe.so'
         compile_cmd=['gcc','-std=gnu99','-shared','-fPIC','-O2','-g','-Wall','-Wextra','-Werror',
             '-DHAVE_CONFIG_H','-I'+str(case/'build'),'-I'+str(case/'build/src'),'-isystem',str(case/'source/src'),
-            '-isystem','/usr/include/ub/umdk/urma',str(ROOT/'probe.c'),'-ldl','-lpthread','-o',str(PROBE)]
+            '-isystem','/usr/include/ub/umdk/urma',str(PROBE_SOURCE),'-ldl','-lpthread','-o',str(PROBE)]
         osu.base.run_logged(compile_cmd,dict(os.environ),out/'compile_probe.log',60)
         for src,dst in ((osu.ROOT/'osu_rank.py',out/'osu_rank.py'),(PROJECT/'a89/rank_exec.py',out/'a89_rank_exec.py')):
             shutil.copy2(src,dst)
@@ -221,7 +229,7 @@ def main():
                     row['send_observations']=wr.inspect_trial(run,row,PROBE)
                     row['protocol']=fetch_protocol(run,row)
                     if fault:
-                        totals={k:sum(r[k] for r in row['protocol']) for k in ('data_drop','ack_drop','duplicate','repeat_posts')}
+                        totals={k:sum(r[k] for r in row['protocol']) for k in ('data_drop','ack_drop','duplicate','retry_data_posts')}
                         if any(totals[k]<=0 for k in totals):raise ValueError('injection or actual repeated DATA post not observed')
                         row['fault_totals']=totals
                     if n==8 and benchmark=='osu_multi_lat':

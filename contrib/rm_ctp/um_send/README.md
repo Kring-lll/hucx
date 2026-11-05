@@ -33,7 +33,7 @@ RM 相对 UM 的差异可查看 `um_normalized.diff`，已消除命名和模式�
 
 `run_candidate.py CASE` 默认只显示计划；显式 `--run` 才运行两节点任务。`--timing` 追加独立的原版 OSU 8B RC/RM 五轮轮换计时。所有任务使用同一候选安装中的 RC 和 RM；RM 不使用其他网络辅助传输。保持原版 OMB 7.5.2 与现有 HMPI，强制双端候选基础库，检查实际进程 maps、数据校验、退出与清理。
 
-功能计划共19项：RC 8B门禁，RM 13个尺寸（含4080与8136附近边界、1MiB），PPN4多对及Alltoall，最后一项原版OSU软件丢DATA/丢ACK/重复包注入。探针只在功能轮加载，检查每个实际rank的WR长度、inline、软件注入次数与重复PSN的成功提交；计时轮不加载探针。软件注入点在RX协议入口，不代表链路丢包或硬件故障。
+功能计划共19项：RC 8B门禁，RM 13个尺寸（含4080与8136附近边界、1MiB），PPN4多对及Alltoall，最后一项原版OSU软件丢DATA/丢ACK/重复包注入。探针只在功能轮加载，检查每个实际rank的WR长度、inline、软件注入次数与固定UM重发SGE布局的成功提交计数；计时轮不加载探针。软件注入点在RX协议入口，不代表链路丢包或硬件故障。
 
 原生 UM/UTP 的节点通路此前未确认，因此默认不把 UM 控制组作为新 RM 的前置条件；`--with-um-control` 可增加 UM 8B 控制组并将计时扩为三模式，此时UM失败会照实停止。代码复用关系由源码差异复核，不依赖UM实际网络可用。
 
@@ -44,3 +44,5 @@ RM 相对 UM 的差异可查看 `um_normalized.diff`，已消除命名和模式�
 ## 后续 READ/WRITE
 
 本轮暂停。以后在同一 EP/iface 框架内核对并接入公共 MD 的注册/rkey，目标 Jetty、权限、RMA 提交、CQE、完成/flush 和缓冲区生命周期，分别验证 PUT/GET。SEND 的 PSN 只覆盖本协议可见的 SEND 片；不能直接证明底层一次原生 READ/WRITE 的内部切片和重试语义。是否原生实现或由 AM 模拟，须另行定方案，不在本轮打开能力位。
+
+2026-11-05：1MiB已确认DATA/EXIT/WR通过，旧诊断计数溢出；见[探针修正](PROBE_FIX_20261105.md)。旧repeat_posts不再用于重传结论。

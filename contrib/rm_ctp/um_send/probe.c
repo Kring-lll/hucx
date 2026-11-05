@@ -11,15 +11,9 @@ urma_status_t wr_forward_send(urma_jetty_t *, urma_jfs_wr_t *, urma_jfs_wr_t **)
 #include "../wr_probe/send_probe.c"
 #undef urma_post_jetty_send_wr
 
-#define SEEN_CAP 32768
-struct seen_key {
-    uintptr_t local, remote;
-    uint32_t dest;
-    uint16_t psn;
-    unsigned occupied;
-};
-static struct seen_key keys[SEEN_CAP];
-static uint64_t repeat_posts, key_overflow, rx_data, rx_ack;
+#include "probe_layout.h"
+static uint64_t data_attempts, data_success, retry_data_posts, unknown_data_layout;
+static uint64_t rx_data, rx_ack;
 static unsigned data_drop, ack_drop, duplicate, duplicate_failed;
 typedef void (*rx_fn)(uct_rm_urma_iface_t *, uct_rm_urma_neth_t *, unsigned,
                       uct_rm_urma_recv_skb_t *, int);
@@ -37,39 +31,33 @@ static void resolve_rx(void)
     if (!real_rx || real_rx == uct_rm_urma_ep_process_rx) _exit(126);
 }
 
-/* Record PSN only after a successful provider post; the WR is snapshotted first. */
+/* Snapshot layouts before forwarding; never infer retries from repeated 16-bit PSNs. */
 urma_status_t urma_post_jetty_send_wr(urma_jetty_t *jetty, urma_jfs_wr_t *wr,
                                     urma_jfs_wr_t **bad)
 {
-    struct seen_key snapshot[MAX_CHAIN];
-    unsigned count = 0;
+    uint64_t data = 0, retries = 0, unknown = 0;
     if (jetty && jetty->jetty_cfg.jfs_cfg.trans_mode == URMA_TM_RM) {
-        for (urma_jfs_wr_t *p = wr; p && count < MAX_CHAIN; p = p->next) {
+        urma_jfs_wr_t *p = wr;
+        for (unsigned n = 0; p && n < MAX_CHAIN; ++n, p = p->next) {
             if (p->opcode != URMA_OPC_SEND || !p->send.src.num_sge ||
-                !p->send.src.sge || p->send.src.sge[0].len < sizeof(uct_rm_urma_neth_t)) continue;
+                p->send.src.num_sge > MAX_SGE || !p->send.src.sge ||
+                p->send.src.sge[0].len < sizeof(uct_rm_urma_neth_t)) continue;
             uct_rm_urma_neth_t h;
             memcpy(&h, (void *)(uintptr_t)p->send.src.sge[0].addr, sizeof(h));
             if (!(h.packet_type & UCT_RM_URMA_PACKET_FLAG_AM)) continue;
-            snapshot[count++] = (struct seen_key){(uintptr_t)jetty, (uintptr_t)p->tjetty,
-                h.packet_type & UCT_RM_URMA_PACKET_DEST_ID_MASK, h.psn, 1};
+            enum um_probe_layout layout = um_probe_classify(p->send.src.num_sge,
+                p->send.src.sge[0].len, p->flag.bs.complete_enable,
+                p->flag.bs.solicited_enable, p->flag.bs.inline_flag);
+            ++data;
+            retries += layout == UM_PROBE_RETRY;
+            unknown += layout == UM_PROBE_UNKNOWN;
         }
     }
     urma_status_t status = wr_forward_send(jetty, wr, bad);
-    if (status != URMA_SUCCESS) return status;
     pthread_mutex_lock(&lock);
-    for (unsigned n = 0; n < count; ++n) {
-        struct seen_key *k = &snapshot[n];
-        size_t pos = (k->psn * 2654435761u ^ k->dest ^ (k->remote >> 4)) % SEEN_CAP;
-        unsigned i;
-        for (i = 0; i < SEEN_CAP; ++i, pos = (pos + 1) % SEEN_CAP) {
-            struct seen_key *e = &keys[pos];
-            if (!e->occupied) { *e = *k; break; }
-            if (e->local == k->local && e->remote == k->remote && e->dest == k->dest && e->psn == k->psn) {
-                ++repeat_posts; break;
-            }
-        }
-        key_overflow += i == SEEN_CAP;
-    }
+    data_attempts += data;
+    unknown_data_layout += unknown;
+    if (status == URMA_SUCCESS) { data_success += data; retry_data_posts += retries; }
     pthread_mutex_unlock(&lock);
     return status;
 }
@@ -115,12 +103,15 @@ __attribute__((destructor)) static void save_protocol(void)
     if (fd < 0) return;
     FILE *f = fdopen(fd, "w");
     if (!f) { close(fd); return; }
-    fprintf(f, "{\"rank\":%s,\"pid\":%ld,\"nonce\":\"%s\",\"header_bytes\":%zu,"
+    fprintf(f, "{\"schema\":2,\"retry_method\":\"PINNED_UM_SGE_LAYOUT\","
+        "\"rank\":%s,\"pid\":%ld,\"nonce\":\"%s\",\"header_bytes\":%zu,"
         "\"rx_data\":%llu,\"rx_ack\":%llu,\"data_drop\":%u,\"ack_drop\":%u,"
-        "\"duplicate\":%u,\"duplicate_failed\":%u,\"repeat_posts\":%llu,\"key_overflow\":%llu}\n",
+        "\"duplicate\":%u,\"duplicate_failed\":%u,\"data_attempts\":%llu,"
+        "\"data_success\":%llu,\"retry_data_posts\":%llu,\"unknown_data_layout\":%llu}\n",
         rank, (long)getpid(), nonce, sizeof(uct_rm_urma_neth_t),
         (unsigned long long)rx_data, (unsigned long long)rx_ack, data_drop, ack_drop,
-        duplicate, duplicate_failed, (unsigned long long)repeat_posts,
-        (unsigned long long)key_overflow);
+        duplicate, duplicate_failed, (unsigned long long)data_attempts,
+        (unsigned long long)data_success, (unsigned long long)retry_data_posts,
+        (unsigned long long)unknown_data_layout);
     fclose(f);
 }

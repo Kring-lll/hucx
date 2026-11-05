@@ -28,7 +28,7 @@ class ResumeTests(unittest.TestCase):
         cls.module_sha=r.digest(cls.module)
         (cls.case/'build_manifest.json').write_text(json.dumps({'source_commit':r.COMMIT,
             'archive_sha256':r.ARCHIVE_SHA,'module_sha256':cls.module_sha}))
-        cls.payload=(HERE/'run_candidate.py').read_bytes()
+        cls.payload=subprocess.check_output(['git','-C',str(HERE.parents[2]),'show','dff7593a25bf0be78b591576ec864619d1c8aa41:contrib/rm_ctp/um_send/run_candidate.py'])
     @classmethod
     def tearDownClass(cls):cls.tmp.cleanup()
     def test_real_validate_source_and_effective_microseconds(self):
