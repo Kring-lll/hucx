@@ -14,7 +14,7 @@ def build(destination):
     if destination.exists():
         raise ValueError('output exists; preserve previous package')
     runner = (ROOT.parent/'um_send/run_candidate.py').read_bytes()
-    entries = {name:(ROOT/name).read_bytes() for name in ('policy.py','run_compare.py','bootstrap.py')}
+    entries = {name:(ROOT/name).read_bytes() for name in ('policy.py','run_compare.py','bootstrap.py','load_snapshot.py')}
     entries['pinned_guard.py'] = (ROOT.parent/'um_send/resume_timefix.py').read_bytes()
     entries['pinned_runner.py'] = runner
     entries['__main__.py'] = b'import sys\nsys.dont_write_bytecode=True\nfrom bootstrap import entry\nentry()\n'

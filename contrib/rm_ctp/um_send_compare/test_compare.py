@@ -13,6 +13,7 @@ sys.path.insert(0,str(HERE))
 import policy
 import bootstrap
 import run_compare
+import load_snapshot
 
 
 def fixture_row(profile,phase,repeat=0,value=2):
@@ -123,7 +124,7 @@ class CompareTests(unittest.TestCase):
             p=root/'rank0_pid100.jsonl';p.write_text('\n'.join(p.read_text().splitlines()[:-1]))
             with self.assertRaises(ValueError):module.inspect_jettys(root,1,4,{0:100,1:101},64)
 
-    def controller_fixture(self, fail_um=False):
+    def controller_fixture(self, fail_um=False, study=False):
         """Exercise real controller/checks/tables, replacing only node operations."""
         from contextlib import redirect_stdout
         import io
@@ -169,6 +170,7 @@ class CompareTests(unittest.TestCase):
                 for host in ('node89','node97'):
                     (run/(host+'_ucx_config.txt')).write_text('UCX_%s_URMA_SEG_SIZE=%s\n'%(profile.upper(),'4K' if profile=='rm' else '8K'))
                 for rank in range(2*ppn):
+                    (run/('rank%d.json'%rank)).write_text(json.dumps({'hostname':'node89' if rank<ppn else 'node97','cpu_affinity':[rank%ppn]}))
                     for point in ('after_init','before_finalize'):
                         (run/('rank%d_%s.maps'%(rank,point))).write_text('libosu_identity.so'+(' liburma_resource_observer.so' if phase=='resources' else ''))
                 if phase=='resources':row['jettys']=osu.inspect_jettys(run,ppn,1,{},64)
@@ -176,11 +178,16 @@ class CompareTests(unittest.TestCase):
                 base.write_json(run/'trial.json',row)
                 return row
             osu.one_trial=one_trial
-            with patch.object(bootstrap,'load',return_value=(guard,engine,{},{})),patch.object(run_compare.os,'geteuid',return_value=0),patch.object(run_compare.socket,'gethostname',return_value='node89'),patch.object(sys,'argv',['run_compare.py','--run','--timing']),redirect_stdout(io.StringIO()):
+            snap_index=[0]
+            def captures(*a):
+                snap_index[0]+=1;n=snap_index[0]
+                return {host:{'hostname':host,'monotonic_ns':n*1000000000,'cpus':{'cpu'+str(i):[n*10,0,n*5,n*85,0,0,0,0] for i in range(4)},'processes':{}} for host in ('node89','node97')}
+            with patch.object(bootstrap,'load',return_value=(guard,engine,{},{})),patch.object(run_compare.os,'geteuid',return_value=0),patch.object(run_compare.socket,'gethostname',return_value='node89'),patch.object(sys,'argv',['run_compare.py','--run','--timing']+(['--repeat-study'] if study else [])),patch.object(run_compare,'capture_load',side_effect=captures),patch('zipfile.ZipFile') as zipmock,redirect_stdout(io.StringIO()):
+                zipmock.return_value.__enter__.return_value.read.return_value=b'# CPU snapshot helper fixture\n'
                 if fail_um:
                     with self.assertRaisesRegex(RuntimeError,'mandatory um gate'):run_compare.main()
                 else:run_compare.main()
-            out=next(case.glob('um_osu_three_*'));report=json.loads((out/'results.json').read_text())
+            out=next(case.glob('um_osu_repeat_*' if study else 'um_osu_three_*'));report=json.loads((out/'results.json').read_text())
             for row in report['gates']+report['trials']:
                 self.assertEqual(json.loads((out/row['name']/'trial.json').read_text()),row)
             self.assertEqual(lib.read_bytes(),b'CPU_MODULE')
@@ -199,6 +206,71 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(report['status'],'STOPPED_INCOMPLETE')
         self.assertEqual(len(report['gates']),3)
         self.assertEqual(report['trials'],[]);self.assertEqual(report['comparisons'],[])
+
+    def test_repeat_schedule_counts_and_balanced_positions(self):
+        rows=list(policy.schedule(True,True))
+        self.assertEqual(len(rows),180)
+        self.assertEqual([sum(r[4]==p for r in rows) for p in ('validation','timing','resources')],[9,162,9])
+        for group,n in enumerate((30,12,12)):
+            timing=[r for r in rows if r[0]==group and r[4]=='timing']
+            self.assertEqual(len(timing),3*n)
+            for profile in policy.PROFILES:
+                self.assertEqual([sum(timing[j][6]==profile for j in range(position,len(timing),3)) for position in range(3)],[n//3]*3)
+    def test_repeat_complete_controller_183_and_load_scope(self):
+        report,modes=self.controller_fixture(study=True)
+        self.assertEqual(report['status'],'FOCUSED_REPEAT_STUDY_COMPLETE_REVIEW_REQUIRED')
+        self.assertEqual(len(report['gates'])+len(report['trials']),183)
+        self.assertEqual(len(report['comparisons']),3)
+        self.assertEqual([len(g['profiles']['rm']['samples']) for g in report['comparisons']],[30,12,12])
+        self.assertEqual(report['load_capture_incomplete_trials'],[])
+        self.assertEqual(len(modes),9)
+        self.assertIn('not OSU timed-loop',report['trials'][0]['load_evidence']['node89']['scope'])
+    def test_repeat_quantile_is_run_average_not_message_tail(self):
+        rows=[]
+        for profile in policy.PROFILES:
+            for phase,i in [('validation',0)]+[('timing',i) for i in range(30)]+[('resources',0)]:
+                rows.append(fixture_row(profile,phase,i,20 if phase=='timing' and i>=28 else 4))
+        group=policy.summarize(rows,0,30,policy.STUDY_GROUPS)
+        value=group['profiles']['rm']
+        self.assertEqual(value['p95_nearest_rank'],20)
+        self.assertEqual(value['above_2x_median'],2)
+        self.assertIn('not per-message',value['quantile_scope'])
+        with self.assertRaises(ValueError):policy.summarize(rows[:-1],0,30,policy.STUDY_GROUPS)
+    def test_load_delta_and_pid_reuse(self):
+        a={'hostname':'node89','monotonic_ns':100,'cpus':{'cpu0':[10,0,5,85,0,0,0,0]},'processes':{
+            '2':{'start_ticks':1,'cpu_ticks':10},'3':{'start_ticks':1,'cpu_ticks':10},'4':{'start_ticks':1,'cpu_ticks':10}}}
+        b={'hostname':'node89','monotonic_ns':1000000100,'cpus':{'cpu0':[30,0,10,155,0,2,3,0]},'processes':{
+            '2':{'start_ticks':1,'cpu_ticks':20,'comm':'worker','last_cpu':0,'allowed_cpus':[0]},
+            '3':{'start_ticks':2,'cpu_ticks':30,'comm':'reused','last_cpu':0,'allowed_cpus':[0]},
+            '4':{'start_ticks':1,'cpu_ticks':40,'comm':'own','last_cpu':0,'allowed_cpus':[0]}}}
+        v=load_snapshot.compare(a,b,[0],[4])
+        self.assertEqual(v['cpu_interval']['cpu0']['busy_pct'],30)
+        self.assertEqual([p['pid'] for p in v['active_existing_processes_top20']],[2])
+        self.assertEqual(v['active_existing_processes_top20'][0]['cpu_ticks_delta'],10)
+        b['hostname']='node97'
+        with self.assertRaises(ValueError):load_snapshot.compare(a,b,[0])
+    def test_live_load_snapshot_no_command_lines(self):
+        value=load_snapshot.snapshot()
+        self.assertIn('cpu',value['cpus']);self.assertTrue(value['processes'])
+        self.assertTrue(all('cmdline' not in p for p in value['processes'].values()))
+    def test_reviewed_three_profile_checkpoint_hash_and_trials(self):
+        with tempfile.TemporaryDirectory() as f:
+            case=Path(f);root=case/bootstrap.COMPARE_NAME;root.mkdir()
+            trials=[]
+            for group in range(6):
+                for row in self.rows():
+                    row['group']=group;row['name']='g%d_'%group+row['name'];trials.append(row)
+            gates=[fixture_row(p,'validation') for p in policy.PROFILES]
+            for row in gates:row['name']='gate_'+row['profile']
+            report={'source_commit':'c','module_sha256':'m','status':'SELECTED_THREE_PROFILE_OSU_COMPARISON_COMPLETE_REVIEW_REQUIRED',
+                    'gates':gates,'trials':trials,'comparisons':[policy.summarize(trials,i) for i in range(6)]}
+            for row in gates+trials:
+                d=root/row['name'];d.mkdir();(d/'trial.json').write_text(json.dumps(row))
+            path=root/'results.json';path.write_text(json.dumps(report))
+            with patch.object(bootstrap,'COMPARE_SHA',bootstrap.digest(path)):
+                self.assertEqual(bootstrap.comparison_checkpoint(case,'c','m')['reviewed_mpi'],129)
+                p=root/trials[0]['name']/'trial.json';p.write_text('{}')
+                with self.assertRaises(ValueError):bootstrap.comparison_checkpoint(case,'c','m')
 
 
 if __name__=='__main__':unittest.main()

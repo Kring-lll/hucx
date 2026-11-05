@@ -7,11 +7,30 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
 
 import policy
+import load_snapshot
+
+
+def capture_load(osu,out,index,point):
+    result={}
+    for host in ('node89','node97'):
+        try:
+            if host=='node89':
+                env={k:v for k,v in os.environ.items() if k not in ('LD_PRELOAD','LD_DEBUG')}
+                text=subprocess.check_output([sys.executable,str(out/'load_snapshot.py')],env=env,text=True,timeout=12)
+            else:
+                text=osu.base.ssh('env -u LD_PRELOAD -u LD_DEBUG python3 "$1"\n',out/'load_snapshot.py',timeout=15)
+            value=json.loads(text)
+            if value['hostname']!=host:raise ValueError('load snapshot hostname mismatch')
+        except Exception as exc:value={'error':type(exc).__name__+': '+str(exc)}
+        osu.base.write_json(out/('load_%d_%s_%s.json'%(index,point,host)),value)
+        result[host]=value
+    return result
 
 
 def config_summary(run, profile):
@@ -29,7 +48,7 @@ def config_summary(run, profile):
     return result
 
 
-def run_trial(engine, out, commands, evidence, item, index):
+def run_trial(engine, out, commands, evidence, item, index, capture=False):
     group, benchmark, ppn, size, phase, repeat, profile = item
     osu = engine['osu']
     engine['PROFILE'] = profile
@@ -39,9 +58,23 @@ def run_trial(engine, out, commands, evidence, item, index):
                            warmup=1000 if benchmark == 'osu_multi_lat' else 100, timeout=120)
     if phase == 'validation':
         args.iterations, args.warmup = 100, 10
+    before=capture_load(osu,out,index,'before') if capture else None
     row = osu.one_trial(out, commands, evidence, benchmark, mode, ppn, phase, index, args, message_bytes=size)
+    after=capture_load(osu,out,index,'after') if capture else None
     row.update(group=group, profile=profile, message_bytes=size, repeat=repeat)
     run = out/row['name']
+    if capture:
+        row['load_evidence']={}
+        pids=list(row.get('rank_evidence',{}).get('pids',{}).values())
+        for host in ('node89','node97'):
+            cpus=set()
+            for rank in range(2*ppn):
+                p=run/('rank%d.json'%rank)
+                if p.is_file():
+                    value=json.loads(p.read_text())
+                    if value['hostname']==host:cpus.update(value['cpu_affinity'])
+            try:row['load_evidence'][host]=load_snapshot.compare(before[host],after[host],cpus,pids)
+            except Exception as exc:row['load_evidence'][host]={'error':type(exc).__name__+': '+str(exc)}
     try:
         policy.inspect_trial(row, profile, phase)
         row['effective_config'] = config_summary(run, profile)
@@ -67,19 +100,21 @@ def main():
     action.add_argument('--run', action='store_true')
     action.add_argument('--preflight-only', action='store_true')
     parser.add_argument('--timing', action='store_true')
+    parser.add_argument('--repeat-study',action='store_true',help='30 alltoall +12 bw +12 bibw repeats per profile, launcher-boundary load snapshots')
     args = parser.parse_args()
+    if args.repeat_study:args.timing=True
     if not (args.run or args.preflight_only):
-        print(json.dumps(policy.plan(args.timing), ensure_ascii=False, indent=2));return
+        print(json.dumps(policy.plan(args.timing,args.repeat_study), ensure_ascii=False, indent=2));return
     if os.geteuid() != 0 or socket.gethostname() != 'node89':
         raise ValueError('explicit execution limited to root on node89')
     import bootstrap
     guard, engine, prior, metadata = bootstrap.load()
     case = guard.CASE
     osu = engine['osu']; base = osu.base
-    out = Path(tempfile.mkdtemp(prefix='um_osu_three_', dir=case))
-    print('THREE_OSU_DIR='+str(out), flush=True)
+    out = Path(tempfile.mkdtemp(prefix='um_osu_repeat_' if args.repeat_study else 'um_osu_three_', dir=case))
+    print(('REPEAT_OSU_DIR=' if args.repeat_study else 'THREE_OSU_DIR=')+str(out), flush=True)
     report = {'source_commit':guard.COMMIT,'module_sha256':guard.MODULE_SHA,
-              'tool':metadata,'checkpoint':prior,'plan':policy.plan(args.timing),
+              'tool':metadata,'checkpoint':prior,'plan':policy.plan(args.timing,args.repeat_study),
               'status':'RUNNING','gates':[],'trials':[],'comparisons':[]}
     def save():
         base.write_json(out/'results.json', report)
@@ -114,6 +149,11 @@ def main():
         for source,name in ((osu.ROOT/'osu_rank.py','osu_rank.py'),(osu.A89/'rank_exec.py','a89_rank_exec.py')):
             shutil.copy2(source,out/name)
         helpers = [out/n for n in ('osu_rank.py','a89_rank_exec.py','libosu_identity.so')]
+        if args.repeat_study:
+            import zipfile
+            with zipfile.ZipFile(Path(__file__).parent) as z:
+                (out/'load_snapshot.py').write_bytes(z.read('load_snapshot.py'))
+            helpers.append(out/'load_snapshot.py')
         base.copy_remote(helpers,str(out)+'/')
         for path in helpers:
             if base.ssh('sha256sum "$1"\n',path).split()[0] != bootstrap.digest(path):
@@ -125,24 +165,29 @@ def main():
             report['status']='PREFLIGHT_ONLY_NO_MPI';save();return
         index = 0
         for profile in policy.PROFILES:
-            row = run_trial(engine,out,commands,evidence,(-1,'osu_multi_lat',1,8,'validation',0,profile),index)
+            row = run_trial(engine,out,commands,evidence,(-1,'osu_multi_lat',1,8,'validation',0,profile),index,capture=args.repeat_study)
             report['gates'].append(row);index += 1;save()
             print('GATE PROFILE=%s 8B PASS=%s'%(profile,row['passed']),flush=True)
             if not row['passed']:
                 raise RuntimeError('mandatory '+profile+' gate: '+row.get('error','failed'))
-        for item in policy.schedule(args.timing):
-            row = run_trial(engine,out,commands,evidence,item,index);index += 1
+        for item in policy.schedule(args.timing,args.repeat_study):
+            row = run_trial(engine,out,commands,evidence,item,index,capture=args.repeat_study);index += 1
             report['trials'].append(row);save()
             print('OSU=%s PROFILE=%s PPN=%d BYTES=%d PHASE=%s REPEAT=%d PASS=%s' % (
                 item[1],item[6],item[2],item[3],item[4],item[5],row['passed']),flush=True)
             if not row['passed']:
                 raise RuntimeError(row.get('error','OSU failed')+' LOG='+str(out/row['name']/'launcher.log'))
             if args.timing and item[4] == 'resources' and item[6] == policy.PROFILES[-1]:
-                group = policy.summarize(report['trials'],item[0])
+                repeats=30 if args.repeat_study and item[1]=='osu_alltoall' else 12 if args.repeat_study else 5
+                group = policy.summarize(report['trials'],item[0],repeats,policy.STUDY_GROUPS if args.repeat_study else None)
                 report['comparisons'].append(group);save()
                 print('GROUP='+json.dumps(group,sort_keys=True),flush=True)
         report['status'] = ('SELECTED_THREE_PROFILE_OSU_COMPARISON_COMPLETE_REVIEW_REQUIRED' if args.timing
                             else 'THREE_PROFILE_SELECTED_VALIDATION_PASS_NO_TIMING')
+        if args.repeat_study:
+            report['status']='FOCUSED_REPEAT_STUDY_COMPLETE_REVIEW_REQUIRED'
+            report['load_capture_incomplete_trials']=[r['name'] for r in report['gates']+report['trials']
+                if any('error' in v for v in r['load_evidence'].values())]
         save()
         print('完成；仅所选正常SEND性能/资源，故障恢复性能、完整C/D/规模/READ_WRITE未验收',flush=True)
     except Exception as exc:

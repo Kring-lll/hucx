@@ -18,9 +18,17 @@ GROUPS = (
     ('osu_alltoall', 1, 8), ('osu_alltoall', 4, 8),
     ('osu_bw', 1, 65536), ('osu_bibw', 1, 65536),
 )
+STUDY_GROUPS = (('osu_alltoall', 4, 8), ('osu_bw', 1, 65536), ('osu_bibw', 1, 65536))
 
 
-def plan(timing=True):
+def plan(timing=True, study=False):
+    if study:
+        return {'profiles': PROFILES, 'groups': STUDY_GROUPS, 'gate_mpi':3,
+                'comparison_mpi':180, 'validation':9, 'timing':162, 'resources':9,
+                'repeats_by_group':[30,12,12], 'max_ppn':4, 'standard_osu':'7.5.2',
+                'product_rebuild':False,'fault_injection':False,
+                'load_capture':'before/after whole launcher; not synchronized with OSU timed loop',
+                'prior_samples_merged':False}
     return {'profiles': PROFILES, 'groups': GROUPS, 'gate_mpi': 3,
             'comparison_mpi': 126 if timing else 18,
             'validation': 18, 'timing': 90 if timing else 0,
@@ -30,12 +38,12 @@ def plan(timing=True):
             'segment_policy': 'transport defaults, captured not equalized'}
 
 
-def schedule(timing):
-    for group, (benchmark, ppn, size) in enumerate(GROUPS):
+def schedule(timing, study=False):
+    for group, (benchmark, ppn, size) in enumerate(STUDY_GROUPS if study else GROUPS):
         for profile in PROFILES:
             yield group, benchmark, ppn, size, 'validation', 0, profile
         if timing:
-            for repeat in range(5):
+            for repeat in range(30 if study and benchmark == 'osu_alltoall' else 12 if study else 5):
                 ordered = PROFILES[repeat % 3:] + PROFILES[:repeat % 3]
                 for profile in ordered:
                     yield group, benchmark, ppn, size, 'timing', repeat, profile
@@ -100,16 +108,16 @@ def inspect_trial(row, profile, phase):
         raise ValueError('missing OSU data validation')
 
 
-def summarize(rows, group):
-    benchmark, ppn, size = GROUPS[group]
+def summarize(rows, group, repeats=5, groups=None):
+    benchmark, ppn, size = (GROUPS if groups is None else groups)[group]
     result = {'benchmark': benchmark, 'ppn': ppn, 'message_bytes': size, 'profiles': {}}
     for profile in PROFILES:
         selected = [r for r in rows if r['group'] == group and r['profile'] == profile]
         timing = sorted((r for r in selected if r['phase'] == 'timing'), key=lambda r: r['repeat'])
         valid = [r for r in selected if r['phase'] == 'validation']
         resource = [r for r in selected if r['phase'] == 'resources']
-        if (len(selected) != 7 or len(valid) != 1 or len(resource) != 1
-                or [r['repeat'] for r in timing] != list(range(5))):
+        if (len(selected) != repeats+2 or len(valid) != 1 or len(resource) != 1
+                or [r['repeat'] for r in timing] != list(range(repeats))):
             raise ValueError('incomplete comparison group')
         for row in selected:
             inspect_trial(row, profile, row['phase'])
@@ -127,6 +135,14 @@ def summarize(rows, group):
             'effective_config': resource[0]['effective_config'],
             'resource_trial': resource[0]['name'],
         }
+        if repeats != 5:
+            ordered=sorted(samples)
+            result['profiles'][profile].update(mean=statistics.mean(samples),
+                stdev=statistics.stdev(samples),
+                p05_nearest_rank=ordered[max(0,math.ceil(.05*len(samples))-1)],
+                p95_nearest_rank=ordered[math.ceil(.95*len(samples))-1],
+                above_2x_median=sum(v > 2*statistics.median(samples) for v in samples),
+                quantile_scope='across complete OSU run averages; not per-message tail latency')
     rm = result['profiles']['rm']
     result['rm_improvement_pct'] = {}
     for reference in ('rc', 'um'):
@@ -137,7 +153,7 @@ def summarize(rows, group):
 
 def write_tables(out, report):
     lines = ['# RC / RM / UM 原版 OSU 对照', '',
-             '本表只展示完成全部校验、5轮计时及资源取证的组；失败和未完成任务保留在 results.json。',
+             '本表只展示完成全部计划校验、计时及资源取证的组；失败和未完成任务保留在 results.json。',
              '计时关闭故障/WR/Jetty探针；三模式保留相同的MPI Init/Finalize身份记录，不包装通信调用或MPI_Wtime。',
              'RSS：计时轮各rank Finalize前进程RSS之和的中位数，两节点合计MiB，非同步瞬时设备内存。',
              'Jetty：独立资源轮目标传输模式的每rank峰值范围；RC辅助UM不计入RC Jetty。',
@@ -155,13 +171,21 @@ def write_tables(out, report):
             csv_rows.append({'benchmark': item['benchmark'], 'ppn': item['ppn'], 'bytes': item['message_bytes'],
                              'profile': profile, **{k: value[k] for k in ('unit', 'median', 'minimum', 'maximum', 'timing_rss_median_mib', 'resource_rss_mib')},
                              'samples': json.dumps(value['samples']), 'jetty_peak_range': json.dumps(value['jetty_peak_range']),
-                             'effective_config': json.dumps(value['effective_config'], sort_keys=True)})
-    lines += ['', '| OSU / PPN | 模式 | 五轮样本 | 范围 | RSS MiB | Jetty / rank |', '|---|---|---|---|---:|---|']
+                             'effective_config': json.dumps(value['effective_config'], sort_keys=True),
+                             **{k:value.get(k,'') for k in ('mean','stdev','p05_nearest_rank','p95_nearest_rank','above_2x_median')}})
+    lines += ['', '| OSU / PPN | 模式 | 全部样本 | 范围 | RSS MiB | Jetty / rank |', '|---|---|---|---|---:|---|']
     for row in csv_rows:
         lines.append('| %s / %s | %s | %s | %s..%s | %.2f | %s |' % (
             row['benchmark'], row['ppn'], row['profile'], row['samples'], row['minimum'], row['maximum'],
             row['timing_rss_median_mib'], row['jetty_peak_range']))
+    for item in report['comparisons']:
+        for profile,value in item['profiles'].items():
+            if 'mean' in value:
+                lines.append('\n%s PPN%d %s: N=%d mean=%.4f stdev=%.4f p05=%.4f p95=%.4f above_2x_median=%d' % (
+                    item['benchmark'],item['ppn'],profile,len(value['samples']),value['mean'],value['stdev'],
+                    value['p05_nearest_rank'],value['p95_nearest_rank'],value['above_2x_median']))
+    lines += ['', '复测分位数是整轮OSU平均值在多次运行间的分位数，不是逐消息p95；负载快照覆盖启动器整体时间，不能证明OSU计时区间没有干扰。']
     (out/'comparison.md').write_text('\n'.join(lines)+'\n', encoding='utf-8')
-    fields = ['benchmark','ppn','bytes','profile','unit','median','minimum','maximum','timing_rss_median_mib','resource_rss_mib','samples','jetty_peak_range','effective_config']
+    fields = ['benchmark','ppn','bytes','profile','unit','median','minimum','maximum','timing_rss_median_mib','resource_rss_mib','samples','jetty_peak_range','effective_config','mean','stdev','p05_nearest_rank','p95_nearest_rank','above_2x_median']
     with (out/'comparison.csv').open('w', encoding='utf-8-sig', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fields); writer.writeheader(); writer.writerows(csv_rows)
