@@ -65,6 +65,27 @@ def plan(timing):
         'no_psn_simplified_reliability_claim':True,'old_samples_merged':False}
 
 
+def workload_arguments(shared_arguments,benchmark,iterations,warmup,validation,message_bytes=8):
+    """Only the added functional Multi Latency sizes extend the old CLI policy."""
+    if benchmark=='nopsn_alternating':return []
+    if benchmark!='osu_multi_lat':
+        return shared_arguments(benchmark,iterations,warmup,validation,message_bytes)
+    if not validation or message_bytes not in SIZES:
+        raise ValueError('unplanned functional Multi Latency workload')
+    return ['--message-size','%d:%d'%(message_bytes,message_bytes),
+        '--iterations',str(iterations),'--warmup',str(warmup),'--validation']
+
+
+def cli_preflight(shared_arguments,timing):
+    """Run the exact installed argument selector for every task before any MPI."""
+    tasks=list(schedule(timing))
+    for _,benchmark,_,size,phase,_,_,_ in tasks:
+        iterations=100 if phase=='validation' else 10000 if benchmark=='osu_latency' else 1000
+        warmup=10 if phase=='validation' else 1000 if benchmark=='osu_latency' else 100
+        workload_arguments(shared_arguments,benchmark,iterations,warmup,phase=='validation',size)
+    return {'planned_tasks':len(tasks),'parameter_generation':'PASS','mpi_executed':False}
+
+
 def validate_candidate(case,expected_commit):
     if (case.parent!=LAB or ROOT!=case/'source/contrib/rm_ctp/nopsn' or
             not re.fullmatch('[0-9a-f]{40}',expected_commit)):
@@ -193,10 +214,12 @@ def main():
     if os.geteuid()!=0 or socket.gethostname()!='node89':raise ValueError('run as root on node89')
     case=args.case.resolve();build=validate_candidate(case,args.expected_commit)
     engine,policy,scale,runner=load_engine();osu=engine['osu'];base=osu.base
+    cli_check=cli_preflight(scale.arguments,args.timing)
+    print('ALL_TASK_ARGUMENTS=%d/%d PASS BEFORE_MPI=YES'%(cli_check['planned_tasks'],cli_check['planned_tasks']),flush=True)
     lease=(FULL_CASE.parent/'um_osu_scale.lock').open('a+')
     fcntl.flock(lease,fcntl.LOCK_EX|fcntl.LOCK_NB)
     out=Path(tempfile.mkdtemp(prefix='nopsn_accept_',dir=case));print('NOPSN_ACCEPT_DIR='+str(out),flush=True)
-    report={'status':'RUNNING','plan':plan(args.timing),'products':{'full':{'case':str(FULL_CASE),'source_commit':FULL_COMMIT,'module_sha256':FULL_MODULE},'nopsn':build},'trials':[],'comparisons':[]}
+    report={'status':'RUNNING','plan':plan(args.timing),'products':{'full':{'case':str(FULL_CASE),'source_commit':FULL_COMMIT,'module_sha256':FULL_MODULE},'nopsn':build},'trials':[],'comparisons':[],'cli_preflight':cli_check}
     def save():dump(out/'results.json',report);tables(out,report)
     active_variant='full';observed=False
     try:
@@ -251,7 +274,7 @@ def main():
         original_arguments,original_parse=osu.arguments,osu.parse_output
         osu.BENCHMARKS['nopsn_alternating']=(str(out/'nopsn_alternating'),'NOPSN_ALTERNATING_PASS','custom correctness only')
         evidence['benchmarks']['nopsn_alternating']={'mpi_library':evidence['benchmarks']['osu_latency']['mpi_library']}
-        def arguments(b,i,w,v,n=8):return [] if b=='nopsn_alternating' else (policy.arguments(b,i,w,v,n) if b=='osu_multi_lat' else original_arguments(b,i,w,v,n))
+        def arguments(b,i,w,v,n=8):return workload_arguments(original_arguments,b,i,w,v,n)
         def parse(text,b,v,i,n=8):
             if b=='nopsn_alternating':
                 found=re.findall(r'^NOPSN_ALTERNATING_PASS RANKS=(\d+) ROUNDS=260\s*$',text,re.M)

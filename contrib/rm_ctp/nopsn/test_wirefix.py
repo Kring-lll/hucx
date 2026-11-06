@@ -14,25 +14,41 @@ f=importlib.util.module_from_spec(spec);spec.loader.exec_module(f)
 
 
 class RecoveryTests(unittest.TestCase):
-    def test_prior_exit121_preserved_not_promoted(self):
+    def test_prior_three_passes_and_unlaunched_64b_preserved(self):
         with tempfile.TemporaryDirectory() as temp:
-            case=Path(temp);root=case/f.PRIOR_NAME;run=root/'first';run.mkdir(parents=True)
-            row={'name':'first','variant':'full','passed':False,'benchmark':'osu_latency',
-                'ppn':1,'phase':'validation','wire_observed':True,'error':'ValueError: RuntimeError: EXIT=121 LOG=example'}
+            case=Path(temp);root=case/f.PRIOR_NAME;root.mkdir()
+            rows=[]
+            for index in range(3):
+                run=root/str(index);run.mkdir()
+                row={'name':str(index),'variant':'full' if index==0 else 'nopsn','passed':True,
+                    'exit':0,'benchmark':'osu_latency','ppn':1,'phase':'validation','message_bytes':8,
+                    'wire_observed':index<2,'output':{'validation_pass':True},
+                    'configuration':{'nonce':'c'*32},'rank_evidence':{'pids':{'0':100,'1':101}}}
+                if index<2:
+                    row['wire_evidence']=[]
+                    for rank,pid in ((0,100),(1,101)):
+                        v={'rank':rank,'pid':pid,'nonce':'c'*32,'errors':0,'retry_success':0,
+                            'data_success':1,'short_success':1,'header_mask':1<<(8 if index==0 else 6),'max_wr_bytes':24}
+                        (run/('nopsn_wire_rank%d_pid%d.json'%(rank,pid))).write_text(json.dumps(v));row['wire_evidence'].append(v)
+                (run/'launcher.log').write_text('original OSU log')
+                rows.append(row)
             report={'status':'STOPPED_INCOMPLETE','products':{'nopsn':{'source_commit':f.COMMIT,'module_sha256':f.MODULE}},
-                'trials':[row],'comparisons':[]}
+                'trials':rows,'comparisons':[],'error':'ValueError: unplanned OSU workload',
+                'observer_wirefix':{'tool_commit':'fea1fbf8d565dc1ced4ea2b43fb6f895d2de2e08'},
+                'active_task':{'index':3,'variant':'nopsn','benchmark':'osu_multi_lat','ppn':1,'phase':'validation','bytes':64,'wire_observed':False}}
             def save():
-                (root/'results.json').write_text(json.dumps(report));(run/'trial.json').write_text(json.dumps(row))
-            (run/'launcher.log').write_text('original failure log\n');save()
-            before=(root/'results.json').read_bytes()
+                (root/'results.json').write_text(json.dumps(report))
+                for row in rows:(root/row['name']/'trial.json').write_text(json.dumps(row))
+            save();before=(root/'results.json').read_bytes()
             proof=f.review_failure(case)
-            self.assertFalse(proof['prior_promoted_to_pass']);self.assertFalse(proof['prior_samples_merged'])
+            self.assertEqual(proof['completed_8b_gates_reviewed'],3)
+            self.assertFalse(proof['prior_samples_merged']);self.assertFalse(proof['failed_task_started_mpi'])
             self.assertEqual(before,(root/'results.json').read_bytes())
-            for key,value in [('passed',True),('variant','nopsn'),('error','EXIT=134'),('wire_observed',False)]:
-                old=row[key];row[key]=value;save()
+            for key,value in [('passed',False),('variant','full'),('exit',134),('wire_observed',True)]:
+                old=rows[2][key];rows[2][key]=value;save()
                 with self.assertRaises(ValueError):f.review_failure(case)
-                row[key]=old
-            save();report['trials'].append(dict(row));save()
+                rows[2][key]=old
+            save();report['active_task']['bytes']=65;save()
             with self.assertRaises(ValueError):f.review_failure(case)
 
     def test_real_controller_guard_and_memory_overlay(self):

@@ -14,7 +14,7 @@ CASE=Path('/home/y00993710/urma_rm_ctp_lab/experiments/hucx-rm-nopsn-dev/r1_shar
 COMMIT='370bbc3bbf1f343e98af7dab49c8db19b6fcd55e'
 MODULE='5b85f1087b3431c7ebc82a314cc8223317b7534a5f58127da01dcc86007714aa'
 ARCHIVE='28a14d33ed52e34b27f2e0762a79dffde0c8cb1bd611774042abcb10a4c16af5'
-PRIOR_NAME='nopsn_accept_lriahtwi'
+PRIOR_NAME='nopsn_accept_fhv5h0ny'
 ENTRY='contrib/rm_ctp/nopsn/run_candidate.py'
 
 
@@ -23,20 +23,40 @@ def digest(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 def review_failure(case):
     root=case/PRIOR_NAME;path=root/'results.json';report=json.loads(path.read_text())
-    rows=report.get('trials',[])
-    if (report.get('status')!='STOPPED_INCOMPLETE' or len(rows)!=1 or report.get('comparisons')
+    rows=report.get('trials',[]);active=report.get('active_task',{})
+    if (report.get('status')!='STOPPED_INCOMPLETE' or len(rows)!=3 or report.get('comparisons')
             or report.get('products',{}).get('nopsn',{}).get('source_commit')!=COMMIT
-            or report['products']['nopsn'].get('module_sha256')!=MODULE):
-        raise ValueError('prior observer stop identity/coverage differs')
-    row=rows[0];run=(root/row['name']).resolve()
-    if (run.parent!=root.resolve() or row.get('passed') is not False or row.get('variant')!='full'
-            or row.get('benchmark')!='osu_latency' or row.get('ppn')!=1
-            or row.get('phase')!='validation' or row.get('wire_observed') is not True
-            or 'EXIT=121' not in row.get('error','')
-            or json.loads((run/'trial.json').read_text())!=row):
-        raise ValueError('prior failure is not the recorded first full-RM observer EXIT121')
-    return {'path':str(path),'sha256':digest(path),'launcher_log_sha256':digest(run/'launcher.log'),
-        'prior_failed_tasks':1,'prior_promoted_to_pass':False,'prior_samples_merged':False}
+            or report['products']['nopsn'].get('module_sha256')!=MODULE
+            or 'unplanned OSU workload' not in report.get('error','')
+            or report.get('observer_wirefix',{}).get('tool_commit')!='fea1fbf8d565dc1ced4ea2b43fb6f895d2de2e08'
+            or active!={'index':3,'variant':'nopsn','benchmark':'osu_multi_lat','ppn':1,
+                'phase':'validation','bytes':64,'wire_observed':False}):
+        raise ValueError('prior stop is not the recorded 64B CLI-generation failure')
+    receipts=[]
+    for index,row in enumerate(rows):
+        run=(root/row['name']).resolve();variant='full' if index==0 else 'nopsn'
+        if (run.parent!=root.resolve() or row.get('passed') is not True or row.get('exit')!=0
+                or row.get('cleanup_error') or row.get('variant')!=variant
+                or row.get('benchmark')!='osu_latency' or row.get('ppn')!=1
+                or row.get('phase')!='validation' or row.get('message_bytes')!=8
+                or row.get('wire_observed') is not (index<2)
+                or row.get('output',{}).get('validation_pass') is not True
+                or json.loads((run/'trial.json').read_text())!=row):
+            raise ValueError('prior completed 8B gate differs')
+        if index<2:
+            wire=[]
+            for rank,pid in sorted((int(r),p) for r,p in row['rank_evidence']['pids'].items()):
+                v=json.loads((run/('nopsn_wire_rank%d_pid%d.json'%(rank,pid))).read_text())
+                if (v['rank']!=rank or v['pid']!=pid or v['nonce']!=row['configuration']['nonce']
+                        or v['errors'] or v['retry_success'] or v['data_success']<=0
+                        or v['short_success']<=0 or v['header_mask']!=1<<(8 if index==0 else 6)
+                        or v['max_wr_bytes']>4096):raise ValueError('prior observed header receipt differs')
+                wire.append(v)
+            if len(wire)!=2 or wire!=row['wire_evidence']:raise ValueError('prior wire receipt coverage differs')
+        receipts.append({'trial_sha256':digest(run/'trial.json'),'log_sha256':digest(run/'launcher.log')})
+    return {'path':str(path),'sha256':digest(path),'completed_8b_gates_reviewed':3,
+        'receipts':receipts,'failed_task_started_mpi':False,'prior_promoted_to_pass':False,
+        'prior_samples_merged':False,'new_batch_restarts_all_tasks':True}
 
 
 def load_controller(case,payload,meta):
@@ -91,6 +111,7 @@ def main():
     print('SOURCE_MODULE_AND_OBSERVER_FIX=PASS PRODUCT_REBUILD=NO MEMORY_ONLY_CONTROLLER=YES',flush=True)
     print('OBSERVER_CPU_FORWARDING=14/14 PASS; PRIOR_FAILED_SAMPLE_PRESERVED=YES NEW_MPI='+str(215 if args.timing else 47),flush=True)
     print('NOPSN_WIREFIX_TOOLS_DIR='+str(toolroot),flush=True)
+    print('CLI_FIX=FUNCTIONAL_SIZES_ONLY PRODUCT_UNCHANGED=YES',flush=True)
     try:namespace['main']()
     finally:
         if (digest(CASE/'source'/ENTRY)!=meta['original_controller_sha256']
