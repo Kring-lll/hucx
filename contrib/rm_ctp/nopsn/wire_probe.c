@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include <urma_api.h>
 #include <dlfcn.h>
+#include <link.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -15,11 +16,52 @@ static pthread_once_t once=PTHREAD_ONCE_INIT;
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
 static urma_status_t (*real_post)(urma_jetty_t *,urma_jfs_wr_t *,urma_jfs_wr_t **);
 static unsigned long data,shorts,bcopies,retries,controls,errors,max_bytes,headers;
+static char provider[PATH_MAX];
+static unsigned local_handle_used;
+static void *provider_handle;
+static int find_loaded_provider(struct dl_phdr_info *info, size_t size, void *arg)
+{
+    (void)size;
+    (void)arg;
+    const char *name = strrchr(info->dlpi_name, '/');
+    name = name != NULL ? name + 1 : info->dlpi_name;
+    if (strcmp(name, "liburma.so") != 0 && strncmp(name, "liburma.so.", 11) != 0) {
+        return 0;
+    }
+    /* Reuse an already loaded object; never introduce a second URMA library. */
+    void *handle = dlopen(info->dlpi_name, RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL);
+    if (handle == NULL) {
+        return 0;
+    }
+    void *symbol = dlsym(handle, "urma_post_jetty_send_wr");
+    if (symbol != NULL && symbol != (void *)urma_post_jetty_send_wr) {
+        provider_handle = handle;
+        local_handle_used = 1;
+        *(void **)(&real_post) = symbol;
+        return 1;
+    }
+    dlclose(handle);
+    return 0;
+}
+
 static void resolve(void)
 {
-    *(void **)(&real_post)=dlsym(RTLD_NEXT,"urma_post_jetty_send_wr");
-    if (!real_post) _exit(121);
+    Dl_info info;
+    *(void **)(&real_post) = dlsym(RTLD_NEXT, "urma_post_jetty_send_wr");
+    if (real_post == NULL) {
+        dl_iterate_phdr(find_loaded_provider, NULL);
+    }
+    if (real_post == NULL) {
+        const char message[] = "NOPSN_WIRE_RESOLVE_ERROR: no accessible loaded URMA send symbol\n";
+        ssize_t written = write(STDERR_FILENO, message, sizeof(message) - 1);
+        (void)written;
+        _exit(121);
+    }
+    if (dladdr((void *)real_post, &info) && info.dli_fname != NULL) {
+        (void)snprintf(provider, sizeof(provider), "%s", info.dli_fname);
+    }
 }
+
 
 urma_status_t urma_post_jetty_send_wr(urma_jetty_t *j,urma_jfs_wr_t *w,urma_jfs_wr_t **bad)
 {
@@ -70,8 +112,8 @@ __attribute__((destructor)) static void receipt(void)
     if(n<0 || (size_t)n>=sizeof(path)) return;
     n=snprintf(body,sizeof(body),"{\"schema\":1,\"rank\":%d,\"pid\":%d,\"nonce\":\"%s\","
         "\"data_success\":%lu,\"short_success\":%lu,\"bcopy_success\":%lu,\"retry_success\":%lu,"
-        "\"control_success\":%lu,\"max_wr_bytes\":%lu,\"header_mask\":%lu,\"errors\":%lu}\n",
-        atoi(rank),getpid(),nonce,data,shorts,bcopies,retries,controls,max_bytes,headers,errors);
+        "\"control_success\":%lu,\"max_wr_bytes\":%lu,\"header_mask\":%lu,\"errors\":%lu,\"local_handle_used\":%u,\"provider_resolved\":%s}\n",
+        atoi(rank),getpid(),nonce,data,shorts,bcopies,retries,controls,max_bytes,headers,errors,local_handle_used,provider[0] ? "true" : "false");
     if(n<0 || (size_t)n>=sizeof(body)) return;
     fd=open(path,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0600);
     if(fd<0) return;

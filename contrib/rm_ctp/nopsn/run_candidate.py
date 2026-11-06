@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import tempfile
 
 ROOT=Path(__file__).resolve().parent
+WIRE_PROBE_SOURCE=ROOT/'wire_probe.c'
 PROJECT=ROOT.parent
 LAB=Path('/home/y00993710/urma_rm_ctp_lab/experiments/hucx-rm-nopsn-dev')
 FULL_CASE=Path('/home/y00993710/urma_rm_ctp_lab/experiments/hucx-rm-um-send-dev/r1_shared_a4d07599b_BaJAce')
@@ -232,7 +233,7 @@ def main():
         base.module_check(FULL_CASE/'install',FULL_MODULE)
         mpi=next(Path(x) for x in commands['rm'][0] if Path(x).name in ('mpirun','mpiexec'))
         compile_env={k:v for k,v in os.environ.items() if k not in ('LD_PRELOAD','LD_DEBUG')}
-        base.run_logged(['gcc','-shared','-fPIC','-O2','-g','-Wall','-Wextra','-Werror','-I/usr/include/ub/umdk/urma',str(ROOT/'wire_probe.c'),'-ldl','-lpthread','-o',str(out/'libnopsn_wire.so')],compile_env,out/'compile_wire.log',60)
+        base.run_logged(['gcc','-shared','-fPIC','-O2','-g','-Wall','-Wextra','-Werror','-I/usr/include/ub/umdk/urma',str(WIRE_PROBE_SOURCE),'-ldl','-lpthread','-o',str(out/'libnopsn_wire.so')],compile_env,out/'compile_wire.log',60)
         base.run_logged([str(mpi.with_name('mpicc')),'-std=c99','-O2','-g','-Wall','-Wextra','-Werror',str(ROOT/'alternating.c'),'-o',str(out/'nopsn_alternating')],compile_env,out/'compile_alternating.log',60)
         alt_mpi=osu.mpi_dependency(subprocess.check_output(['ldd',str(out/'nopsn_alternating')],env=compile_env,text=True))
         if str(alt_mpi)!=evidence['benchmarks']['osu_latency']['mpi_library']:
