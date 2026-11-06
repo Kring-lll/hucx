@@ -225,8 +225,10 @@ static ucs_status_t uct_rm_urma_am_skb_common(uct_rm_urma_iface_t *iface, uct_rm
                 id, (ep->flags & UCT_RM_URMA_EP_FLAG_IN_PENDING));
 
     neth = skb->neth;
-    uct_rm_urma_neth_init_data(ep, neth);
     uct_rm_urma_neth_set_type_am(ep, neth, id);
+    skb->local_psn = ep->tx.psn;
+    ((uct_rm_urma_data_neth_t *)neth)->ack_psn = ep->rx.acked_psn =
+            ucs_frag_list_sn(&ep->rx.ooo_pkts);
     uct_rm_urma_neth_ack_req(ep, neth);
 
     *skb_p = skb;
@@ -359,9 +361,9 @@ ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr, c
         return UCS_ERR_NO_RESOURCE;
     }
 
-    am_hdr = (uct_rm_urma_am_short_hdr_t *)(skb->neth + 1);
+    am_hdr = uct_rm_urma_neth_payload(skb->neth);
     am_hdr->hdr = hdr;
-    iface->tx.sge[0].len = sizeof(uct_rm_urma_neth_t) + sizeof(*am_hdr);
+    iface->tx.sge[0].len = sizeof(uct_rm_urma_data_neth_t) + sizeof(*am_hdr);
     iface->tx.sge[0].addr = (uintptr_t)skb->neth;
 
     uct_rm_urma_ep_tx_inlv(iface, ep, buffer, length);
@@ -390,8 +392,8 @@ ssize_t uct_rm_urma_ep_am_bcopy(uct_ep_h tl_ep, uint8_t id, uct_pack_callback_t 
         return UCS_ERR_NO_RESOURCE;
     }
 
-    payload_len = pack_cb(skb->neth + 1, arg);
-    skb->len = sizeof(skb->neth[0]) + payload_len;
+    payload_len = pack_cb(uct_rm_urma_neth_payload(skb->neth), arg);
+    skb->len = sizeof(uct_rm_urma_data_neth_t) + payload_len;
     UCT_CHECK_LENGTH(skb->len, 0, iface->super.config.seg_size, "am_bcopy");
 
     ucs_assert(iface->tx.wr_skb.send.src.num_sge == 1);
@@ -489,8 +491,8 @@ ucs_status_t uct_rm_urma_ep_am_zcopy(uct_ep_h tl_ep, uint8_t id, const void *hea
     }
 
     skb->neth->packet_type |= UCT_RM_URMA_PACKET_FLAG_ACK_REQ;
-    memcpy(skb->neth + 1, header, header_length);
-    skb->len = sizeof(uct_rm_urma_neth_t) + header_length;
+    memcpy(uct_rm_urma_neth_payload(skb->neth), header, header_length);
+    skb->len = sizeof(uct_rm_urma_data_neth_t) + header_length;
 
     iface->tx.wr_skb.send.src.num_sge = uct_ub_sge_fill_iov(iface->tx.sge + 1, iov, iovcnt) + 1;
 
@@ -633,7 +635,7 @@ ucs_status_t uct_rm_urma_ep_get_address(uct_ep_h tl_ep, uct_ep_addr_t *addr)
     uct_ub_rm_urma_ep_addr_t *ep_addr = (uct_ub_rm_urma_ep_addr_t *)addr;
 
     ep_addr->iface_addr.jetty_id = iface->rm_urma_jetty.jetty->jetty_id.id;
-    ep_addr->iface_addr.trans_mode = iface->rm_urma_jetty.jetty->jetty_cfg.jfs_cfg.trans_mode;
+    ep_addr->iface_addr.trans_mode = UCT_RM_URMA_NOPSN_ADDR_MODE;
     ep_addr->ep_id = ep->super.ep_id;
 
     return UCS_OK;
@@ -710,11 +712,14 @@ void uct_rm_urma_rjetty_get_peer_address(uct_rm_urma_iface_t *iface, const uct_u
     urma_rjetty_t rjetty = {0};
     khiter_t kh_iter;
 
+    if (if_addr->trans_mode != UCT_RM_URMA_NOPSN_ADDR_MODE) {
+        return;
+    }
     uct_ub_address_unpack(dev_addr, &ubdev_addr_param);
     rjetty.jetty_id.eid   = ubdev_addr_param.eid;
     rjetty.jetty_id.uasid = ubdev_addr_param.uasid;
     rjetty.jetty_id.id    = if_addr->jetty_id;
-    rjetty.trans_mode     = if_addr->trans_mode;
+    rjetty.trans_mode     = URMA_TM_RM;
     rjetty.type           = URMA_JETTY;
     rjetty.tp_type        = URMA_CTP;
     kh_iter = kh_get(uct_rm_urma_tjetty, &iface->peer_addr_hash, rjetty);
@@ -734,11 +739,15 @@ ucs_status_t uct_rm_urma_iface_unpack_peer_address(uct_rm_urma_iface_t *iface, c
     khiter_t kh_iter;
     int kh_ret;
 
+    if (if_addr->trans_mode != UCT_RM_URMA_NOPSN_ADDR_MODE) {
+        ucs_error("RM no-DATA-PSN experiment requires the same isolated build on both peers");
+        return UCS_ERR_UNREACHABLE;
+    }
     uct_ub_address_unpack(dev_addr, &ubdev_addr_param);
     rjetty.jetty_id.eid   = ubdev_addr_param.eid;
     rjetty.jetty_id.uasid = ubdev_addr_param.uasid;
     rjetty.jetty_id.id    = if_addr->jetty_id;
-    rjetty.trans_mode     = if_addr->trans_mode;
+    rjetty.trans_mode     = URMA_TM_RM;
     rjetty.type           = URMA_JETTY;
     rjetty.tp_type        = URMA_CTP;
     kh_iter = kh_get(uct_rm_urma_tjetty, &iface->peer_addr_hash, rjetty);
@@ -984,7 +993,8 @@ void uct_rm_urma_ep_deal_am(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *neth
         return;
     }
 
-    status = uct_iface_invoke_am(&iface->super.super, am_id, neth + 1,  byte_len - sizeof(uct_rm_urma_neth_t),
+    status = uct_iface_invoke_am(&iface->super.super, am_id, uct_rm_urma_neth_payload(neth),
+                               byte_len - uct_rm_urma_neth_size(neth),
                                  UCT_CB_PARAM_FLAG_DESC);
     if (ucs_unlikely(status == UCS_INPROGRESS)) {
         uct_recv_desc(udesc) = &iface->super.release_desc;
@@ -1021,6 +1031,9 @@ static void uct_rm_urma_ep_resend(uct_rm_urma_ep_t *ep)
 
     sent_skb = ucs_queue_iter_elem(sent_skb, resend_pos, queue);
     ucs_assert(((uintptr_t)sent_skb % UCT_RM_URMA_SKB_ALIGN) == 0);
+    if (sent_skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM) {
+        ucs_fatal("RM no-DATA-PSN normal-path experiment attempted DATA retransmission; sample invalid");
+    }
     if (UCT_RM_URMA_PSN_COMPARE(sent_skb->neth->psn, >=, ep->tx.max_psn)) {
         ucs_debug("Ep: out of window(psn=%d/max_psn=%d) - can not resend more.",
                   sent_skb ? sent_skb->neth->psn : -1, ep->tx.max_psn);
@@ -1424,7 +1437,7 @@ static UCS_F_ALWAYS_INLINE int uct_rm_urma_skb_is_completed(uct_rm_urma_send_skb
 {
     ucs_assert(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_INVALID));
 
-    return UCT_RM_URMA_PSN_COMPARE(skb->neth->psn, <=, ack_psn) && !(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_RESENDING);
+    return UCT_RM_URMA_PSN_COMPARE(uct_rm_urma_skb_psn(skb), <=, ack_psn) && !(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_RESENDING);
 }
 
 static void uct_rm_urma_ep_window_release_inline(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
@@ -1532,9 +1545,15 @@ void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *n
     uint32_t is_am;
     uint32_t am_id;
 
+    if (ucs_unlikely(byte_len < sizeof(neth->packet_type))) {
+        goto out;
+    }
     dest_id = uct_rm_urma_neth_get_dest_id(neth);
     am_id = uct_rm_urma_neth_get_am_id(neth);
     is_am = neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM;
+    if (ucs_unlikely(byte_len < uct_rm_urma_neth_size(neth))) {
+        goto out;
+    }
 
     if (ucs_unlikely(dest_id == UCT_RM_URMA_EP_NULL_ID)) {
         uct_rm_urma_ep_deal_creq(iface, neth);
@@ -1546,14 +1565,16 @@ void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *n
 
     ucs_assert(ep->super.ep_id != UCT_RM_URMA_EP_NULL_ID);
 
-    uct_rm_urma_ep_process_ack(iface, ep, neth->ack_psn, is_async);
+    uct_rm_urma_ep_process_ack(iface, ep,
+            is_am ? ((uct_rm_urma_data_neth_t *)neth)->ack_psn : neth->ack_psn,
+            is_async);
 
     if (ucs_unlikely(neth->packet_type & UCT_RM_URMA_PACKET_FLAG_ACK_REQ)) {
         uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_ACK);
-        ucs_trace_data("ACK_REQ - schedule ack, head_sn=%u sn=%u", ep->rx.ooo_pkts.head_sn, neth->psn);
+        ucs_trace_data("ACK_REQ - schedule ack, head_sn=%u", ep->rx.ooo_pkts.head_sn);
     }
 
-    if (ucs_unlikely(UCT_RM_URMA_PSN_COMPARE(neth->psn, >, ep->rx.ooo_pkts.head_sn +1))) {
+    if (!is_am && ucs_unlikely(UCT_RM_URMA_PSN_COMPARE(neth->psn, >, ep->rx.ooo_pkts.head_sn +1))) {
         uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_NACK);
     }
 
@@ -1573,7 +1594,15 @@ void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *n
         }
     }
 
-    ooo_type = ucs_frag_list_insert(&ep->rx.ooo_pkts, &skb->u.ooo.elem, neth->psn);
+    /* Normal-path experiment assumes ordered, unique delivery. This local
+     * count supports existing ACK/window lifetimes; it cannot detect loss,
+     * duplicates or reordering and is not a replacement reliability scheme. */
+    if (is_am) {
+        ucs_frag_list_sn_inc(&ep->rx.ooo_pkts);
+        ooo_type = UCS_FRAG_LIST_INSERT_FAST;
+    } else {
+        ooo_type = ucs_frag_list_insert(&ep->rx.ooo_pkts, &skb->u.ooo.elem, neth->psn);
+    }
     if (ucs_unlikely(ooo_type != UCS_FRAG_LIST_INSERT_FAST)) {
         if ((ooo_type != UCS_FRAG_LIST_INSERT_DUP) &&
             (ooo_type != UCS_FRAG_LIST_INSERT_FAIL)) {
@@ -1589,7 +1618,7 @@ void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *n
     }
 
     if (ucs_unlikely(is_async && !(iface->super.super.am[am_id].flags & UCT_CB_FLAG_ASYNC))) {
-        skb->u.am.len = byte_len - sizeof(*neth);
+        skb->u.am.len = byte_len - uct_rm_urma_neth_size(neth);
         ucs_queue_push(&iface->rx.pending_q, &skb->u.am.queue);
     } else {
         uct_rm_urma_iface_raise_pending_async_ev(iface);

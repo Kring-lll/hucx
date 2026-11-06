@@ -1,0 +1,29 @@
+{
+  "basis_commit": "56c8913f5c69bf99f483f3a18c5152fa18dec029",
+  "full_product_commit": "a4d07599bd5b66b84c5de8257e5f7fe15e3a6f63",
+  "x86_full_compile_link": "PASS",
+  "sdk_archive_sha256": "f90604c76315c01fb7b03a68c9cf0ddf8ae716e917f1fd8a2e3c56190d371efa",
+  "cpu_sdk_scope": "public SDK headers, private link-only URMA stub; no URMA device",
+  "actual_ep_asan_ubsan": "PASS; 70001 DATA deliveries, wrap70000, ACK8, DATA6, async deferred receive, retained receive release; no sanitizer diagnostics",
+  "data_retry_refusal": "PASS actual ep_resend SIGABRT and exact diagnostic",
+  "legacy_address_refusal": "PASS before import; physical Jetty mode remains RM",
+  "new_controller_tests": 7,
+  "prior_controller_tests": 37,
+  "identity_c_fixture_tests": 3,
+  "wire_public_sdk_forwarding_fixture": "PASS actual interposer for DATA8/6",
+  "alternating_program_file_harness": "PASS 2/4 ranks and corruption rejection; not MPI/URMA",
+  "planned_mpi": 215,
+  "arm_build": "PENDING",
+  "node_functional": "PENDING",
+  "performance": "PENDING",
+  "hardware_fault_reliability": "NOT_CLAIMED",
+  "lsan": "disabled in CPU fixture; no full leak acceptance claim",
+  "logs_sha256": {
+    "build_final.log": "173718910930838762b8410635b8449bfb319e100a17a73b6404eadb55f28f0c",
+    "cpu_tests.log": "bba6823452f3bb404ca9489951b347df572e6bb4d4fa0e8bc0878d023be2230b",
+    "controller_tests.log": "6db00cdb58d26ac310d0f750268487ac80005c463aa48397b3d892a6dac2469d",
+    "prior_controller_tests.log": "b306fb548311ab6f99023ca98783aa02f6b8640e9684372b9813d7ca8d9881b5",
+    "identity_test.log": "a418d8c810a89da91cf8a92912619c312387d7a553b81a3834e4a37becd14d40",
+    "alternating_test.log": "cc1015a2e3c010b68d187a2c9fd746d2843cabd78b4013ffff9e116c28ca45b5"
+  }
+}

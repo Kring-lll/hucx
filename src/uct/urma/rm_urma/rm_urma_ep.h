@@ -33,7 +33,7 @@
 
 typedef struct uct_rm_urma_am_short_hdr {
     uint64_t hdr;
-} uct_rm_urma_am_short_hdr_t;
+} UCS_S_PACKED uct_rm_urma_am_short_hdr_t;
 
 typedef struct uct_rm_urma_put_hdr {
     uint64_t rva;
@@ -204,6 +204,26 @@ enum {
     UCT_RM_URMA_PACKET_CREQ = 1,
     UCT_RM_URMA_PACKET_CREP = 2,
 };
+
+static UCS_F_ALWAYS_INLINE size_t
+uct_rm_urma_neth_size(const uct_rm_urma_neth_t *neth)
+{
+    return (neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM) ?
+           sizeof(uct_rm_urma_data_neth_t) : sizeof(*neth);
+}
+
+static UCS_F_ALWAYS_INLINE void *
+uct_rm_urma_neth_payload(uct_rm_urma_neth_t *neth)
+{
+    return UCS_PTR_BYTE_OFFSET(neth, uct_rm_urma_neth_size(neth));
+}
+
+static UCS_F_ALWAYS_INLINE uct_rm_urma_psn_t
+uct_rm_urma_skb_psn(const uct_rm_urma_send_skb_t *skb)
+{
+    return (skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM) ?
+           skb->local_psn : skb->neth->psn;
+}
 
 ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr, const void *buffer, unsigned length);
 

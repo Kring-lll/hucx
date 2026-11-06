@@ -86,11 +86,23 @@ typedef struct uct_rm_urma_neth {
     uct_rm_urma_psn_t   ack_psn;
 } UCS_S_PACKED uct_rm_urma_neth_t;
 
+/* Experimental normal-path DATA format. ACK sequence numbers remain for
+ * window retirement; DATA packet sequence numbers are local metadata only. */
+typedef struct uct_rm_urma_data_neth {
+    uint32_t            packet_type;
+    uct_rm_urma_psn_t   ack_psn;
+} UCS_S_PACKED uct_rm_urma_data_neth_t;
+
+/* Address-format discriminator, never passed to the URMA API. Both endpoints
+ * must use this isolated build; legacy peers must not parse the shorter DATA. */
+#define UCT_RM_URMA_NOPSN_ADDR_MODE ((urma_transport_mode_t)(URMA_TM_RM | UCS_BIT(30)))
+
 typedef struct uct_rm_urma_send_skb {
     ucs_queue_elem_t    queue;      /* in send window */
     urma_target_seg_t   *tseg;
     uint16_t            len;        /* data size */
     uint16_t            flags;
+    uct_rm_urma_psn_t   local_psn;  /* DATA window key; not transmitted */
     uct_rm_urma_neth_t  neth[0];
 } UCS_S_PACKED UCS_V_ALIGNED(UCT_RM_URMA_SKB_ALIGN) uct_rm_urma_send_skb_t;
 
