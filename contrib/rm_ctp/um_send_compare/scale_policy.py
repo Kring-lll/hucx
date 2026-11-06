@@ -33,7 +33,9 @@ def tasks(timing=True, repeats=5):
                 yield group, benchmark, ppn, size, 'resources', 0, profile
 
 
-def plan(timing=True):
+def plan(timing=True, rx_depth=512):
+    if rx_depth not in (512, 4096):
+        raise ValueError('unplanned RX depth')
     rows = list(tasks(timing))
     return {'groups': GROUPS, 'profiles': PROFILES, 'gate_mpi': 3,
             'comparison_mpi': len(rows), 'total_mpi': len(rows) + 3,
@@ -47,7 +49,10 @@ def plan(timing=True):
             'standard_osu': '7.5.2', 'product_rebuild': False,
             'product_changes': False, 'native_read_write': 'PAUSED',
             'psn_simplification': 'NOT_IN_THIS_STAGE', 'fault_injection': False,
-            'queue_policy': 'fixed TX64/RX512, RM/UM window32/timeout10s; no automatic tuning',
+            'queue_policy': 'fixed TX64/RX%d, RM/UM window32/timeout10s; no automatic tuning' % rx_depth,
+            'requested_rx_depth': rx_depth,
+            'actual_jfr_depth_required': rx_depth == 4096,
+            'rc_auxiliary_um_rx_depth': 4096 if rx_depth == 4096 else 'original default',
             'segment_policy': 'RM4K, RC/UM8K defaults; captured not equalized',
             'failure_policy': 'stop entire batch; retain partial results; never substitute retries',
             'prior_samples_merged': False}
@@ -168,7 +173,7 @@ def write_tables(out, report):
     lines = ['# 原版 OSU：点对点与 Alltoall 规模对照', '',
              'latency/bw/bibw 均为两节点各一进程；仅 Alltoall 按每节点PPN扩展，总进程2×PPN。',
              'RC最高PPN24是本轮约定范围，超过24为未计划，不是实测失败或零性能。',
-             '片长RM4K、RC/UM8K；TX64/RX512，RM/UM窗口32、超时10s。',
+             '片长RM4K、RC/UM8K；' + report['plan']['queue_policy'] + '。',
              '独立数据校验、五轮轮换计时、独立资源轮；全部样本保留，不合并旧批次。',
              '计时无WR/故障/资源探针，仅相同Init/Finalize身份取证；不包装数据调用和MPI_Wtime。',
              'RSS是两节点各rank Finalize前进程RSS合计，非同步瞬时内存，不等于设备内存。',

@@ -101,7 +101,7 @@ class ScaleTests(unittest.TestCase):
             self.assertIn('NOT_PLANNED', (out/'comparison.md').read_text())
             self.assertIn('NOT_PLANNED_RC_LIMIT_24', (out/'comparison.csv').read_text(encoding='utf-8-sig'))
 
-    def controller(self, fail_ppn=None, rnr=False, rnr_failure=False, other_failure=False):
+    def controller(self, fail_ppn=None, rnr=False, rnr_failure=False, other_failure=False, rx_depth=None):
         with tempfile.TemporaryDirectory() as temporary:
             case = Path(temporary)/'case'
             case.mkdir()
@@ -148,9 +148,10 @@ class ScaleTests(unittest.TestCase):
                 row = json.loads(json.dumps(row))
                 row.update(name='trial%d' % index, group=group, ppn=ppn, benchmark=benchmark, message_bytes=size)
                 row['load_evidence'] = {'node89': {}, 'node97': {}}
-                if rnr:
+                if rnr or rx_depth == 4096:
                     engine['PROFILE'] = profile
                     row['configuration']['environment'].update(osu.environment({}, 'rm', case/'install', osu.budget(ppn)))
+                    self.assertEqual(osu.budget(ppn)['rx_depth'], int(row['configuration']['environment']['UCX_'+profile.upper()+'_URMA_RX_DEPTH']))
                     for value in row['jettys'].values():
                         value['jfr_rx_depths'] = [int(row['configuration']['environment']['UCX_'+profile.upper()+'_URMA_RX_DEPTH'])]
                 if ppn == fail_ppn:
@@ -169,7 +170,8 @@ class ScaleTests(unittest.TestCase):
                  patch.object(runner, 'disk_inventory', return_value=self.disks()), \
                  patch.object(runner.os, 'geteuid', return_value=0), \
                  patch.object(runner.socket, 'gethostname', return_value='node89'), \
-                 patch.object(sys, 'argv', ['scale', '--run', '--timing'] + (['--rnr-study'] if rnr else [])), \
+                 patch.object(sys, 'argv', ['scale', '--run', '--timing'] + (['--rnr-study'] if rnr else []) +
+                              (['--rx-depth', str(rx_depth)] if rx_depth is not None else [])), \
                  patch.object(run_compare, 'run_trial', side_effect=run_trial), \
                  patch('zipfile.ZipFile') as bundle, redirect_stdout(io.StringIO()):
                 bundle.return_value.__enter__.return_value.read.return_value = b'# CPU_SNAPSHOT'
@@ -179,7 +181,7 @@ class ScaleTests(unittest.TestCase):
                 else:
                     runner.main()
             self.assertIs(base.inventory, inventory)
-            out = next(case.glob('um_rnr_study_*' if rnr else 'um_osu_scale_*'))
+            out = next(case.glob('um_rnr_study_*' if rnr else 'um_osu_rx4096_*' if rx_depth == 4096 else 'um_osu_scale_*'))
             report = json.loads((out/'results.json').read_text())
             for row in report['gates'] + report['trials']:
                 self.assertEqual(json.loads((out/row['name']/'trial.json').read_text()), row)
@@ -204,6 +206,42 @@ class ScaleTests(unittest.TestCase):
         self.assertFalse(report['trials'][-1]['passed'])
         self.assertEqual(report['active_task']['ppn'], 32)
         self.assertEqual(len(report['comparisons']), 8)
+
+    def test_rx4096_full_matrix_all_profiles_including_rc_aux(self):
+        report, observed = self.controller(rx_depth=4096)
+        self.assertEqual(len(observed), 255)
+        self.assertEqual(len(report['comparisons']), 14)
+        self.assertEqual(report['plan']['requested_rx_depth'], 4096)
+        self.assertTrue(report['plan']['actual_jfr_depth_required'])
+        for row in report['gates'] + report['trials']:
+            self.assertEqual(row['requested_rx_depth'], 4096)
+            env = row['configuration']['environment']
+            for profile in scale.PROFILES:
+                self.assertEqual(env['UCX_'+profile.upper()+'_URMA_RX_DEPTH'], '4096')
+            prefix = 'UCX_'+row['profile'].upper()+'_URMA_'
+            self.assertEqual(env[prefix+'RX_MAX_POLL'], '16')
+            self.assertEqual(env[prefix+'RX_MAX_BATCH'], '16')
+
+    def test_rx4096_failure_stops_and_preserves_batch(self):
+        report, observed = self.controller(rx_depth=4096, fail_ppn=128)
+        self.assertEqual(report['status'], 'STOPPED_INCOMPLETE')
+        self.assertEqual(max(r[2] for r in observed), 128)
+        self.assertFalse(report['trials'][-1]['passed'])
+        self.assertEqual(report['trials'][-1]['requested_rx_depth'], 4096)
+
+    def test_rx4096_plan_table_and_conflicting_flags(self):
+        value = scale.plan(True, 4096)
+        self.assertEqual(value['total_mpi'], 255)
+        self.assertIn('RX4096', value['queue_policy'])
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            scale.write_tables(out, {'comparisons': [], 'plan': value, 'status': 'CPU_FIXTURE'})
+            self.assertIn('RX4096', (out/'comparison.md').read_text())
+            self.assertNotIn('RX512', (out/'comparison.md').read_text())
+        with patch.object(sys, 'argv', ['scale', '--rnr-study', '--rx-depth', '4096']), \
+             redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                runner.main()
 
     def test_rnr_schedule_scope_and_31_attempt_ceiling(self):
         rows = list(scale.rnr_tasks())
