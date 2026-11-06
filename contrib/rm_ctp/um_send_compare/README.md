@@ -1,5 +1,8 @@
 # RC／RM／UM：原版 OSU 正常 SEND 性能与资源
 
+2026-11-06：规模批次完成至PPN96，PPN128首次计时在MPI_Init出现send CR status10（RNR重试耗尽）。
+新增--rnr-study仅PPN128对比RX512/4096，不继续160、不修改产品，详见[RNR定向计划](RNR_20261106.md)。
+
 2026-11-05 新阶段：祝博确认 latency/bw/bibw 只做双节点各一进程，只有 Alltoall 扩高PPN。
 新包使用独立入口 run_scale_compare.py，计划255个MPI任务；详见 [SCALE_20261105.md](SCALE_20261105.md)。
 当前产品不变，READ/WRITE与PSN精简均不在本轮范围。以下129/183项为此前阶段，保留原计划和结果口径。

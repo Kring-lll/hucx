@@ -101,7 +101,7 @@ class ScaleTests(unittest.TestCase):
             self.assertIn('NOT_PLANNED', (out/'comparison.md').read_text())
             self.assertIn('NOT_PLANNED_RC_LIMIT_24', (out/'comparison.csv').read_text(encoding='utf-8-sig'))
 
-    def controller(self, fail_ppn=None):
+    def controller(self, fail_ppn=None, rnr=False, rnr_failure=False, other_failure=False):
         with tempfile.TemporaryDirectory() as temporary:
             case = Path(temporary)/'case'
             case.mkdir()
@@ -114,7 +114,7 @@ class ScaleTests(unittest.TestCase):
             helper = case/'helpers'
             helper.mkdir()
             for name in ('osu_rank.py', 'rank_exec.py'):
-                (helper/name).write_text('# CPU_ONLY')
+                (helper/name).write_text('# CPU_ONLY\n        shared.main()\n')
             guard = SimpleNamespace(CASE=case, COMMIT='CPU', MODULE_SHA=bootstrap.digest(lib),
                                     RELATIVE_ENTRY='entry.py', ENTRY_SHA=bootstrap.digest(source))
             inventory_calls = []
@@ -148,28 +148,38 @@ class ScaleTests(unittest.TestCase):
                 row = json.loads(json.dumps(row))
                 row.update(name='trial%d' % index, group=group, ppn=ppn, benchmark=benchmark, message_bytes=size)
                 row['load_evidence'] = {'node89': {}, 'node97': {}}
+                if rnr:
+                    engine['PROFILE'] = profile
+                    row['configuration']['environment'].update(osu.environment({}, 'rm', case/'install', osu.budget(ppn)))
+                    for value in row['jettys'].values():
+                        value['jfr_rx_depths'] = [int(row['configuration']['environment']['UCX_'+profile.upper()+'_URMA_RX_DEPTH'])]
                 if ppn == fail_ppn:
                     row.update(passed=False, exit=124, error='CPU_SIMULATED_TIMEOUT')
                 run = out/row['name']
                 run.mkdir()
+                if rnr and ppn == 128 and profile == 'rm' and phase == 'validation' and row['configuration']['environment']['UCX_RM_URMA_RX_DEPTH'] == '512' and (rnr_failure or other_failure):
+                    row.update(passed=False, error='CPU_SIMULATED_RNR' if rnr_failure else 'CPU_SIMULATED_OTHER',
+                               cleanup={'local': {'terminated_own_pids': []}, 'peer': {'terminated_own_pids': []}})
+                    (run/'launcher.log').write_text('Fatal: The send cr status is err: stale_errno; status:10.\n' if rnr_failure else 'Fatal: Unknown provider failure\n')
                 base.write_json(run/'trial.json', row)
                 return row
             with patch.object(bootstrap, 'load', return_value=(guard, engine, {}, {})), \
                  patch.object(runner, 'repeat_checkpoint', return_value={'cpu_fixture': True}), \
+                 patch.object(runner, 'failed_scale_checkpoint', return_value={'cpu_failed_scale': True}), \
                  patch.object(runner, 'disk_inventory', return_value=self.disks()), \
                  patch.object(runner.os, 'geteuid', return_value=0), \
                  patch.object(runner.socket, 'gethostname', return_value='node89'), \
-                 patch.object(sys, 'argv', ['scale', '--run', '--timing']), \
+                 patch.object(sys, 'argv', ['scale', '--run', '--timing'] + (['--rnr-study'] if rnr else [])), \
                  patch.object(run_compare, 'run_trial', side_effect=run_trial), \
                  patch('zipfile.ZipFile') as bundle, redirect_stdout(io.StringIO()):
                 bundle.return_value.__enter__.return_value.read.return_value = b'# CPU_SNAPSHOT'
-                if fail_ppn:
-                    with self.assertRaisesRegex(RuntimeError, 'CPU_SIMULATED_TIMEOUT'):
+                if fail_ppn or other_failure:
+                    with self.assertRaisesRegex(RuntimeError, 'CPU_SIMULATED_TIMEOUT|CPU_SIMULATED_OTHER'):
                         runner.main()
                 else:
                     runner.main()
             self.assertIs(base.inventory, inventory)
-            out = next(case.glob('um_osu_scale_*'))
+            out = next(case.glob('um_rnr_study_*' if rnr else 'um_osu_scale_*'))
             report = json.loads((out/'results.json').read_text())
             for row in report['gates'] + report['trials']:
                 self.assertEqual(json.loads((out/row['name']/'trial.json').read_text()), row)
@@ -194,6 +204,107 @@ class ScaleTests(unittest.TestCase):
         self.assertFalse(report['trials'][-1]['passed'])
         self.assertEqual(report['active_task']['ppn'], 32)
         self.assertEqual(len(report['comparisons']), 8)
+
+    def test_rnr_schedule_scope_and_31_attempt_ceiling(self):
+        rows = list(scale.rnr_tasks())
+        self.assertEqual(len(rows), 28)
+        self.assertEqual(scale.rnr_plan()['total_mpi'], 31)
+        self.assertTrue(all(item[1:4] == ('osu_alltoall', 128, 8) for item, depth in rows))
+        self.assertEqual({(item[6], depth) for item, depth in rows}, set(scale.RNR_CONDITIONS))
+
+    def test_rnr_complete_controller_changes_only_rx_policy(self):
+        report, observed = self.controller(rnr=True)
+        self.assertEqual(report['status'], 'RNR_STUDY_ALL_CONDITIONS_COMPLETE_REVIEW_REQUIRED')
+        self.assertEqual(len(observed), 31)
+        self.assertTrue(report['all_conditions_passed'])
+        self.assertEqual([r['status'] for r in report['conditions']], ['COMPLETE']*4)
+        for row in report['trials']:
+            env = row['configuration']['environment']
+            prefix = 'UCX_'+row['profile'].upper()+'_URMA_'
+            self.assertEqual(int(env[prefix+'RX_DEPTH']), row['requested_rx_depth'])
+            self.assertEqual(env[prefix+'RX_MAX_BATCH'], '16')
+            self.assertEqual(env[prefix+'RX_MAX_POLL'], '16')
+        self.assertEqual(report['skipped_tasks'], [])
+
+    def test_rnr_failure_preserved_other_conditions_continue(self):
+        report, observed = self.controller(rnr=True, rnr_failure=True)
+        self.assertEqual(report['status'], 'RNR_STUDY_COMPLETED_WITH_OBSERVED_FAILURES_REVIEW_REQUIRED')
+        self.assertFalse(report['all_conditions_passed'])
+        self.assertEqual(len(observed), 25)
+        self.assertEqual(len(report['skipped_tasks']), 6)
+        self.assertEqual([r['status'] for r in report['conditions']], ['FAILED_RNR', 'COMPLETE', 'COMPLETE', 'COMPLETE'])
+        self.assertIsNone(report['conditions'][0]['median_us'])
+        self.assertTrue(any(r['requested_rx_depth'] == 4096 for r in report['trials']))
+        self.assertEqual(max(r[2] for r in observed), 128)
+
+    def test_unknown_failure_stops_rnr_study(self):
+        report, observed = self.controller(rnr=True, other_failure=True)
+        self.assertEqual(report['status'], 'STOPPED_INCOMPLETE')
+        self.assertEqual(len(observed), 4)
+        self.assertFalse(any(r.get('requested_rx_depth') == 4096 for r in report['trials']))
+
+    def test_rnr_continuation_is_narrow_and_requires_cleanup(self):
+        row = {'passed': False, 'cleanup': {'local': {'terminated_own_pids': []}, 'peer': {'terminated_own_pids': []}}}
+        text = 'Fatal: The send cr status is err: Cannot allocate memory; status:10.\n'
+        self.assertTrue(scale.rnr_failure(row, text))
+        self.assertFalse(scale.rnr_failure(row, text.replace('status:10', 'status:4')))
+        self.assertFalse(scale.rnr_failure(row, text+'Fatal: Unknown error\n'))
+        self.assertFalse(scale.rnr_failure(row, text.rstrip()+' Fatal: The send cr status is err: stale; status:4.\n'))
+        row['cleanup']['peer']['terminated_own_pids'] = [123]
+        self.assertFalse(scale.rnr_failure(row, text))
+        row['cleanup'] = {}
+        self.assertFalse(scale.rnr_failure(row, text))
+
+    def test_actual_jfr_proof_rejects_clamp_and_pid_mismatch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            for rank in range(2):
+                (out/('rank%d_pid%d.jsonl' % (rank, rank+100))).write_text(json.dumps(
+                    {'event': 'acquire', 'kind': 'jfr', 'rc': 0, 'depth': 4096})+'\n')
+            self.assertEqual(scale.jfr_depths(out, 1, {0:100, 1:101}, 4096), {0:[4096], 1:[4096]})
+            with self.assertRaises(ValueError):
+                scale.jfr_depths(out, 1, {0:100, 1:101}, 512)
+            with self.assertRaises(ValueError):
+                scale.jfr_depths(out, 1, {0:999, 1:101}, 4096)
+
+    def test_failed_scale_checkpoint_reviews_229_without_upgrading_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            case = Path(temporary)
+            root = case/runner.FAILED_SCALE
+            root.mkdir()
+            gates = [fixture_row(p, 'validation') for p in scale.PROFILES]
+            for row in gates:
+                row['name'] = 'gate_'+row['profile']
+            trials = []
+            for group in range(12):
+                for row in self.group_rows(group):
+                    row['name'] = 'g%d_' % group + row['name']
+                    trials.append(row)
+            for row in self.group_rows(12):
+                if row['phase'] == 'validation':
+                    row['name'] = 'g12_'+row['name']
+                    trials.append(row)
+            failed = fixture_row('rm', 'timing')
+            failed.update(name='osu_alltoall_rm_p128_timing_229', group=12,
+                          benchmark='osu_alltoall', message_bytes=8, ppn=128, passed=False,
+                          cleanup={'local': {'terminated_own_pids': []}, 'peer': {'terminated_own_pids': []}})
+            trials.append(failed)
+            for row in gates + trials:
+                run = root/row['name']
+                run.mkdir()
+                (run/'trial.json').write_text(json.dumps(row))
+            (root/failed['name']/'launcher.log').write_text('Fatal: The send cr status is err: stale; status:10.\n')
+            report = {'gates': gates, 'trials': trials, 'source_commit': 'cpu', 'module_sha256': 'module',
+                      'tool': {'tool_commit': '4c0ef1a6ee7d7df97ef8d08e4666836a1ff026f0'},
+                      'status': 'STOPPED_INCOMPLETE',
+                      'comparisons': [scale.summarize(trials, i) for i in range(12)]}
+            (root/'results.json').write_text(json.dumps(report))
+            value = runner.failed_scale_checkpoint(case, 'cpu', 'module')
+            self.assertEqual(value['successful_tasks_reviewed'], 229)
+            self.assertFalse(value['prior_failure_upgraded'])
+            (root/trials[0]['name']/'trial.json').write_text('{}')
+            with self.assertRaises(ValueError):
+                runner.failed_scale_checkpoint(case, 'cpu', 'module')
 
 
 if __name__ == '__main__':

@@ -46,3 +46,5 @@
 2026-11-05复测阶段：首批三模式MPI129/129及510身份已复核，详见[首批对照](um_send_compare/ACCEPTANCE_20261105.md)；新增复测及[源码分析](um_send_compare/BANDWIDTH_SOURCE_REVIEW_20261105.md)不修改产品，不筛去高值。
 
 2026-11-05后续确认：183/183复测已通过用户节点只读审计。下一步仅Alltoall扩PPN，其他三项只点对点；详见[规模对照计划](um_send_compare/SCALE_20261105.md)。READ/WRITE暂停，PSN精简待当前对照之后，工具本地测试不勾节点通过。
+
+2026-11-06节点回执：230任务记录、12完整组，点对点三项及Alltoall至PPN96完成；PPN128校验通过但首次计时MPI_Init报status10，PPN128完整计时/资源及PPN160未完成。实际JFR512，准备[RX512/4096定向实验](um_send_compare/RNR_20261106.md)，不据此勾全部规模或宣称根因已定。
