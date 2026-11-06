@@ -247,19 +247,36 @@ def rnr_tasks(timing=True):
                 yield (group, 'osu_alltoall', 128, 8, 'timing', repeat, profile), depth
 
 
-def rnr_failure(row, log):
-    """A narrow diagnostic continuation rule, never an acceptance upgrade."""
-    if row.get('passed') or row.get('cleanup_error'):
-        return False
+def rnr_log_evidence(row, log):
+    """Describe mixed/interleaved diagnostics without declaring a sole cause."""
     cleanup = row.get('cleanup', {})
-    if set(cleanup) != {'local', 'peer'} or any(v.get('terminated_own_pids') != [] for v in cleanup.values()):
-        return False
     fatals = re.findall(r'Fatal: The send cr status is err:(?:(?!Fatal:)[^\n])*?status:(\d+)\.', log)
-    if not fatals or len(fatals) != log.count('Fatal:') or set(fatals) != {'10'}:
-        return False
-    if re.search(r'Assertion.*failed|UCX\s+(ERROR|FATAL)|OSU_PROOF_ERROR|segmentation fault', log, re.I):
-        return False
-    return True
+    reasons = []
+    if row.get('passed'):
+        reasons.append('trial marked passed')
+    if row.get('cleanup_error'):
+        reasons.append('cleanup error')
+    if set(cleanup) != {'local', 'peer'} or any(v.get('terminated_own_pids') != [] for v in cleanup.values()):
+        reasons.append('cleanup missing or terminated own processes')
+    if not fatals:
+        reasons.append('no complete send-CR Fatal parsed')
+    if len(fatals) != log.count('Fatal:'):
+        reasons.append('unparsed/interleaved or other Fatal present')
+    if set(fatals) != {'10'}:
+        reasons.append('parsed send-CR statuses are not exclusively 10')
+    other = re.findall(r'Assertion[^\n]*failed|UCX\s+(?:ERROR|FATAL)[^\n]*|OSU_PROOF_ERROR[^\n]*|segmentation fault[^\n]*', log, re.I)
+    if other:
+        reasons.append('additional assertion/UCX/proof/segmentation diagnostic')
+    return {'rnr_observed': '10' in fatals, 'parsed_send_cr_statuses': fatals,
+            'fatal_markers': log.count('Fatal:'), 'complete_send_cr_fatals': len(fatals),
+            'other_error_excerpts': [s[:500] for s in other[:8]],
+            'live_continuation_allowed': not reasons, 'live_continuation_rejections': reasons,
+            'interpretation': 'RNR presence does not exclude other errors or prove the sole cause'}
+
+
+def rnr_failure(row, log):
+    """Strict live-test continuation; historical review must not use this."""
+    return rnr_log_evidence(row, log)['live_continuation_allowed']
 
 
 def jfr_depths(run, ppn, pids, depth):

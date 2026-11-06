@@ -45,13 +45,22 @@ def failed_scale_checkpoint(case, commit, module):
     if (failed['name'] != 'osu_alltoall_rm_p128_timing_229' or failed['profile'] != 'rm'
             or failed['ppn'] != 128 or failed['phase'] != 'timing' or failed['repeat'] != 0):
         raise ValueError('unexpected failed scale task')
+    cleanup = failed.get('cleanup', {})
+    if (failed.get('cleanup_error') or set(cleanup) != {'local', 'peer'} or
+            any(v.get('terminated_own_pids') != [] for v in cleanup.values())):
+        raise ValueError('historical failed-task cleanup differs from reported empty dual-node cleanup')
     log = root/failed['name']/'launcher.log'
-    if not scale.rnr_failure(failed, log.read_text(errors='replace')):
-        raise ValueError('scale failure is not the reported status10 fatal with empty cleanup')
+    observation = scale.rnr_log_evidence(failed, log.read_text(errors='replace'))
+    if not observation['rnr_observed']:
+        raise ValueError('historical scale RNR not observed: '+json.dumps(observation, sort_keys=True))
+    print('HISTORICAL_FAILURE_LOG='+json.dumps(observation, sort_keys=True), flush=True)
     return {'source_result': str(path), 'observed_sha256': bootstrap.digest(path),
             'failed_log': str(log), 'failed_log_sha256': bootstrap.digest(log),
             'successful_tasks_reviewed': 229, 'failed_tasks_retained': 1,
             'complete_groups_reviewed': 12, 'prior_failure_upgraded': False,
+            'historical_failure_log': observation,
+            'historical_log_exclusivity_required': False,
+            'live_failure_continuation_rule': 'unchanged strict status10-only and empty cleanup',
             'merged_with_new_samples': False,
             'binding': 'reported identity/coverage/all trial equality/statistics; hashes captured now, not pre-pinned'}
 
@@ -266,7 +275,12 @@ def main():
                 benchmark, profile, active_ppn, size, phase, repeat, row['passed']), flush=True)
             if not row['passed']:
                 log = out/row['name']/'launcher.log'
-                if args.rnr_study and group >= 0 and scale.rnr_failure(row, log.read_text(errors='replace')):
+                if args.rnr_study and group >= 0:
+                    row['failure_log_evidence'] = scale.rnr_log_evidence(row, log.read_text(errors='replace'))
+                    base.write_json(out/row['name']/'trial.json', row)
+                    save()
+                    print('LIVE_FAILURE_LOG='+json.dumps(row['failure_log_evidence'], sort_keys=True), flush=True)
+                if args.rnr_study and group >= 0 and row['failure_log_evidence']['live_continuation_allowed']:
                     row['diagnosis'] = 'RNR_RETRY_EXHAUSTED'
                     base.write_json(out/row['name']/'trial.json', row)
                     blocked.add(condition)

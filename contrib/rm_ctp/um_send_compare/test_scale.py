@@ -302,6 +302,19 @@ class ScaleTests(unittest.TestCase):
             value = runner.failed_scale_checkpoint(case, 'cpu', 'module')
             self.assertEqual(value['successful_tasks_reviewed'], 229)
             self.assertFalse(value['prior_failure_upgraded'])
+            log = root/failed['name']/'launcher.log'
+            log.write_text('Fatal: The send cr status is err: stale; status:10.\nFatal: interleaved/secondary error\nUCX ERROR secondary\n')
+            value = runner.failed_scale_checkpoint(case, 'cpu', 'module')
+            observation = value['historical_failure_log']
+            self.assertTrue(observation['rnr_observed'])
+            self.assertFalse(observation['live_continuation_allowed'])
+            self.assertTrue(observation['live_continuation_rejections'])
+            self.assertFalse(value['historical_log_exclusivity_required'])
+            self.assertFalse(value['prior_failure_upgraded'])
+            log.write_text('Fatal: The send cr status is err: stale; status:4.\n')
+            with self.assertRaisesRegex(ValueError, 'historical scale RNR not observed'):
+                runner.failed_scale_checkpoint(case, 'cpu', 'module')
+            log.write_text('Fatal: The send cr status is err: stale; status:10.\n')
             (root/trials[0]['name']/'trial.json').write_text('{}')
             with self.assertRaises(ValueError):
                 runner.failed_scale_checkpoint(case, 'cpu', 'module')
