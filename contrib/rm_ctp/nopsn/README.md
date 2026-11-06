@@ -68,3 +68,9 @@ resume_wirefix.py的ZIP入口只复用指定已编译case：先核原归档/137�
 此前完整215调度测试使用run_trial模拟，未真实调用one_trial参数生成，因此漏测该入口。本次新增workload_arguments只扩展计划内Multi Latency功能尺寸，仍限校验阶段；旧共享policy/scale_policy及正式对照参数零变化。cli_preflight在任何新MPI之前生成全部215任务参数，未来尺寸不匹配会立即停止。
 新增真实osu_compare.one_trial的213个OSU任务配置生成测试，仅在MPI启动边界使用模拟；每项rank_config参数/资源阶段及原解析器的版本、尺寸、Pass格式验证通过。另2项自定义正确性参数为空且独立解析，不混称OSU性能。公开SDK观察器14项和原守卫保持；新工具共12项CPU测试通过，非真实MPI验收。
 恢复入口核对本次3项已完成8B记录及实际8B/6B观察收据、64B参数阶段停止、原源码/归档/ARM模块，原结果不覆盖、不合并；独立目录重跑全部215项。复用370bbc3/module5b85f108，不重编译产品，计时轮仍无观察器，保留全部异常/高值。
+
+## PPN8退出审查候选
+
+见EXIT_REVIEW_20261106.md：已复现过早DATA保护与本地完成元数据/ACK栈对齐缺陷；修正后本地全量编译、真实EP/flush ASan/UBSan通过，节点待验。
+新入口--exit-review只执行最多6项完整RM/修正副本PPN8交替退出对照，不能与--timing并用，不自动进入性能矩阵。
+PASS改在Finalize成功后打印，另核16个DATA_DONE和原全rank正常退出。旧370bbc3与所有失败记录保留。

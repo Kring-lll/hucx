@@ -53,8 +53,22 @@ def schedule(timing):
             for variant in VARIANTS:yield(group,benchmark,ppn,size,'resources',0,variant,False)
 
 
-def plan(timing):
-    rows=list(schedule(timing))
+def task_schedule(timing,exit_review=False):
+    if not exit_review:return schedule(timing)
+    # Same binary and same 16-rank ring on both libraries, at most six launches.
+    return ((-5,'nopsn_alternating',8,8,'validation',repeat,variant,False)
+        for repeat in range(3) for variant in (VARIANTS if repeat%2==0 else VARIANTS[::-1]))
+
+
+def plan(timing,exit_review=False):
+    rows=list(task_schedule(timing,exit_review))
+    if exit_review:
+        return {'scope':'PPN8_FINALIZE_CORRECTNESS_DIAGNOSTIC_NO_PERFORMANCE',
+            'total_mpi':len(rows),'variants':VARIANTS,'ppn':8,'total_ranks':16,'rounds':260,
+            'repeats_per_variant':3,'timing':0,'resources':0,'rx_depth':4096,
+            'failure_policy':'stop at first failure; preserve log and cleanup',
+            'success_marker':'printed only after successful MPI_Finalize',
+            'data_retry_refusal':'after original UM skip conditions; no DATA is replayed'}
     return {'scope':'NORMAL_PATH_DATA_PSN_ABLATION_NOT_RELIABILITY_ACCEPTANCE',
         'total_mpi':len(rows),'functional_and_validation':sum(r[4]=='validation' for r in rows),
         'timing':sum(r[4]=='timing' for r in rows),'resources':sum(r[4]=='resources' for r in rows),
@@ -76,9 +90,9 @@ def workload_arguments(shared_arguments,benchmark,iterations,warmup,validation,m
         '--iterations',str(iterations),'--warmup',str(warmup),'--validation']
 
 
-def cli_preflight(shared_arguments,timing):
+def cli_preflight(shared_arguments,timing,exit_review=False):
     """Run the exact installed argument selector for every task before any MPI."""
-    tasks=list(schedule(timing))
+    tasks=list(task_schedule(timing,exit_review))
     for _,benchmark,_,size,phase,_,_,_ in tasks:
         iterations=100 if phase=='validation' else 10000 if benchmark=='osu_latency' else 1000
         warmup=10 if phase=='validation' else 1000 if benchmark=='osu_latency' else 100
@@ -186,7 +200,33 @@ def summarize(rows,group):
     return result
 
 
+def parse_alternating(text,ppn):
+    completed=re.findall(r'^NOPSN_ALTERNATING_DATA_DONE RANK=(\d+) ROUNDS=260\s*$',text,re.M)
+    found=re.findall(r'^NOPSN_ALTERNATING_PASS RANKS=(\d+) ROUNDS=260\s*$',text,re.M)
+    if (len(found)!=1 or int(found[0])!=2*ppn or len(completed)!=2*ppn
+            or sorted(map(int,completed))!=list(range(2*ppn))):
+        raise ValueError('alternating data-rank coverage/finalize marker differs')
+    return {'value':1,'unit':'PASS','validation_pass':True,'validation_enabled':True,
+        'raw_row':found[0],'data_done_ranks':sorted(map(int,completed)),
+        'pass_marker_after_rank0_finalize':True}
+
+
 def tables(out,report):
+    if report['plan']['scope']=='PPN8_FINALIZE_CORRECTNESS_DIAGNOSTIC_NO_PERFORMANCE':
+        lines=['# PPN8交替数据校验与正常退出对照','',
+            '完整RM与修正副本使用同一260轮程序；仅正确性诊断，不生成性能结论。',
+            'PASS需全部16个rank数据完成标记、正常Finalize/退出及库身份通过。',
+            '任何失败立即停止；原失败和旧结果均保留。','',
+            '| 轮次 | 版本 | 通过 | 错误 |','|---:|---|---|---|']
+        entries=[]
+        for r in report['trials']:
+            error=str(r.get('error','')).replace('|','/').replace('\n',' ')
+            lines.append('| %d | %s | %s | %s |'%(r['repeat'],r['variant'],r['passed'],error))
+            entries.append({'repeat':r['repeat'],'variant':r['variant'],'passed':r['passed'],'error':error})
+        (out/'comparison.md').write_text('\n'.join(lines+['','状态：'+report['status']])+'\n')
+        with (out/'comparison.csv').open('w',encoding='utf-8-sig',newline='') as f:
+            w=csv.DictWriter(f,fieldnames=['repeat','variant','passed','error']);w.writeheader();w.writerows(entries)
+        return
     lines=['# 完整RM与无DATA PSN实验副本：同批正常路径对照','',
         'DATA头8B/6B，ACK与建链头8B；保留ACK及内部窗口计数。不是完全无序号协议或可靠性验收。',
         'RX4096/TX64、AM_BCOPY4088、同绑核/OSU参数；RSS为两节点各rank非同步合计。',
@@ -207,19 +247,20 @@ def tables(out,report):
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('case',type=Path,nargs='?');p.add_argument('--expected-commit');p.add_argument('--run',action='store_true');p.add_argument('--timing',action='store_true')
+    p=argparse.ArgumentParser();p.add_argument('case',type=Path,nargs='?');p.add_argument('--expected-commit');p.add_argument('--run',action='store_true');p.add_argument('--timing',action='store_true');p.add_argument('--exit-review',action='store_true')
     args=p.parse_args()
-    if not args.run:print(json.dumps(plan(args.timing),ensure_ascii=False,indent=2));return
+    if args.exit_review and args.timing:p.error('--exit-review is a correctness diagnostic, not a timing batch')
+    if not args.run:print(json.dumps(plan(args.timing,args.exit_review),ensure_ascii=False,indent=2));return
     if not args.case or not args.expected_commit:p.error('explicit case and expected commit required')
     if os.geteuid()!=0 or socket.gethostname()!='node89':raise ValueError('run as root on node89')
     case=args.case.resolve();build=validate_candidate(case,args.expected_commit)
     engine,policy,scale,runner=load_engine();osu=engine['osu'];base=osu.base
-    cli_check=cli_preflight(scale.arguments,args.timing)
+    cli_check=cli_preflight(scale.arguments,args.timing,args.exit_review)
     print('ALL_TASK_ARGUMENTS=%d/%d PASS BEFORE_MPI=YES'%(cli_check['planned_tasks'],cli_check['planned_tasks']),flush=True)
     lease=(FULL_CASE.parent/'um_osu_scale.lock').open('a+')
     fcntl.flock(lease,fcntl.LOCK_EX|fcntl.LOCK_NB)
-    out=Path(tempfile.mkdtemp(prefix='nopsn_accept_',dir=case));print('NOPSN_ACCEPT_DIR='+str(out),flush=True)
-    report={'status':'RUNNING','plan':plan(args.timing),'products':{'full':{'case':str(FULL_CASE),'source_commit':FULL_COMMIT,'module_sha256':FULL_MODULE},'nopsn':build},'trials':[],'comparisons':[],'cli_preflight':cli_check}
+    out=Path(tempfile.mkdtemp(prefix='nopsn_exit_review_' if args.exit_review else 'nopsn_accept_',dir=case));print('NOPSN_ACCEPT_DIR='+str(out),flush=True)
+    report={'status':'RUNNING','plan':plan(args.timing,args.exit_review),'products':{'full':{'case':str(FULL_CASE),'source_commit':FULL_COMMIT,'module_sha256':FULL_MODULE},'nopsn':build},'trials':[],'comparisons':[],'cli_preflight':cli_check}
     def save():dump(out/'results.json',report);tables(out,report)
     active_variant='full';observed=False
     try:
@@ -277,13 +318,11 @@ def main():
         def arguments(b,i,w,v,n=8):return workload_arguments(original_arguments,b,i,w,v,n)
         def parse(text,b,v,i,n=8):
             if b=='nopsn_alternating':
-                found=re.findall(r'^NOPSN_ALTERNATING_PASS RANKS=(\d+) ROUNDS=260\s*$',text,re.M)
-                if len(found)!=1 or int(found[0])!=2*active_ppn[0]:raise ValueError('alternating correctness marker differs')
-                return {'value':1,'unit':'PASS','validation_pass':True,'validation_enabled':True,'raw_row':found[0]}
+                return parse_alternating(text,active_ppn[0])
             return policy.parse_output(text,b,v,i,n) if b=='osu_multi_lat' else original_parse(text,b,v,i,n)
         osu.arguments,osu.parse_output=arguments,parse
         save();current_run=[None];active_ppn=[1]
-        for index,item in enumerate(schedule(args.timing)):
+        for index,item in enumerate(task_schedule(args.timing,args.exit_review)):
             group,benchmark,ppn,size,phase,repeat,active_variant,observed=item
             selected=FULL_CASE if active_variant=='full' else case
             product=report['products'][active_variant]
@@ -316,7 +355,7 @@ def main():
             if args.timing and group>=0 and phase=='resources' and active_variant==VARIANTS[-1]:
                 g=summarize(report['trials'],group);report['comparisons'].append(g);save();print('GROUP='+json.dumps(g,sort_keys=True),flush=True)
         report.pop('active_task',None)
-        report['status']='SELECTED_NOPSN_NORMAL_PATH_COMPARISON_COMPLETE_REVIEW_REQUIRED' if args.timing else 'SELECTED_NOPSN_FUNCTIONAL_PASS_PERFORMANCE_PENDING'
+        report['status']='SELECTED_PPN8_EXIT_REVIEW_PASS_NO_PERFORMANCE_ACCEPTANCE' if args.exit_review else ('SELECTED_NOPSN_NORMAL_PATH_COMPARISON_COMPLETE_REVIEW_REQUIRED' if args.timing else 'SELECTED_NOPSN_FUNCTIONAL_PASS_PERFORMANCE_PENDING')
         save()
     except Exception as exc:
         report.update(status='STOPPED_INCOMPLETE',error=type(exc).__name__+': '+str(exc));save();raise

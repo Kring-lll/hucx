@@ -369,7 +369,7 @@ static inline uct_rm_urma_comp_desc_t *uct_rm_urma_comp_desc(uct_rm_urma_send_sk
     ucs_assert(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_COMP);
     ucs_assert(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_INVALID));
 
-    return (uct_rm_urma_comp_desc_t*)((char*)skb->neth + skb->len);
+    return (uct_rm_urma_comp_desc_t*)uct_rm_urma_skb_trailer(skb);
 }
 
 unsigned uct_rm_urma_iface_dispatch_async_comps_do(uct_rm_urma_iface_t *iface)

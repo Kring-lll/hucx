@@ -14,6 +14,7 @@
 #include <uct/urma/base/urma_iface.h>
 #include <uct/base/uct_iov.inl>
 #include <ucs/async/async.h>
+#include <ucs/sys/math.h>
 #include <ucs/time/timer_wheel.h>
 #include <ucs/datastruct/ptr_array.h>
 #include <ucs/datastruct/conn_match.h>
@@ -105,6 +106,15 @@ typedef struct uct_rm_urma_send_skb {
     uct_rm_urma_psn_t   local_psn;  /* DATA window key; not transmitted */
     uct_rm_urma_neth_t  neth[0];
 } UCS_S_PACKED UCS_V_ALIGNED(UCT_RM_URMA_SKB_ALIGN) uct_rm_urma_send_skb_t;
+
+/* Completion/control metadata is local, after the variable-length wire data.
+ * A six-byte DATA prefix must not leave pointer-bearing trailers unaligned. */
+static UCS_F_ALWAYS_INLINE void *
+uct_rm_urma_skb_trailer(uct_rm_urma_send_skb_t *skb)
+{
+    return ucs_align_up_pow2_ptr(UCS_PTR_BYTE_OFFSET(skb->neth, skb->len),
+                                sizeof(void *));
+}
 
 typedef struct uct_rm_urma_recv_skb {
     uct_ub_iface_recv_desc_t        super;

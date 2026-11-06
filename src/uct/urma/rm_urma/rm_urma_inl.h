@@ -17,7 +17,7 @@ static UCS_F_ALWAYS_INLINE uct_rm_urma_ctl_desc_t *uct_rm_urma_get_ctl_desc(uct_
     ucs_assert(skb->flags & (UCT_RM_URMA_SEND_SKB_FLAG_CTL_ACK | UCT_RM_URMA_SEND_SKB_FLAG_CTL_RESEND));
     ucs_assert(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_INVALID));
 
-    return (uct_rm_urma_ctl_desc_t *)((char*)skb->neth + skb->len);
+    return (uct_rm_urma_ctl_desc_t *)uct_rm_urma_skb_trailer(skb);
 }
 
 #endif

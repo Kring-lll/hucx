@@ -412,7 +412,7 @@ static UCS_F_ALWAYS_INLINE uct_rm_urma_zcopy_desc_t *uct_rm_urma_get_zcopy_desc(
     ucs_assert(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_ZCOPY);
     ucs_assert(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_INVALID));
 
-    return (uct_rm_urma_zcopy_desc_t*)((char*)skb->neth + skb->len);
+    return (uct_rm_urma_zcopy_desc_t*)uct_rm_urma_skb_trailer(skb);
 }
 
 static void uct_rm_urma_skb_set_zcopy_desc(uct_rm_urma_send_skb_t *skb, const uct_iov_t *iov,
@@ -1031,16 +1031,16 @@ static void uct_rm_urma_ep_resend(uct_rm_urma_ep_t *ep)
 
     sent_skb = ucs_queue_iter_elem(sent_skb, resend_pos, queue);
     ucs_assert(((uintptr_t)sent_skb % UCT_RM_URMA_SKB_ALIGN) == 0);
-    if (sent_skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM) {
-        ucs_fatal("RM no-DATA-PSN normal-path experiment attempted DATA retransmission; sample invalid");
-    }
-    if (UCT_RM_URMA_PSN_COMPARE(sent_skb->neth->psn, >=, ep->tx.max_psn)) {
+    if (UCT_RM_URMA_PSN_COMPARE(uct_rm_urma_skb_psn(sent_skb), >=, ep->tx.max_psn)) {
         ucs_debug("Ep: out of window(psn=%d/max_psn=%d) - can not resend more.",
-                  sent_skb ? sent_skb->neth->psn : -1, ep->tx.max_psn);
+                  sent_skb ? uct_rm_urma_skb_psn(sent_skb) : -1, ep->tx.max_psn);
         uct_rm_urma_ep_resend_end(ep);
         return;
     }
 
+    /* Keep the UM payload threshold when the DATA header is two bytes shorter. */
+    max_len_without_nack -= sizeof(uct_rm_urma_neth_t) -
+                           uct_rm_urma_neth_size(sent_skb->neth);
     if (!(ep->flags & UCT_RM_URMA_EP_FLAG_TX_NACKED) && (sent_skb->len > max_len_without_nack)) {
         uct_rm_urma_ep_resend_end(ep);
         return;
@@ -1062,6 +1062,18 @@ static void uct_rm_urma_ep_resend(uct_rm_urma_ep_t *ep)
                        (uct_rm_urma_neth_get_dest_id(sent_skb->neth) == UCT_RM_URMA_EP_NULL_ID) &&
                        !(sent_skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM)),
                        "Ep: CREQ resend on endpoint which is already connected.");
+
+    /* A selected window entry may still be skipped by the checks above.
+     * Refuse only an actual DATA retransmission, before changing its state. */
+    if (sent_skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM) {
+        ucs_fatal("RM no-DATA-PSN normal-path experiment attempted DATA retransmission; sample invalid"
+                  " (ep=%u dest=%u len=%u local_psn=%u acked=%u next=%u max=%u"
+                  " rx_head=%u flags=0x%x pending=0x%x)",
+                  ep->super.ep_id, ep->super.dep_id, sent_skb->len,
+                  uct_rm_urma_skb_psn(sent_skb), ep->tx.acked_psn,
+                  ep->tx.psn, ep->tx.max_psn, ep->rx.ooo_pkts.head_sn,
+                  ep->flags, ep->tx.pending.ops);
+    }
 
     skb = uct_rm_urma_iface_ctl_skb_get(iface);
     skb->flags = UCT_RM_URMA_SEND_SKB_FLAG_CTL_RESEND;
@@ -1119,7 +1131,9 @@ static void uct_rm_urma_ep_send_ack(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t
         goto out;
     }
     if (sizeof(uct_rm_urma_neth_t) <= iface->super.config.max_inline) {
-        skb = ucs_alloca(sizeof(*skb) + sizeof(uct_rm_urma_neth_t));
+        skb = ucs_alloca(sizeof(*skb) + sizeof(uct_rm_urma_neth_t) +
+                         UCT_RM_URMA_SKB_ALIGN - 1);
+        skb = ucs_align_up_pow2_ptr(skb, UCT_RM_URMA_SKB_ALIGN);
         ctl_flags |= UCT_RM_URMA_IFACE_SEND_CTL_FLAG_INLINE;
     } else {
         skb = uct_rm_urma_iface_ctl_skb_get(iface);
@@ -1421,7 +1435,7 @@ static UCS_F_ALWAYS_INLINE uct_rm_urma_comp_desc_t *uct_rm_urma_get_comp_desc(uc
     ucs_assert(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_COMP);
     ucs_assert(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_INVALID));
 
-    return (uct_rm_urma_comp_desc_t*)((char*)skb->neth + skb->len);
+    return (uct_rm_urma_comp_desc_t*)uct_rm_urma_skb_trailer(skb);
 }
 
 static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_add_async_comp(uct_rm_urma_iface_t *iface,

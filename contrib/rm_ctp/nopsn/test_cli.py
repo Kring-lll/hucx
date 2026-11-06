@@ -21,6 +21,7 @@ class CliTests(unittest.TestCase):
             policy.arguments('osu_multi_lat',100,10,True,64)
         self.assertEqual(n.cli_preflight(scale.arguments,True)['planned_tasks'],215)
         self.assertEqual(n.cli_preflight(scale.arguments,False)['planned_tasks'],47)
+        self.assertEqual(n.cli_preflight(scale.arguments,False,True)['planned_tasks'],6)
         for item in n.schedule(True):
             _,b,_,size,phase,_,_,_=item
             args=n.workload_arguments(scale.arguments,b,100,10,phase=='validation',size)

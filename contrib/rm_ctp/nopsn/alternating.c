@@ -30,6 +30,10 @@ int main(int argc,char **argv)
         for(int i=0;i<GUARD;++i) if(a[i]!=0xa5 || b[i]!=0xa5) MPI_Abort(MPI_COMM_WORLD,5);
         for(int i=GUARD+n;i<CAP+2*GUARD;++i) if(a[i]!=0xa5 || b[i]!=0xa5) MPI_Abort(MPI_COMM_WORLD,6);
     }
+    fprintf(stderr,"NOPSN_ALTERNATING_DATA_DONE RANK=%d ROUNDS=260\n",rank);
+    fflush(stderr);
+    free(a);free(b);
+    if(MPI_Finalize()!=MPI_SUCCESS) return 8;
     if(rank==0) printf("NOPSN_ALTERNATING_PASS RANKS=%d ROUNDS=260\n",ranks);
-    free(a);free(b);MPI_Finalize();return 0;
+    return 0;
 }

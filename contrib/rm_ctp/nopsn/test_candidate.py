@@ -27,6 +27,20 @@ class Tests(unittest.TestCase):
             t=[r for r in rows if r[0]==g and r[4]=='timing']
             self.assertEqual([r[6] for r in t],['full','nopsn','nopsn','full','full','nopsn','nopsn','full','full','nopsn'])
 
+    def test_exit_review_scope_and_order(self):
+        rows=list(n.task_schedule(False,True));plan=n.plan(False,True)
+        self.assertEqual(plan['total_mpi'],6)
+        self.assertEqual([r[6] for r in rows],['full','nopsn','nopsn','full','full','nopsn'])
+        self.assertTrue(all(r[1:5]==('nopsn_alternating',8,8,'validation') and not r[7] for r in rows))
+        self.assertEqual(plan['timing'],0);self.assertEqual(plan['resources'],0)
+
+    def test_alternating_all_rank_data_and_finalize_marker(self):
+        lines=['NOPSN_ALTERNATING_DATA_DONE RANK=%d ROUNDS=260'%r for r in range(16)]
+        marker='NOPSN_ALTERNATING_PASS RANKS=16 ROUNDS=260'
+        self.assertEqual(n.parse_alternating('\n'.join(lines+[marker]),8)['data_done_ranks'],list(range(16)))
+        for text in ('\n'.join(lines[:-1]+[marker]),'\n'.join(lines+[lines[0],marker]),'\n'.join(lines),marker):
+            with self.assertRaises(ValueError):n.parse_alternating(text,8)
+
     def rows(self,group=0):
         rows=[]
         for item in n.schedule(True):
@@ -82,7 +96,7 @@ class Tests(unittest.TestCase):
                     with self.assertRaises(ValueError):n.validate_candidate(case,'a'*40)
                     path.write_bytes(old)
 
-    def controller(self,fail=False):
+    def controller(self,fail=False,exit_review=False):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);full=root/'full';candidate=root/'candidate'
             for case in (full,candidate):
@@ -140,11 +154,11 @@ class Tests(unittest.TestCase):
                  patch.object(n.subprocess,'check_output',return_value='CPU_LDD'),\
                  patch.object(n.os,'geteuid',return_value=0),patch.object(n.socket,'gethostname',return_value='node89'),\
                  patch.dict(sys.modules,{'run_scale_compare':mod}),\
-                 patch.object(sys,'argv',['candidate',str(candidate),'--expected-commit','a'*40,'--run','--timing']),contextlib.redirect_stdout(io.StringIO()):
+                 patch.object(sys,'argv',['candidate',str(candidate),'--expected-commit','a'*40,'--run']+(['--exit-review'] if exit_review else ['--timing'])),contextlib.redirect_stdout(io.StringIO()):
                 if fail:
                     with self.assertRaisesRegex(RuntimeError,'CPU_SIMULATED_FAILURE'):n.main()
                 else:n.main()
-            out=next(candidate.glob('nopsn_accept_*'));report=json.loads((out/'results.json').read_text())
+            out=next(candidate.glob('nopsn_exit_review_*' if exit_review else 'nopsn_accept_*'));report=json.loads((out/'results.json').read_text())
             for row in report['trials']:self.assertEqual(json.loads((out/row['name']/'trial.json').read_text()),row)
             return report,attempted
 
@@ -154,6 +168,13 @@ class Tests(unittest.TestCase):
         for row in r['trials']:
             self.assertEqual(row['module_sha256'],r['products'][row['variant']]['module_sha256'])
             self.assertEqual(row['source_commit'],r['products'][row['variant']]['source_commit'])
+
+    def test_exit_review_runs_both_variants_without_timing(self):
+        r,items=self.controller(exit_review=True)
+        self.assertEqual(len(items),6);self.assertEqual(r['comparisons'],[])
+        self.assertEqual(r['status'],'SELECTED_PPN8_EXIT_REVIEW_PASS_NO_PERFORMANCE_ACCEPTANCE')
+        self.assertEqual(r['cli_preflight']['planned_tasks'],6)
+        self.assertTrue(all(x[1:5]==('nopsn_alternating',8,8,'validation') for x in items))
 
     def test_failure_stops_before_160(self):
         r,items=self.controller(True);self.assertEqual(r['status'],'STOPPED_INCOMPLETE')

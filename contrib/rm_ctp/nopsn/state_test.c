@@ -10,6 +10,13 @@ static unsigned wire_len, posts, delivered, expected_len;
 static unsigned last_inline, last_sges, last_first;
 static int hold_receive;
 static void *held;
+static unsigned flush_completions;
+static void flush_done(uct_completion_t *comp)
+{
+    assert(comp->status==UCS_OK && comp->count==0);
+    ++flush_completions;
+}
+
 
 urma_status_t urma_post_jetty_send_wr(urma_jetty_t *j, urma_jfs_wr_t *w,
                                     urma_jfs_wr_t **bad)
@@ -126,8 +133,9 @@ static void finish(fixture_t *f)
     assert(ucs_queue_is_empty(&f->ep.tx.window));
     assert(ucs_queue_is_empty(&f->iface.rx.pending_q));
     ucs_arbiter_group_desched(&f->iface.tx.pending_q,&f->ep.tx.pending.group);
+    uct_purge_cb_args_t purge_args={0};
     ucs_arbiter_group_purge(&f->iface.tx.pending_q,&f->ep.tx.pending.group,
-                          uct_rm_urma_ep_arbiter_purge_cb,NULL);
+                          uct_rm_urma_ep_arbiter_purge_cb,&purge_args);
     ucs_mpool_put(f->iface.tx.skb);
     ucs_mpool_cleanup(&f->iface.tx.mp,1);
     ucs_mpool_cleanup(&f->rx_pool,1);
@@ -194,6 +202,12 @@ int main(int argc,char **argv)
     assert(sizeof(uct_rm_urma_data_neth_t)==6);
     assert(sizeof(uct_rm_urma_send_skb_t)==64);
     init(&f);
+    for(unsigned length=0;length<4096;length++) {
+        f.iface.tx.skb->len=length;
+        uintptr_t raw=(uintptr_t)f.iface.tx.skb->neth+length;
+        uintptr_t trailer=(uintptr_t)uct_rm_urma_skb_trailer(f.iface.tx.skb);
+        assert(trailer%sizeof(void *)==0 && trailer>=raw && trailer-raw<sizeof(void *));
+    }
     urma_jetty_t jetty={0};
     jetty.jetty_id.id=99;jetty.jetty_cfg.jfs_cfg.trans_mode=URMA_TM_RM;
     f.iface.rm_urma_jetty.jetty=&jetty;
@@ -227,6 +241,27 @@ int main(int argc,char **argv)
         assert(ucs_queue_is_empty(&f.ep.tx.window));
     }
     puts("ACTUAL_BCOPY_BOUNDARY_ALTERNATING_WRAP70000_ASYNC_RETAIN_RELEASE=PASS");
+    /* Reproduce a flush with outstanding large DATA and an independent ACK.
+     * Timer/resend selection must skip the large packet without a NACK. */
+    hold_receive=0;
+    send_message(&f,4088,0);
+    receive_wire(&f,0);
+    unsigned before_resend=posts;
+    uct_rm_urma_ep_resend_start(&f.iface,&f.ep);
+    uct_rm_urma_ep_resend(&f.ep);
+    assert(posts==before_resend);
+    assert(!(f.ep.tx.pending.ops & UCT_RM_URMA_EP_OP_RESEND));
+    uct_completion_t flush={.func=flush_done,.count=1,.status=UCS_OK};
+    assert(uct_rm_urma_ep_flush_nolock(&f.iface,&f.ep,&flush)==UCS_INPROGRESS);
+    assert(wire_len==8 && flush_completions==0);
+    uct_rm_urma_recv_skb_t *control=ucs_mpool_get(&f.rx_pool);
+    uct_rm_urma_neth_t *ack=(void *)((char *)control+f.iface.super.config.rx_hdr_offset);
+    memcpy(ack,wire,wire_len);
+    uct_rm_urma_ep_process_rx(&f.iface,ack,wire_len,control,0);
+    assert(ucs_queue_is_empty(&f.ep.tx.window));
+    assert(flush_completions==1);
+    puts("ACTUAL_LARGE_RESEND_SKIPPED_STANDALONE_ACK_FLUSH_CALLBACK=PASS");
+
     uct_rm_urma_iface_addr_t old={.jetty_id=1,.trans_mode=URMA_TM_RM};
     uct_rm_urma_peer_address_t target={0};
     assert(uct_rm_urma_iface_unpack_peer_address(&f.iface,NULL,&old,&target)==UCS_ERR_UNREACHABLE);
