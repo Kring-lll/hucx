@@ -369,7 +369,7 @@ static inline uct_rm_urma_comp_desc_t *uct_rm_urma_comp_desc(uct_rm_urma_send_sk
     ucs_assert(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_COMP);
     ucs_assert(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_INVALID));
 
-    return (uct_rm_urma_comp_desc_t*)((char*)skb->neth + skb->len);
+    return (uct_rm_urma_comp_desc_t*)uct_rm_urma_skb_trailer(skb);
 }
 
 unsigned uct_rm_urma_iface_dispatch_async_comps_do(uct_rm_urma_iface_t *iface)
@@ -401,9 +401,8 @@ unsigned uct_rm_urma_iface_dispatch_pending_rx_do(uct_rm_urma_iface_t *iface)
         skb  = ucs_queue_pull_elem_non_empty(&iface->rx.pending_q,
                                              uct_rm_urma_recv_skb_t, u.am.queue);
         desc = (uct_urma_iface_recv_desc_t *)skb;
-        neth  = uct_urma_iface_recv_desc_hdr(&iface->super,
-                                           (uct_urma_iface_recv_desc_t*)skb);
-        uct_rm_urma_ep_deal_am(iface, neth, skb->u.am.len + sizeof(uct_rm_urma_neth_t), desc);
+        neth = uct_urma_iface_recv_desc_hdr(&iface->super, desc);
+        uct_rm_urma_ep_deal_am(iface, neth, skb->u.am.len + uct_rm_urma_neth_size(neth), desc);
         ++count;
     } while ((count < max_poll) && !ucs_queue_is_empty(&iface->rx.pending_q));
 
@@ -527,7 +526,7 @@ ucs_status_t uct_rm_urma_iface_get_address(uct_iface_h tl_iface, uct_iface_addr_
     uct_rm_urma_iface_addr_t *addr = (uct_rm_urma_iface_addr_t *)iface_addr;
 
     addr->jetty_id = iface->rm_urma_jetty.jetty->jetty_id.id;
-    addr->trans_mode = iface->rm_urma_jetty.jetty->jetty_cfg.jfs_cfg.trans_mode;
+    addr->trans_mode = UCT_RM_URMA_NOPSN_ADDR_MODE;
 
     return UCS_OK;
 }
@@ -785,6 +784,8 @@ static ucs_status_t uct_rm_urma_iface_mempool_init(uct_rm_urma_iface_t *iface,
     data_size = ucs_max(data_size, sizeof(uct_rm_urma_zcopy_desc_t) + iface->super.config.max_inline);
     data_size = ucs_max(data_size, sizeof(uct_rm_urma_ctl_desc_t) + sizeof(uct_rm_urma_neth_t));
 
+    /* Reserve padding before the longest local completion/control trailer. */
+    data_size += sizeof(void *) - 1;
     status = uct_iface_mpool_init(&iface->super.super, &iface->tx.mp, sizeof(uct_rm_urma_send_skb_t) + data_size,
                                   sizeof(uct_rm_urma_send_skb_t), UCS_SYS_CACHE_LINE_SIZE,
                                   &config->super.tx.mp, iface->super.config.tx_queue_depth,
@@ -934,6 +935,11 @@ static UCS_CLASS_INIT_FUNC(uct_rm_urma_iface_t, uct_md_h tl_md, uct_worker_h wor
     uct_urma_device_t *dev = &urma_md->dev;
     ucs_status_t status;
 
+    UCS_STATIC_ASSERT(sizeof(uct_rm_urma_neth_t) == 8);
+    UCS_STATIC_ASSERT(sizeof(uct_rm_urma_data_neth_t) == 6);
+    UCS_STATIC_ASSERT((ucs_offsetof(uct_rm_urma_send_skb_t, neth) +
+                       sizeof(uct_rm_urma_data_neth_t)) % sizeof(uint64_t) == 0);
+
     ucs_trace_func("");
 
     status = uct_urma_iface_check_validity(params, worker);
@@ -948,6 +954,11 @@ static UCS_CLASS_INIT_FUNC(uct_rm_urma_iface_t, uct_md_h tl_md, uct_worker_h wor
     init_attr.use_min_seg = 1;
     UCS_CLASS_CALL_SUPER_INIT(uct_urma_iface_t, &uct_rm_urma_iface_ops, &ops->super, tl_md,
                               worker, params, tl_config, &init_attr);
+    /* The base pool aligns the original 8-byte header. Start the shorter
+     * wire header two bytes later, keeping AM payload, user headroom and
+     * release_desc aligned and unchanged, without a payload memmove. */
+    self->super.config.rx_hdr_offset += sizeof(uct_rm_urma_neth_t) -
+                                        sizeof(uct_rm_urma_data_neth_t);
     status = UCS_STATS_NODE_ALLOC(&self->stats, &uct_rm_urma_iface_stats_class, self->super.stats, "-%p", self);
     if (status != UCS_OK) {
         goto out;

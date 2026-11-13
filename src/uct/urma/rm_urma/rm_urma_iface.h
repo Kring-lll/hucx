@@ -14,6 +14,7 @@
 #include <uct/urma/base/urma_iface.h>
 #include <uct/base/uct_iov.inl>
 #include <ucs/async/async.h>
+#include <ucs/sys/math.h>
 #include <ucs/time/timer_wheel.h>
 #include <ucs/datastruct/ptr_array.h>
 #include <ucs/datastruct/conn_match.h>
@@ -84,15 +85,37 @@ typedef struct uct_rm_urma_neth {
     uint32_t            packet_type;
     uct_rm_urma_psn_t   psn;
     uct_rm_urma_psn_t   ack_psn;
-} UCS_S_PACKED uct_rm_urma_neth_t;
+} UCS_S_PACKED UCS_S_MAY_ALIAS uct_rm_urma_neth_t;
+
+/* Experimental normal-path DATA format. ACK sequence numbers remain for
+ * window retirement; DATA packet sequence numbers are local metadata only. */
+typedef struct uct_rm_urma_data_neth {
+    uint32_t            packet_type;
+    uct_rm_urma_psn_t   ack_psn;
+} UCS_S_PACKED UCS_S_MAY_ALIAS uct_rm_urma_data_neth_t;
+
+/* Address-format discriminator, never passed to the URMA API. Both endpoints
+ * must use this isolated build; legacy peers must not parse the shorter DATA. */
+#define UCT_RM_URMA_NOPSN_ADDR_MODE ((urma_transport_mode_t)(URMA_TM_RM | UCS_BIT(30)))
 
 typedef struct uct_rm_urma_send_skb {
     ucs_queue_elem_t    queue;      /* in send window */
     urma_target_seg_t   *tseg;
     uint16_t            len;        /* data size */
     uint16_t            flags;
+    uct_rm_urma_psn_t   local_psn;  /* DATA window key; not transmitted */
+    uint8_t             padding[4]; /* keep the DATA body 8-byte aligned */
     uct_rm_urma_neth_t  neth[0];
 } UCS_S_PACKED UCS_V_ALIGNED(UCT_RM_URMA_SKB_ALIGN) uct_rm_urma_send_skb_t;
+
+/* Completion/control metadata is local, after the variable-length wire data.
+ * A six-byte DATA prefix must not leave pointer-bearing trailers unaligned. */
+static UCS_F_ALWAYS_INLINE void *
+uct_rm_urma_skb_trailer(uct_rm_urma_send_skb_t *skb)
+{
+    return ucs_align_up_pow2_ptr(UCS_PTR_BYTE_OFFSET(skb->neth, skb->len),
+                                sizeof(void *));
+}
 
 typedef struct uct_rm_urma_recv_skb {
     uct_urma_iface_recv_desc_t        super;
