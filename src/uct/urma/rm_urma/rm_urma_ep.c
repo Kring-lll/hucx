@@ -367,9 +367,10 @@ ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr, c
     iface->tx.sge[0].addr = (uintptr_t)skb->neth;
 
     uct_rm_urma_ep_tx_inlv(iface, ep, buffer, length);
-    skb->len = iface->tx.sge[0].len;
-
-    uct_rm_urma_iface_complete_tx_inl(iface, ep, skb, am_hdr + 1, buffer, length);
+    /* Keep the submitted length for window bookkeeping. AM DATA is not
+     * replayed by software, so the inline payload need not stay in the SKB. */
+    skb->len = iface->tx.sge[0].len + length;
+    uct_rm_urma_iface_complete_tx_skb(iface, ep, skb);
     UCT_TL_EP_STAT_OP(&ep->super.super, AM, SHORT, sizeof(hdr) + length);
     uct_rm_urma_leave(iface);
 
