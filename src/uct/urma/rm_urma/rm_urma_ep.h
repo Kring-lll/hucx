@@ -87,7 +87,8 @@ struct uct_rm_urma_ep {
         uct_rm_urma_psn_t           max_psn;      /* Largest PSN that can be sent */
         uct_rm_urma_psn_t           acked_psn;    /* last psn that was acked by remote side */
         uint16_t                    resend_count; /* number of in-flight resends on the ep */
-        ucs_queue_head_t            window;       /* send window: [acked_psn+1, psn-1] */
+        ucs_queue_head_t            window;       /* sparse ACK window: controls and flush markers */
+        uint8_t                    flush_ack_requested; /* explicit probe for latest send */
         ucs_time_t                  send_time;
         ucs_time_t                  resend_time;
         ucs_time_t                  tick;

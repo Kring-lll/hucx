@@ -196,7 +196,8 @@ ucs_status_t uct_rm_urma_iface_flush(uct_iface_h tl_iface, unsigned flags, uct_c
     uct_rm_urma_enter(iface);
 
     if (ucs_unlikely(uct_rm_urma_iface_has_pending_async_ev(iface) ||
-                     !ucs_queue_is_empty(&iface->tx.outstanding_q))) {
+                     !ucs_queue_is_empty(&iface->tx.outstanding_q) ||
+                     !ucs_queue_is_empty(&iface->tx.data_outstanding_q))) {
         UCT_TL_IFACE_STAT_FLUSH_WAIT(&iface->super.super);
         uct_rm_urma_leave(iface);
         return UCS_INPROGRESS;
@@ -251,37 +252,59 @@ void uct_rm_urma_iface_send_completion(uct_rm_urma_iface_t *iface, uint16_t sn,
                                        int is_async)
 {
     uct_rm_urma_ctl_desc_t *cdesc = NULL;
+    uct_rm_urma_send_skb_t *skb = NULL;
 
     ucs_queue_for_each_extract(cdesc, &iface->tx.outstanding_q, queue, UCS_CIRCULAR_COMPARE16(cdesc->sn, <=, sn)) {
         uct_rm_urma_iface_ctl_skb_complete(iface, cdesc, is_async);
     }
+    ucs_queue_for_each_extract(skb, &iface->tx.data_outstanding_q, queue,
+                               UCS_CIRCULAR_COMPARE16(skb->cqe_sn, <=, sn)) {
+        uct_rm_urma_skb_release(skb, 1);
+    }
+}
+
+ucs_status_t uct_rm_urma_iface_complete_cr(uct_rm_urma_iface_t *iface,
+                                          const urma_cr_t *cr, int is_async)
+{
+    uint32_t num_completed;
+
+    if (ucs_unlikely(cr->status != URMA_CR_SUCCESS)) {
+        return UCS_ERR_IO_ERROR;
+    }
+
+    num_completed = cr->user_ctx & UCT_URMA_EP_TX_QUE_SN_MASK;
+    /* The moderation count and sequence must describe the next group of
+     * WRs on this shared SQ. Never retire memory on an ambiguous CQE. */
+    if (ucs_unlikely((num_completed >=
+                      (uint16_t)(iface->tx.send_sn - iface->tx.comp_sn)) ||
+                     ((cr->user_ctx >> 32) !=
+                      (uint16_t)(iface->tx.comp_sn + num_completed + 1)))) {
+        return UCS_ERR_IO_ERROR;
+    }
+    iface->super.tx.jfc_available += num_completed + 1;
+    iface->rm_urma_jetty.available += num_completed + 1;
+    iface->tx.comp_sn += num_completed + 1;
+
+    uct_rm_urma_iface_send_completion(iface, iface->tx.comp_sn, is_async);
+    return UCS_OK;
 }
 
 static unsigned uct_rm_urma_iface_poll_tx(uct_rm_urma_iface_t *iface, int is_async)
 {
-    uint32_t num_completed;
     urma_cr_t cr = {0};
-    int ret;
+    int ret = urma_poll_jfc(iface->super.jfc[UCT_URMA_DIR_TX], 1, &cr);
 
-    ret = urma_poll_jfc(iface->super.jfc[UCT_URMA_DIR_TX], 1, &cr);
     if (ucs_unlikely(ret < 0)) {
         ucs_fatal("Failed to poll send JFC.");
     }
-
     if (ret == 0) {
         return 0;
     }
-
-    if (ucs_unlikely(cr.status != URMA_CR_SUCCESS)) {
-        ucs_fatal("The send cr status is err: %m; status:%u.", cr.status);
+    if (ucs_unlikely(uct_rm_urma_iface_complete_cr(iface, &cr, is_async) != UCS_OK)) {
+        ucs_fatal("RM send CQE error: status=%u ctx=%" PRIu64
+                  " send_sn=%u comp_sn=%u", cr.status, cr.user_ctx,
+                  iface->tx.send_sn, iface->tx.comp_sn);
     }
-
-    num_completed = cr.user_ctx & UCT_URMA_EP_TX_QUE_SN_MASK;
-    iface->super.tx.jfc_available += num_completed + 1;
-    iface->tx.comp_sn += num_completed + 1;
-
-    uct_rm_urma_iface_send_completion(iface, iface->tx.comp_sn, is_async);
-
     return ret;
 }
 
@@ -446,9 +469,11 @@ static unsigned uct_rm_urma_iface_progress(uct_iface_h tl_iface)
     count += uct_rm_urma_iface_dispatch_pending_rx(iface);
     if (ucs_likely(count == 0)) {
         count = uct_rm_urma_iface_poll_rx(iface, 0);
-        if (count == 0) {
-            count += uct_rm_urma_iface_poll_tx(iface, 0);
-        }
+    }
+    /* A steady RX stream must not starve bcopy buffer reclamation. */
+    if ((count == 0) || !uct_rm_urma_iface_can_tx(iface) ||
+        !ucs_queue_is_empty(&iface->tx.data_outstanding_q)) {
+        count += uct_rm_urma_iface_poll_tx(iface, 0);
     }
 
     uct_rm_urma_iface_progress_pending(iface, 0);
@@ -713,6 +738,7 @@ static ucs_status_t uct_rm_urma_create_ub_resources(uct_rm_urma_iface_t *iface,
     urma_jfs_cfg_t jfs_cfg = {
         .depth = iface->super.config.tx_max_wr,
         .trans_mode = URMA_TM_RM,
+        .flag = {.bs = {.outorder_comp = 0}},
         .priority = 1,
         .max_sge = iface->super.config.max_send_sge,
         .max_inline_data = iface->super.config.max_inline,
@@ -760,7 +786,7 @@ static void uct_rm_urma_iface_free_async_comps(uct_rm_urma_iface_t *iface)
 static void uct_rm_urma_destroy_ub_resources(uct_rm_urma_iface_t *iface)
 {
     if (urma_delete_jetty(iface->rm_urma_jetty.jetty) != URMA_SUCCESS) {
-        ucs_error("Failed to delete jetty.");
+        ucs_fatal("Failed to delete jetty before releasing registered TX buffers.");
     }
     uct_urma_destroy_jfr(iface->super.rx.jfr);
 }
@@ -882,6 +908,7 @@ static ucs_status_t uct_rm_urma_init_iface_attr(uct_rm_urma_iface_t *iface, uct_
 
     ucs_arbiter_init(&iface->tx.pending_q);
     ucs_queue_head_init(&iface->tx.outstanding_q);
+    ucs_queue_head_init(&iface->tx.data_outstanding_q);
     ucs_queue_head_init(&iface->tx.async_comp_q);
     ucs_queue_head_init(&iface->rx.pending_q);
     kh_init_inplace(uct_rm_urma_tjetty, &iface->peer_addr_hash);
@@ -954,6 +981,16 @@ static UCS_CLASS_INIT_FUNC(uct_rm_urma_iface_t, uct_md_h tl_md, uct_worker_h wor
     init_attr.use_min_seg = 1;
     UCS_CLASS_CALL_SUPER_INIT(uct_urma_iface_t, &uct_rm_urma_iface_ops, &ops->super, tl_md,
                               worker, params, tl_config, &init_attr);
+    /* Circular 16-bit SQ keys require strictly fewer than half a wrap of
+     * outstanding WRs, including control and unsignaled WRs. */
+    if ((self->super.config.tx_max_wr < 2) ||
+        (self->super.config.tx_max_wr > INT16_MAX) ||
+        (self->super.tx.jfc_available < 1)) {
+        ucs_error("Unsupported RM TX queue size for ordered CQE retirement");
+        return UCS_ERR_INVALID_PARAM;
+    }
+    self->super.tx.jfc_available = ucs_min(self->super.tx.jfc_available,
+                                         self->super.config.tx_max_wr - 1);
     /* The base pool aligns the original 8-byte header. Start the shorter
      * wire header two bytes later, keeping AM payload, user headroom and
      * release_desc aligned and unchanged, without a payload memmove. */
@@ -1000,6 +1037,7 @@ static UCS_CLASS_CLEANUP_FUNC(uct_rm_urma_iface_t)
 {
     uct_rm_urma_peer_address_t addr;
     uct_rm_urma_ep_t *ep = NULL;
+    uct_rm_urma_send_skb_t *skb = NULL;
     uint32_t i = 0;
 
     ucs_trace_func("");
@@ -1028,6 +1066,14 @@ static UCS_CLASS_CLEANUP_FUNC(uct_rm_urma_iface_t)
     kh_destroy_inplace(uct_rm_urma_tjetty, &self->peer_addr_hash);
 
     uct_rm_urma_destroy_ub_resources(self);
+    /* After successful Jetty deletion no submitted WR can access the
+     * remaining bcopy buffers, including on endpoint cancellation. */
+    ucs_queue_for_each_extract(skb, &self->tx.data_outstanding_q, queue, 1) {
+        uct_rm_urma_skb_release(skb, 0);
+    }
+    if (self->tx.skb != NULL) {
+        ucs_mpool_put(self->tx.skb);
+    }
 
     ucs_arbiter_cleanup(&self->tx.pending_q);
     ucs_mpool_cleanup(&self->tx.mp, 0);

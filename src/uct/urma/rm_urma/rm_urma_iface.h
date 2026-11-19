@@ -104,7 +104,8 @@ typedef struct uct_rm_urma_send_skb {
     uint16_t            len;        /* data size */
     uint16_t            flags;
     uct_rm_urma_psn_t   local_psn;  /* DATA window key; not transmitted */
-    uint8_t             padding[4]; /* keep the DATA body 8-byte aligned */
+    uint16_t            cqe_sn;     /* local shared SQ completion key */
+    uint8_t             padding[2]; /* keep the DATA body 8-byte aligned */
     uct_rm_urma_neth_t  neth[0];
 } UCS_S_PACKED UCS_V_ALIGNED(UCT_RM_URMA_SKB_ALIGN) uct_rm_urma_send_skb_t;
 
@@ -175,8 +176,11 @@ typedef struct uct_rm_urma_iface {
         urma_sge_t                  sge[UCT_URMA_MAX_IOV];
         urma_jfs_wr_t               wr_inl;
         urma_jfs_wr_t               wr_skb;
+        uint8_t                     short_hdr[sizeof(uct_rm_urma_data_neth_t) +
+                                              sizeof(uint64_t)] UCS_V_ALIGNED(8);
         ucs_arbiter_t               pending_q;
         ucs_queue_head_t            outstanding_q;
+        ucs_queue_head_t            data_outstanding_q; /* bcopy lifetime, by CQE */
         ucs_queue_head_t            async_comp_q;
         int16_t                     available;
         uint16_t                    send_sn;
@@ -241,6 +245,8 @@ void uct_rm_urma_iface_progress_disable(uct_iface_h tl_iface, unsigned flags);
 unsigned uct_rm_urma_iface_dispatch_async_comps_do(uct_rm_urma_iface_t *iface);
 
 void uct_rm_urma_iface_ctl_skb_complete(uct_rm_urma_iface_t *iface, uct_rm_urma_ctl_desc_t *cdesc, int is_async);
+ucs_status_t uct_rm_urma_iface_complete_cr(uct_rm_urma_iface_t *iface,
+                                          const urma_cr_t *cr, int is_async);
 
 static UCS_F_ALWAYS_INLINE void uct_rm_urma_enter(uct_rm_urma_iface_t *iface)
 {
