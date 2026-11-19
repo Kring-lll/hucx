@@ -84,6 +84,9 @@ ucs_config_field_t uct_rm_urma_iface_config_table[] = {
      "Max number of receive completions to pick during asynchronous TX poll",
      ucs_offsetof(uct_rm_urma_iface_config_t, rx_async_max_poll), UCS_CONFIG_TYPE_UINT},
 
+    {"DATA_BATCH", "64", "Maximum DATA sends per peer before ordered control checkpoint (1..1024)",
+     ucs_offsetof(uct_rm_urma_iface_config_t, data_batch), UCS_CONFIG_TYPE_UINT},
+
     {NULL}
 };
 
@@ -233,6 +236,13 @@ void uct_rm_urma_iface_ctl_skb_complete(uct_rm_urma_iface_t *iface,
     resent_skb = cdesc->resent_skb;
     ucs_assert(uct_rm_urma_get_ctl_desc(skb) == cdesc);
 
+    if (skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_CHECKPOINT) {
+        ucs_assert(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_WAIT_CQE);
+        skb->flags &= ~UCT_RM_URMA_SEND_SKB_FLAG_WAIT_CQE;
+        uct_rm_urma_ep_window_release_completed(cdesc->ep, is_async);
+        return;
+    }
+
     if (resent_skb != NULL) {
         ucs_assert(skb->flags        & UCT_RM_URMA_SEND_SKB_FLAG_CTL_RESEND);
         ucs_assert(resent_skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_RESENDING);
@@ -254,12 +264,12 @@ void uct_rm_urma_iface_send_completion(uct_rm_urma_iface_t *iface, uint16_t sn,
     uct_rm_urma_ctl_desc_t *cdesc = NULL;
     uct_rm_urma_send_skb_t *skb = NULL;
 
-    ucs_queue_for_each_extract(cdesc, &iface->tx.outstanding_q, queue, UCS_CIRCULAR_COMPARE16(cdesc->sn, <=, sn)) {
-        uct_rm_urma_iface_ctl_skb_complete(iface, cdesc, is_async);
-    }
     ucs_queue_for_each_extract(skb, &iface->tx.data_outstanding_q, queue,
                                UCS_CIRCULAR_COMPARE16(skb->cqe_sn, <=, sn)) {
         uct_rm_urma_skb_release(skb, 1);
+    }
+    ucs_queue_for_each_extract(cdesc, &iface->tx.outstanding_q, queue, UCS_CIRCULAR_COMPARE16(cdesc->sn, <=, sn)) {
+        uct_rm_urma_iface_ctl_skb_complete(iface, cdesc, is_async);
     }
 }
 
@@ -327,18 +337,16 @@ static void uct_rm_urma_iface_post_recv_always(uct_rm_urma_iface_t *iface, unsig
         g_wrs[tmp_count].next = &g_wrs[tmp_count + 1];
         tmp_count++;
     }
-    if (ucs_likely(tmp_count > 0)) {
-        g_wrs[tmp_count - 1].next = NULL;
+    if (ucs_unlikely(tmp_count == 0)) {
+        return;
     }
+    g_wrs[tmp_count - 1].next = NULL;
 
     status = urma_post_jetty_recv_wr(iface->rm_urma_jetty.jetty, g_wrs, &bad_wr);
     if (ucs_unlikely(status != URMA_SUCCESS)) {
-        for (tmp_count = 0; tmp_count < count; tmp_count++) {
-            UCT_TL_IFACE_PUT_DESC(desc[tmp_count]);
-        }
         ucs_fatal("urma_post_jetty_recv_wr failed failed status:%u.", status);
     }
-    iface->rx.available -= count;
+    iface->rx.available -= tmp_count;
 }
 
 static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_post_recv(uct_rm_urma_iface_t *iface)
@@ -358,17 +366,17 @@ static unsigned uct_rm_urma_iface_poll_rx(uct_rm_urma_iface_t *iface, int is_asy
     int i;
 
     count = urma_poll_jfc(iface->super.jfc[UCT_URMA_DIR_RX], num_crs, cr);
-    if (ucs_unlikely(count <= 0)) {
-        count = 0;
+    if (ucs_unlikely(count < 0)) {
+        ucs_fatal("RM RX poll failed: %d", count);
+    }
+    if (count == 0) {
         goto out;
     }
 
     for (i = 0; i < count; i++) {
         if (ucs_unlikely(cr[i].status != URMA_CR_SUCCESS)) {
             UCS_STATS_UPDATE_COUNTER(iface->super.stats, UCT_URMA_IFACE_STAT_RX_DL_CR_ERR, 1);
-            ucs_error("The cr status is err: %m; status:%u.", cr[i].status);
-            ucs_mpool_put_inline((void*)cr[i].user_ctx);
-            continue;
+            ucs_fatal("RM RX completion error: status:%u.", cr[i].status);
         }
 
         desc = (uct_urma_iface_recv_desc_t *)cr[i].user_ctx;
@@ -472,6 +480,7 @@ static unsigned uct_rm_urma_iface_progress(uct_iface_h tl_iface)
     }
     /* A steady RX stream must not starve bcopy buffer reclamation. */
     if ((count == 0) || !uct_rm_urma_iface_can_tx(iface) ||
+        !ucs_queue_is_empty(&iface->tx.outstanding_q) ||
         !ucs_queue_is_empty(&iface->tx.data_outstanding_q)) {
         count += uct_rm_urma_iface_poll_tx(iface, 0);
     }
@@ -883,6 +892,13 @@ static ucs_status_t uct_rm_urma_init_iface_attr(uct_rm_urma_iface_t *iface, uct_
         iface->tx.tick = ucs_time_from_sec(config->timer_tick);
     }
 
+    if ((config->data_batch < 1) || (config->data_batch > 1024) ||
+        (iface->super.config.max_inline < sizeof(uct_rm_urma_neth_t))) {
+        ucs_error("RM DATA_BATCH must be in 1..1024 and inline must fit 8-byte control");
+        return UCS_ERR_INVALID_PARAM;
+    }
+    iface->config.data_batch = config->data_batch;
+
     if (config->timer_backoff < UCT_RM_URMA_MIN_TIMER_TIMER_BACKOFF) {
         ucs_error("The timer back off must be >= %lf (%lf)",
                   UCT_RM_URMA_MIN_TIMER_TIMER_BACKOFF, config->timer_backoff);
@@ -963,7 +979,7 @@ static UCS_CLASS_INIT_FUNC(uct_rm_urma_iface_t, uct_md_h tl_md, uct_worker_h wor
     ucs_status_t status;
 
     UCS_STATIC_ASSERT(sizeof(uct_rm_urma_neth_t) == 8);
-    UCS_STATIC_ASSERT(sizeof(uct_rm_urma_data_neth_t) == 6);
+    UCS_STATIC_ASSERT(sizeof(uct_rm_urma_data_neth_t) == 4);
     UCS_STATIC_ASSERT((ucs_offsetof(uct_rm_urma_send_skb_t, neth) +
                        sizeof(uct_rm_urma_data_neth_t)) % sizeof(uint64_t) == 0);
 
@@ -992,7 +1008,7 @@ static UCS_CLASS_INIT_FUNC(uct_rm_urma_iface_t, uct_md_h tl_md, uct_worker_h wor
     self->super.tx.jfc_available = ucs_min(self->super.tx.jfc_available,
                                          self->super.config.tx_max_wr - 1);
     /* The base pool aligns the original 8-byte header. Start the shorter
-     * wire header two bytes later, keeping AM payload, user headroom and
+     * wire header four bytes later, keeping AM payload, user headroom and
      * release_desc aligned and unchanged, without a payload memmove. */
     self->super.config.rx_hdr_offset += sizeof(uct_rm_urma_neth_t) -
                                         sizeof(uct_rm_urma_data_neth_t);

@@ -44,12 +44,10 @@ static void uct_rm_urma_ep_resend_start(uct_rm_urma_iface_t *iface, uct_rm_urma_
     uct_rm_urma_send_skb_t *skb;
     uct_rm_urma_psn_t expected = ep->tx.acked_psn + 1;
 
-    /* Retry only the contiguous retained prefix. DATA holes are handled
-     * by cumulative ACK probes, never by replaying a later control first. */
+    /* The retained sequence space contains only connection/checkpoint controls. */
     ucs_queue_for_each(skb, &ep->tx.window, queue) {
         if ((uct_rm_urma_skb_psn(skb) != expected) ||
-            !(skb->neth->packet_type & (UCT_RM_URMA_PACKET_FLAG_CTL |
-                                       UCT_RM_URMA_PACKET_FLAG_PUT))) {
+            !(skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_CTL)) {
             break;
         }
         ++expected;
@@ -129,19 +127,6 @@ static UCS_F_ALWAYS_INLINE void uct_rm_urma_neth_set_type_am(uct_rm_urma_ep_t *e
     neth->packet_type = (id << UCT_RM_URMA_PACKET_AM_ID_SHIFT) | ep->super.dep_id | UCT_RM_URMA_PACKET_FLAG_AM;
 }
 
-static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_req_ack(uct_rm_urma_ep_t *ep)
-{
-    return UCT_RM_URMA_PSN_COMPARE(ep->tx.psn, ==, ((ep->tx.acked_psn * 3 + ep->tx.max_psn) >> 2)) ||
-           UCT_RM_URMA_PSN_COMPARE(ep->tx.psn + 1, ==, ep->tx.max_psn) ||
-           uct_rm_urma_ep_ctl_op_check(ep, UCT_RM_URMA_EP_OP_ACK_REQ);
-}
-
-static UCS_F_ALWAYS_INLINE void uct_rm_urma_neth_ack_req(uct_rm_urma_ep_t *ep, uct_rm_urma_neth_t *neth)
-{
-    neth->packet_type |= uct_rm_urma_ep_req_ack(ep) << UCT_RM_URMA_PACKET_ACK_REQ_SHIFT;
-    uct_rm_urma_ep_ctl_op_del(ep, UCT_RM_URMA_EP_OP_ACK | UCT_RM_URMA_EP_OP_ACK_REQ);
-}
-
 static uct_rm_urma_send_skb_t *uct_rm_urma_iface_get_tx_skb(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep)
 {
     uct_rm_urma_send_skb_t *skb = NULL;
@@ -174,18 +159,6 @@ static UCS_F_ALWAYS_INLINE uint32_t uct_rm_urma_neth_get_am_id(uct_rm_urma_neth_
     return neth->packet_type >> UCT_RM_URMA_PACKET_AM_ID_SHIFT;
 }
 
-static UCS_F_ALWAYS_INLINE void uct_rm_urma_ep_rx_put(uct_rm_urma_neth_t *neth, unsigned byte_len)
-{
-    uct_rm_urma_put_hdr_t *put_hdr = NULL;
-
-    if (byte_len <= sizeof(*neth) + sizeof(*put_hdr)){
-        ucs_warn("RM_URMA rx_put byte_len %u too short", byte_len);
-        return;
-    }
-    put_hdr = (uct_rm_urma_put_hdr_t *)(neth + 1);
-    memcpy((void *)put_hdr->rva, put_hdr + 1, byte_len - sizeof(*neth) - sizeof(*put_hdr));
-}
-
 static UCS_F_ALWAYS_INLINE void uct_rm_urma_ep_ca_ack(uct_rm_urma_ep_t *ep)
 {
     if (ep->ca.cwnd < ep->ca.wmax) {
@@ -211,7 +184,7 @@ static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_can_send(uct_rm_urma_iface_t *ifac
                                                        uct_rm_urma_ep_t *ep)
 {
     if (ucs_unlikely(!uct_rm_urma_ep_is_connected_and_no_pending(ep) ||
-                     uct_rm_urma_ep_no_window(ep) ||
+                     uct_rm_urma_ep_data_blocked(iface, ep) ||
                      uct_rm_urma_iface_has_pending_async_ev(iface))) {
         UCS_STATS_UPDATE_COUNTER(ep->super.super.stats, UCT_EP_STAT_NO_RES, 1);
         return 0;
@@ -237,9 +210,6 @@ uct_rm_urma_prepare_am_neth(uct_rm_urma_ep_t *ep, uint8_t id,
                 "Out-of-order send detected for ep am %d ep_pending %d",
                 id, (ep->flags & UCT_RM_URMA_EP_FLAG_IN_PENDING));
     uct_rm_urma_neth_set_type_am(ep, neth, id);
-    ((uct_rm_urma_data_neth_t *)neth)->ack_psn = ep->rx.acked_psn =
-            ucs_frag_list_sn(&ep->rx.ooo_pkts);
-    uct_rm_urma_neth_ack_req(ep, neth);
 }
 
 static ucs_status_t uct_rm_urma_am_skb_common(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
@@ -256,7 +226,6 @@ static ucs_status_t uct_rm_urma_am_skb_common(uct_rm_urma_iface_t *iface, uct_rm
     }
 
     neth = skb->neth;
-    skb->local_psn = ep->tx.psn;
     uct_rm_urma_prepare_am_neth(ep, id, neth);
 
     *skb_p = skb;
@@ -264,8 +233,7 @@ static ucs_status_t uct_rm_urma_am_skb_common(uct_rm_urma_iface_t *iface, uct_rm
     return UCS_OK;
 }
 
-/* The remote ACK still advances the logical flow-control window. A DATA
- * packet need not have a corresponding allocation in the sparse ACK queue. */
+/* Only controls enter the PSN window and arm the retry timer. */
 static UCS_F_ALWAYS_INLINE void uct_rm_urma_record_tx(uct_rm_urma_iface_t *iface,
                                                       uct_rm_urma_ep_t *ep)
 {
@@ -281,33 +249,25 @@ static UCS_F_ALWAYS_INLINE void uct_rm_urma_record_tx(uct_rm_urma_iface_t *iface
     ep->tx.send_time = now;
 }
 
-static void uct_rm_urma_iface_complete_tx(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
-                                          uct_rm_urma_send_skb_t *skb, int has_data, void *data,
-                                          const void *buffer, unsigned length)
+static UCS_F_ALWAYS_INLINE void uct_rm_urma_record_data_tx(
+        uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep)
+{
+    /* Bounded per-peer pacing, no per-DATA PSN or receiver counter. */
+    if (ucs_unlikely(++ep->tx.data_batch == iface->config.data_batch)) {
+        uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_CHECKPOINT);
+    }
+}
+
+static void uct_rm_urma_iface_complete_tx_skb(uct_rm_urma_iface_t *iface,
+                                               uct_rm_urma_ep_t *ep,
+                                               uct_rm_urma_send_skb_t *skb)
 {
     iface->tx.skb = ucs_mpool_get(&iface->tx.mp);
     if (ucs_unlikely(iface->tx.skb == NULL)) {
         ucs_warn("Failed to allocate iface->tx.skb");
     }
-    if (has_data) {
-        skb->len += length;
-        memcpy(data, buffer, length);
-    }
     ucs_queue_push(&ep->tx.window, &skb->queue);
     uct_rm_urma_record_tx(iface, ep);
-}
-
-static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_complete_tx_skb(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
-                                                                  uct_rm_urma_send_skb_t *skb)
-{
-    uct_rm_urma_iface_complete_tx(iface, ep, skb, 0, NULL, NULL, 0);
-}
-
-static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_complete_tx_inl(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
-                                                                  uct_rm_urma_send_skb_t *skb, void *data,
-                                                                  const void *buffer, unsigned length)
-{
-    uct_rm_urma_iface_complete_tx(iface, ep, skb, 1, data, buffer, length);
 }
 
 static void uct_rm_urma_post_send(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
@@ -335,6 +295,8 @@ static void uct_rm_urma_post_send(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *
                               URMA_INLINE_DISABLE;
     wr->flag.bs.solicited_enable = (send_flags & UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SOLICITED) ? URMA_SOLICITED_ENABLE:
                                    URMA_SOLICITED_DISABLE;
+    wr->flag.bs.place_order = (send_flags & UCT_RM_URMA_IFACE_SEND_CTL_FLAG_ORDERED) ?
+                               URMA_STRONG_ORDER : URMA_NO_ORDER;
     /* Apply the same RM budget to DATA, connection controls and retries. */
     {
         size_t length = 0;
@@ -407,7 +369,7 @@ ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr, c
 
     uct_rm_urma_ep_tx_inlv(iface, ep, buffer, length);
     /* Inline bytes have been copied by the provider on successful post. */
-    uct_rm_urma_record_tx(iface, ep);
+    uct_rm_urma_record_data_tx(iface, ep);
     UCT_TL_EP_STAT_OP(&ep->super.super, AM, SHORT, sizeof(hdr) + length);
     uct_rm_urma_leave(iface);
 
@@ -447,7 +409,7 @@ ssize_t uct_rm_urma_ep_am_bcopy(uct_ep_h tl_ep, uint8_t id, uct_pack_callback_t 
     skb->cqe_sn = iface->tx.send_sn;
     ucs_queue_push(&iface->tx.data_outstanding_q, &skb->queue);
     iface->tx.skb = NULL;
-    uct_rm_urma_record_tx(iface, ep);
+    uct_rm_urma_record_data_tx(iface, ep);
     UCT_TL_EP_STAT_OP(&ep->super.super, AM, BCOPY, payload_len);
     uct_rm_urma_leave(iface);
 
@@ -455,45 +417,6 @@ ssize_t uct_rm_urma_ep_am_bcopy(uct_ep_h tl_ep, uint8_t id, uct_pack_callback_t 
 }
 
 
-static UCS_F_ALWAYS_INLINE uct_rm_urma_zcopy_desc_t *uct_rm_urma_get_zcopy_desc(uct_rm_urma_send_skb_t *skb)
-{
-    ucs_assert(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_ZCOPY);
-    ucs_assert(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_INVALID));
-
-    return (uct_rm_urma_zcopy_desc_t*)uct_rm_urma_skb_trailer(skb);
-}
-
-static void uct_rm_urma_skb_set_zcopy_desc(uct_rm_urma_send_skb_t *skb, const uct_iov_t *iov,
-                                           size_t iovcnt, uct_completion_t *comp)
-{
-    uct_rm_urma_zcopy_desc_t *zdesc = NULL;
-    uct_rm_urma_iov_t *rm_urma_iov = NULL;
-    size_t iov_it_length;
-    size_t iov_it;
-
-    skb->flags |= UCT_RM_URMA_SEND_SKB_FLAG_ZCOPY;
-    zdesc = uct_rm_urma_get_zcopy_desc(skb);
-    zdesc->iovcnt = 0;
-
-    for (iov_it = 0; iov_it < iovcnt; ++iov_it) {
-        iov_it_length = uct_iov_get_length(iov + iov_it);
-        if (iov_it_length == 0) {
-            continue;
-        }
-
-        ucs_assert(iov_it_length <= UINT16_MAX);
-
-        rm_urma_iov = &zdesc->iov[zdesc->iovcnt++];
-        rm_urma_iov->buffer = iov[iov_it].buffer;
-        rm_urma_iov->tseg = uct_urma_memh_get_tseg(iov[iov_it].memh);
-        rm_urma_iov->length = iov_it_length;
-    }
-
-    if (comp != NULL) {
-        skb->flags |= UCT_RM_URMA_SEND_SKB_FLAG_COMP;
-        zdesc->super.comp = comp;
-    }
-}
 
 static uct_rm_urma_send_skb_t *uct_rm_urma_iface_ctl_skb_get(uct_rm_urma_iface_t *iface)
 {
@@ -520,79 +443,14 @@ static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_add_ctl_desc(uct_rm_urma_iface
 ucs_status_t uct_rm_urma_ep_am_zcopy(uct_ep_h tl_ep, uint8_t id, const void *header, unsigned header_length,
                                      const uct_iov_t *iov, size_t iovcnt, unsigned flags, uct_completion_t *comp)
 {
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    uct_rm_urma_send_skb_t *skb = NULL;
-    ucs_status_t ret = UCS_OK;
-
-    UCT_CHECK_IOV_SIZE(iovcnt, iface->super.config.max_send_sge - 1, "uct_rm_urma_ep_am_zcopy");
-
-    UCT_CHECK_LENGTH(sizeof(uct_rm_urma_neth_t) + sizeof(uct_rm_urma_zcopy_desc_t) + header_length,
-                     0, iface->super.config.seg_size, "am_zcopy header");
-
-    uct_rm_urma_enter(iface);
-
-    ret = uct_rm_urma_am_skb_common(iface, ep, id, &skb);
-    if (ret != UCS_OK) {
-        uct_rm_urma_leave(iface);
-        return UCS_ERR_NO_RESOURCE;
-    }
-
-    skb->neth->packet_type |= UCT_RM_URMA_PACKET_FLAG_ACK_REQ;
-    memcpy(uct_rm_urma_neth_payload(skb->neth), header, header_length);
-    skb->len = sizeof(uct_rm_urma_data_neth_t) + header_length;
-
-    iface->tx.wr_skb.send.src.num_sge = uct_urma_sge_fill_iov(iface->tx.sge + 1, iov, iovcnt) + 1;
-
-    uct_rm_urma_ep_tx_skb(iface, ep, skb, 0);
-    iface->tx.wr_skb.send.src.num_sge = 1;
-
-    uct_rm_urma_skb_set_zcopy_desc(skb, iov, iovcnt, comp);
-    uct_rm_urma_iface_complete_tx_skb(iface, ep, skb);
-    UCT_TL_EP_STAT_OP(&ep->super.super, AM, ZCOPY, header_length + uct_iov_total_length(iov, iovcnt));
-    uct_rm_urma_leave(iface);
-
-    return UCS_INPROGRESS;
+    /* Not advertised by this experimental transport. */
+    return UCS_ERR_UNSUPPORTED;
 }
 
 ucs_status_t uct_rm_urma_ep_put_short(uct_ep_h tl_ep, const void *payload, unsigned length, uint64_t remote_addr,
                                       uct_rkey_t rkey)
 {
-    uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
-    uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
-    uct_rm_urma_put_hdr_t *put_hdr = NULL;
-    uct_rm_urma_send_skb_t *skb = NULL;
-    uct_rm_urma_neth_t *neth = NULL;
-
-    UCT_CHECK_LENGTH(sizeof(uct_rm_urma_neth_t) + sizeof(uct_rm_urma_put_hdr_t) + length,
-                     0, iface->super.config.max_inline, "put_short");
-
-    uct_rm_urma_enter(iface);
-
-    skb = uct_rm_urma_ep_get_tx_skb(iface, ep);
-    if (!skb) {
-        uct_rm_urma_leave(iface);
-        return UCS_ERR_NO_RESOURCE;
-    }
-
-    neth = skb->neth;
-    uct_rm_urma_neth_init_data(ep, neth);
-    neth->packet_type = ep->super.dep_id | UCT_RM_URMA_PACKET_FLAG_PUT;
-    uct_rm_urma_neth_ack_req(ep, neth);
-
-    put_hdr = (uct_rm_urma_put_hdr_t *)(skb->neth + 1);
-    put_hdr->rva = remote_addr;
-    iface->tx.sge[0].addr = (uintptr_t)neth;
-    iface->tx.sge[0].len = sizeof(*neth) + sizeof(*put_hdr);
-
-    uct_rm_urma_ep_tx_inlv(iface, ep, payload, length);
-
-    skb->len = iface->tx.sge[0].len;
-    uct_rm_urma_iface_complete_tx_inl(iface, ep, skb, put_hdr + 1, payload, length);
-    UCT_TL_EP_STAT_OP(&ep->super.super, PUT, SHORT, length);
-    uct_rm_urma_leave(iface);
-
-    return UCS_OK;
+    return UCS_ERR_UNSUPPORTED;
 }
 
 ucs_status_t uct_rm_urma_ep_pending_add(uct_ep_h tl_ep, uct_pending_req_t *req, unsigned flags)
@@ -609,7 +467,7 @@ ucs_status_t uct_rm_urma_ep_pending_add(uct_ep_h tl_ep, uct_pending_req_t *req, 
     if (uct_rm_urma_iface_can_tx(iface) &&
         uct_rm_urma_iface_has_skbs(iface) &&
         uct_rm_urma_ep_is_connected_and_no_pending(ep) &&
-        !uct_rm_urma_ep_no_window(ep)) {
+        !uct_rm_urma_ep_data_blocked(iface, ep)) {
         uct_rm_urma_leave(iface);
         return UCS_ERR_BUSY;
     }
@@ -697,6 +555,8 @@ static void uct_rm_urma_ep_reset(uct_rm_urma_ep_t *ep)
     ep->tx.acked_psn   = UCT_RM_URMA_INITIAL_PSN - 1;
     ep->tx.pending.ops = UCT_RM_URMA_EP_OP_NONE;
     ep->tx.flush_ack_requested = 0;
+    ep->tx.data_batch = 0;
+    ep->tx.checkpoint_inflight = 0;
     ep->tx.max_psn     = ep->tx.psn + ep->ca.cwnd;
     uct_rm_urma_ep_reset_max_psn(ep);
     ucs_queue_head_init(&ep->tx.window);
@@ -963,6 +823,49 @@ static void uct_rm_urma_ep_send_creq_crep(uct_rm_urma_iface_t *iface, uct_rm_urm
     uct_rm_urma_iface_complete_tx_skb(iface, ep, skb);
 }
 
+/* An ordered, header-only control marker, not an ordinary AM DATA WR.
+ * DATA pacing resumes only after its local CQE AND peer ACK. */
+static void uct_rm_urma_ep_send_checkpoint(uct_rm_urma_iface_t *iface,
+                                           uct_rm_urma_ep_t *ep)
+{
+    uct_rm_urma_send_skb_t *skb;
+    uct_rm_urma_ctl_desc_t *cdesc;
+
+    if (!ep->tx.data_batch || ep->tx.checkpoint_inflight ||
+        (ep->flags & UCT_RM_URMA_EP_FLAG_CANCELED)) {
+        uct_rm_urma_ep_ctl_op_del(ep, UCT_RM_URMA_EP_OP_CHECKPOINT);
+        return;
+    }
+    if (!uct_rm_urma_ep_is_connected(ep) ||
+        uct_rm_urma_ep_no_window(ep) || !uct_rm_urma_iface_can_tx(iface)) {
+        return;
+    }
+    skb = uct_rm_urma_iface_get_tx_skb(iface, ep);
+    if (!skb) {
+        return;
+    }
+    uct_rm_urma_neth_init_data(ep, skb->neth);
+    skb->neth->packet_type = ep->super.dep_id | UCT_RM_URMA_PACKET_FLAG_CTL |
+                            UCT_RM_URMA_PACKET_FLAG_CHECKPOINT |
+                            UCT_RM_URMA_PACKET_FLAG_ACK_REQ;
+    skb->len = sizeof(uct_rm_urma_neth_t);
+    skb->flags = UCT_RM_URMA_SEND_SKB_FLAG_CHECKPOINT |
+                 UCT_RM_URMA_SEND_SKB_FLAG_WAIT_CQE;
+    cdesc = uct_rm_urma_get_ctl_desc(skb);
+    cdesc->self_skb = skb;
+    cdesc->resent_skb = NULL;
+    cdesc->ep = ep;
+    cdesc->sn = uct_rm_urma_ep_send_ctl(ep, skb, NULL, 0,
+                UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SIGNALED |
+                UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SOLICITED |
+                UCT_RM_URMA_IFACE_SEND_CTL_FLAG_ORDERED);
+    uct_rm_urma_iface_add_ctl_desc(iface, cdesc);
+    ep->tx.checkpoint_inflight = 1;
+    uct_rm_urma_ep_ctl_op_del(ep, UCT_RM_URMA_EP_OP_CHECKPOINT);
+    uct_rm_urma_iface_complete_tx_skb(iface, ep, skb);
+    ep->tx.flush_ack_requested = 1;
+}
+
 void uct_rm_urma_ep_deal_creq(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *neth)
 {
     uct_urma_address_pack_params_t ubdev_addr_param = {0};
@@ -1058,7 +961,6 @@ static void uct_rm_urma_ep_resend(uct_rm_urma_ep_t *ep)
     size_t max_len_without_nack = sizeof(uct_rm_urma_neth_t) + sizeof(uct_rm_urma_ctl_hdr_t) +
                                   iface->super.addr_size;
     uct_rm_urma_send_skb_t *sent_skb = NULL;
-    uct_rm_urma_zcopy_desc_t *zdesc = NULL;
     uct_rm_urma_ctl_desc_t *cdesc = NULL;
     uct_rm_urma_send_skb_t *skb = NULL;
     ucs_queue_iter_t resend_pos = NULL;
@@ -1087,14 +989,14 @@ static void uct_rm_urma_ep_resend(uct_rm_urma_ep_t *ep)
         return;
     }
 
-    /* Keep the UM payload threshold when the DATA header is two bytes shorter. */
-    max_len_without_nack -= sizeof(uct_rm_urma_neth_t) -
-                           uct_rm_urma_neth_size(sent_skb->neth);
     if (!(ep->flags & UCT_RM_URMA_EP_FLAG_TX_NACKED) && (sent_skb->len > max_len_without_nack)) {
         uct_rm_urma_ep_resend_end(ep);
         return;
     }
 
+    if (sent_skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_WAIT_CQE) {
+        return;
+    }
     ep->resend.pos = ucs_queue_iter_next(resend_pos);
 
     if (sent_skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_RESENDING) {
@@ -1112,17 +1014,7 @@ static void uct_rm_urma_ep_resend(uct_rm_urma_ep_t *ep)
                        !(sent_skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM)),
                        "Ep: CREQ resend on endpoint which is already connected.");
 
-    /* DATA has no wire sequence to deduplicate a retry. Ask for a fresh
-     * cumulative ACK and leave the window intact until ACK or peer timeout. */
-    if (sent_skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM) {
-        ucs_debug("RM no-DATA-PSN: requesting ACK instead of resending DATA ep=%u psn=%u acked=%u",
-                  ep->super.ep_id, uct_rm_urma_skb_psn(sent_skb),
-                  ep->tx.acked_psn);
-        ep->resend.psn = ep->resend.max_psn + 1;
-        uct_rm_urma_ep_resend_end(ep);
-        uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_ACK_REQ);
-        return;
-    }
+    ucs_assert_always(sent_skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_CTL);
 
     skb = uct_rm_urma_iface_ctl_skb_get(iface);
     skb->flags = UCT_RM_URMA_SEND_SKB_FLAG_CTL_RESEND;
@@ -1130,12 +1022,8 @@ static void uct_rm_urma_ep_resend(uct_rm_urma_ep_t *ep)
     ep->resend.psn = sent_skb->neth->psn;
     ep->tx.resend_time = uct_rm_urma_iface_get_time(iface);
 
-    if (sent_skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_ZCOPY) {
-        skb->len = sent_skb->len;
-        zdesc = uct_rm_urma_get_zcopy_desc(sent_skb);
-        iov = zdesc->iov;
-        iovcnt = zdesc->iovcnt;
-    } else {
+    skb->len = sizeof(uct_rm_urma_neth_t);
+    if (sent_skb->len > sizeof(uct_rm_urma_neth_t)) {
         ucs_assert(sent_skb->len >= sizeof(uct_rm_urma_neth_t));
         skb->len = sizeof(uct_rm_urma_neth_t);
         skb_iov.buffer = UCS_PTR_BYTE_OFFSET(sent_skb->neth, sizeof(uct_rm_urma_neth_t));
@@ -1164,8 +1052,11 @@ static void uct_rm_urma_ep_resend(uct_rm_urma_ep_t *ep)
         uct_rm_urma_ep_resend_end(ep);
     }
 
-    cdesc->sn = uct_rm_urma_ep_send_ctl(ep, skb, iov, iovcnt, UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SIGNALED|
-                                        UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SOLICITED);
+    cdesc->sn = uct_rm_urma_ep_send_ctl(ep, skb, iov, iovcnt,
+                UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SIGNALED |
+                UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SOLICITED |
+                ((sent_skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_CHECKPOINT) ?
+                 UCT_RM_URMA_IFACE_SEND_CTL_FLAG_ORDERED : 0));
     uct_rm_urma_iface_add_ctl_desc(iface, cdesc);
     ++ep->tx.resend_count;
 }
@@ -1244,11 +1135,18 @@ static void uct_rm_urma_ep_do_pending_ctl(uct_rm_urma_ep_t *ep, uct_rm_urma_ifac
         goto out;
     }
 
+    if ((ep->tx.pending.ops & UCT_RM_URMA_EP_OP_CHECKPOINT) &&
+        !uct_rm_urma_ep_no_window(ep) && uct_rm_urma_iface_has_skbs(iface)) {
+        uct_rm_urma_ep_send_checkpoint(iface, ep);
+        goto out;
+    }
+
     if (ep->tx.pending.ops & UCT_RM_URMA_EP_OP_CTL_ACK) {
         uct_rm_urma_ep_send_ack(iface, ep);
         goto out;
     }
-    ucs_assertv(!uct_rm_urma_ep_ctl_op_isany(ep), "Unsupported pending op mask: %x", ep->tx.pending.ops);
+    ucs_assertv(!(ep->tx.pending.ops & ~UCT_RM_URMA_EP_OP_CHECKPOINT),
+                "Unsupported pending op mask: %x", ep->tx.pending.ops);
 out:
     return;
 }
@@ -1286,7 +1184,7 @@ ucs_arbiter_cb_result_t uct_rm_urma_ep_do_pending(ucs_arbiter_t *arbiter, ucs_ar
 
     if (!uct_rm_urma_ep_ctl_op_isany(ep) &&
         (!uct_rm_urma_ep_is_connected(ep) ||
-        uct_rm_urma_ep_no_window(ep))) {
+        uct_rm_urma_ep_data_blocked(iface, ep))) {
         return UCS_ARBITER_CB_RESULT_DESCHED_GROUP;
     }
 
@@ -1509,7 +1407,9 @@ static UCS_F_ALWAYS_INLINE int uct_rm_urma_skb_is_completed(uct_rm_urma_send_skb
 {
     ucs_assert(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_INVALID));
 
-    return UCT_RM_URMA_PSN_COMPARE(uct_rm_urma_skb_psn(skb), <=, ack_psn) && !(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_RESENDING);
+    return UCT_RM_URMA_PSN_COMPARE(uct_rm_urma_skb_psn(skb), <=, ack_psn) &&
+           !(skb->flags & (UCT_RM_URMA_SEND_SKB_FLAG_RESENDING |
+                           UCT_RM_URMA_SEND_SKB_FLAG_WAIT_CQE));
 }
 
 static void uct_rm_urma_ep_window_release_inline(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
@@ -1524,6 +1424,11 @@ static void uct_rm_urma_ep_window_release_inline(uct_rm_urma_iface_t *iface, uct
             ep->resend.psn = ep->tx.acked_psn + 1;
         }
 
+        if (skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_CHECKPOINT) {
+            ep->tx.data_batch = 0;
+            ep->tx.checkpoint_inflight = 0;
+            ucs_arbiter_group_schedule(&iface->tx.pending_q, &ep->tx.pending.group);
+        }
         if (ucs_likely(!(skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_COMP))) {
             uct_rm_urma_skb_release(skb, 1);
         } else if (ucs_likely(!is_async)) {
@@ -1538,7 +1443,8 @@ static void uct_rm_urma_ep_window_release_inline(uct_rm_urma_iface_t *iface, uct
 void uct_rm_urma_ep_process_ack(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
                                 uct_rm_urma_psn_t ack_psn, int is_async)
 {
-    if (ucs_unlikely(UCT_RM_URMA_PSN_COMPARE(ack_psn, <=, ep->tx.acked_psn))) {
+    if (ucs_unlikely(UCT_RM_URMA_PSN_COMPARE(ack_psn, <=, ep->tx.acked_psn) ||
+                     UCT_RM_URMA_PSN_COMPARE(ack_psn, >, ep->tx.psn - 1))) {
         return;
     }
 
@@ -1576,7 +1482,18 @@ static void uct_rm_urma_ep_purge_outstanding(uct_rm_urma_ep_t *ep)
     ucs_queue_for_each_safe(cdesc, iter, &iface->tx.outstanding_q, queue) {
         if (cdesc->ep == ep) {
             ucs_queue_del_iter(&iface->tx.outstanding_q, iter);
-            uct_rm_urma_iface_ctl_skb_complete(iface, cdesc, 0);
+            /* Markers and their retries are always inline. Never invoke a
+             * success completion while purging them after an error. */
+            if (cdesc->self_skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_CHECKPOINT) {
+                cdesc->self_skb->flags &= ~UCT_RM_URMA_SEND_SKB_FLAG_WAIT_CQE;
+            } else if (cdesc->resent_skb &&
+                       (cdesc->resent_skb->flags & UCT_RM_URMA_SEND_SKB_FLAG_CHECKPOINT)) {
+                cdesc->resent_skb->flags &= ~UCT_RM_URMA_SEND_SKB_FLAG_RESENDING;
+                --ep->tx.resend_count;
+                uct_rm_urma_skb_release(cdesc->self_skb, 0);
+            } else {
+                uct_rm_urma_iface_ctl_skb_complete(iface, cdesc, 0);
+            }
         }
     }
 
@@ -1585,10 +1502,14 @@ static void uct_rm_urma_ep_purge_outstanding(uct_rm_urma_ep_t *ep)
 
 static void uct_rm_urma_ep_purge(uct_rm_urma_ep_t *ep, ucs_status_t status)
 {
+    ep->flags |= UCT_RM_URMA_EP_FLAG_CANCELED;
+    uct_rm_urma_ep_ctl_op_del(ep, UCT_RM_URMA_EP_OP_CHECKPOINT);
     uct_rm_urma_ep_reset_max_psn(ep);
     uct_rm_urma_ep_purge_outstanding(ep);
     ep->tx.acked_psn = (uct_rm_urma_psn_t)(ep->tx.psn - 1);
     uct_rm_urma_ep_window_release(ep, status, 0);
+    ep->tx.data_batch = 0;
+    ep->tx.checkpoint_inflight = 0;
     ucs_assert(ucs_queue_is_empty(&ep->tx.window));
 }
 
@@ -1601,17 +1522,37 @@ void uct_rm_urma_ep_disconnect(uct_ep_h tl_ep)
 
     uct_rm_urma_ep_pending_purge(tl_ep, NULL, NULL);
     uct_rm_urma_ep_flush(tl_ep, 0, NULL);
+    if (ep->tx.data_batch && !ep->tx.checkpoint_inflight) {
+        uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_CHECKPOINT);
+    }
 
     ep->close_time = ucs_twheel_get_time(&iface->tx.timer);
+    if (ep->tx.data_batch && !ep->tx.checkpoint_inflight) {
+        ep->tx.send_time = ep->close_time;
+    }
     ep->flags |= UCT_RM_URMA_EP_FLAG_DISCONNECTED;
     ucs_wtimer_add(&iface->tx.timer, &ep->timer, UCT_RM_URMA_SLOW_TIMER_MAX_TICK(iface));
     uct_rm_urma_leave(iface);
 }
 
+void uct_rm_urma_ep_accept_checkpoint(uct_rm_urma_iface_t *iface,
+                                      uct_rm_urma_ep_t *ep,
+                                      uct_rm_urma_psn_t psn)
+{
+    uct_rm_urma_psn_t next = ep->rx.ooo_pkts.head_sn + 1;
+
+    if (psn == next) {
+        ep->rx.ooo_pkts.head_sn = psn;
+    } else if (UCT_RM_URMA_PSN_COMPARE(psn, >, next)) {
+        uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_NACK);
+    }
+    /* Duplicate marker: repeat ACK, never advance the frontier twice. */
+    uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_ACK);
+}
+
 void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *neth, unsigned byte_len,
                                uct_rm_urma_recv_skb_t* skb, int is_async)
 {
-    ucs_frag_list_ooo_type_t ooo_type;
     uct_rm_urma_ep_t *ep = NULL;
     uint32_t dest_id;
     uint32_t is_am;
@@ -1647,9 +1588,22 @@ void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *n
 
     ucs_assert(ep->super.ep_id != UCT_RM_URMA_EP_NULL_ID);
 
-    uct_rm_urma_ep_process_ack(iface, ep,
-            is_am ? ((uct_rm_urma_data_neth_t *)neth)->ack_psn : neth->ack_psn,
-            is_async);
+    if (is_am) {
+        /* Ordinary DATA never reads/updates the control sequence or ACK. */
+        goto deliver_am;
+    }
+    uct_rm_urma_ep_process_ack(iface, ep, neth->ack_psn, is_async);
+
+    if ((neth->packet_type & (UCT_RM_URMA_PACKET_FLAG_CTL |
+                              UCT_RM_URMA_PACKET_FLAG_CHECKPOINT)) ==
+                            (UCT_RM_URMA_PACKET_FLAG_CTL |
+                              UCT_RM_URMA_PACKET_FLAG_CHECKPOINT)) {
+        if (byte_len != sizeof(*neth)) {
+            goto out;
+        }
+        uct_rm_urma_ep_accept_checkpoint(iface, ep, neth->psn);
+        goto out;
+    }
 
     if (ucs_unlikely(neth->packet_type & UCT_RM_URMA_PACKET_FLAG_ACK_REQ)) {
         uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_ACK);
@@ -1682,29 +1636,8 @@ void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *n
         }
     }
 
-    /* Normal-path experiment assumes ordered, unique delivery. This local
-     * count supports existing ACK/window lifetimes; it cannot detect loss,
-     * duplicates or reordering and is not a replacement reliability scheme. */
-    if (is_am) {
-        ucs_frag_list_sn_inc(&ep->rx.ooo_pkts);
-        ooo_type = UCS_FRAG_LIST_INSERT_FAST;
-    } else {
-        ooo_type = ucs_frag_list_insert(&ep->rx.ooo_pkts, &skb->u.ooo.elem, neth->psn);
-    }
-    if (ucs_unlikely(ooo_type != UCS_FRAG_LIST_INSERT_FAST)) {
-        if ((ooo_type != UCS_FRAG_LIST_INSERT_DUP) &&
-            (ooo_type != UCS_FRAG_LIST_INSERT_FAIL)) {
-            ucs_fatal("Out of order is not implemented: got %d.", ooo_type);
-        }
-        ucs_trace_data("DUP/OOB - schedule ack, head_sn=%d sn=%d.", ep->rx.ooo_pkts.head_sn, neth->psn);
-        goto out;
-    }
-
-    if (ucs_unlikely(!is_am && (neth->packet_type & UCT_RM_URMA_PACKET_FLAG_PUT))) {
-        uct_rm_urma_ep_rx_put(neth, byte_len);
-        goto out;
-    }
-
+    goto out;
+deliver_am:
     if (ucs_unlikely(is_async && !(iface->super.super.am[am_id].flags & UCT_CB_FLAG_ASYNC))) {
         skb->u.am.len = byte_len - uct_rm_urma_neth_size(neth);
         ucs_queue_push(&iface->rx.pending_q, &skb->u.am.queue);
@@ -1755,6 +1688,9 @@ ucs_status_t uct_rm_urma_ep_put_comp(uct_rm_urma_ep_t *ep, uct_rm_urma_iface_t *
 ucs_status_t uct_rm_urma_ep_flush_nolock(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
                                          uct_completion_t *comp)
 {
+    if (ep->flags & UCT_RM_URMA_EP_FLAG_CANCELED) {
+        return UCS_ERR_CANCELED;
+    }
     if (ucs_unlikely(!uct_rm_urma_ep_is_connected(ep))) {
         if (uct_rm_urma_ep_ctl_op_check(ep, UCT_RM_URMA_EP_OP_CREQ) ||
             !uct_rm_urma_ep_is_last_ack_received(ep) ||
@@ -1764,17 +1700,30 @@ ucs_status_t uct_rm_urma_ep_flush_nolock(uct_rm_urma_iface_t *iface, uct_rm_urma
         return UCS_OK;
     }
 
+    if (ep->tx.data_batch && !ep->tx.checkpoint_inflight) {
+        uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_CHECKPOINT);
+        if (!(ep->tx.pending.ops & (UCT_RM_URMA_EP_OP_CREQ |
+                                     UCT_RM_URMA_EP_OP_CREP |
+                                     UCT_RM_URMA_EP_OP_RESEND))) {
+            uct_rm_urma_ep_send_checkpoint(iface, ep);
+        }
+        if (!ep->tx.checkpoint_inflight) {
+            return UCS_ERR_NO_RESOURCE;
+        }
+    }
+
     if (!uct_rm_urma_iface_can_tx(iface) || !uct_rm_urma_iface_has_skbs(iface) || uct_rm_urma_ep_no_window(ep)) {
         return UCS_ERR_NO_RESOURCE;
     }
 
-    if (uct_rm_urma_ep_is_last_ack_received(ep) &&
+    if (!ep->tx.data_batch && uct_rm_urma_ep_is_last_ack_received(ep) &&
         ucs_queue_is_empty(&ep->tx.window) && ucs_queue_is_empty(&iface->tx.async_comp_q)) {
         ucs_assert(ep->tx.resend_count == 0);
         return UCS_OK;
     }
 
-    if (uct_rm_urma_ep_is_last_ack_received(ep)) {
+    if (uct_rm_urma_ep_is_last_ack_received(ep) &&
+        !ep->tx.checkpoint_inflight) {
         uct_rm_urma_ep_ctl_op_del(ep, UCT_RM_URMA_EP_OP_ACK_REQ);
     } else {
         if (!ep->tx.flush_ack_requested) {
@@ -1869,7 +1818,8 @@ static void uct_rm_urma_ep_timer(ucs_wtimer_t *self)
     ucs_time_t diff;
     ucs_time_t now;
 
-    if (uct_rm_urma_ep_is_last_ack_received(ep)) {
+    if (uct_rm_urma_ep_is_last_ack_received(ep) &&
+        !ep->tx.checkpoint_inflight && !ep->tx.data_batch) {
         if (ep->flags & UCT_RM_URMA_EP_FLAG_DISCONNECTED) {
             status = uct_rm_urma_ep_free_by_timeout(ep, iface);
             if (status == UCS_INPROGRESS) {
@@ -1900,14 +1850,13 @@ static void uct_rm_urma_ep_timer(ucs_wtimer_t *self)
     diff      = now - last_send;
 
     if (diff > iface->tx.tick) {
-        /* Missing ACKs for unsequenced DATA are handled by ACK probes and
-         * the peer timeout. Keep the original retry path for control SKBs. */
+        /* Only connection and checkpoint controls have retry state. */
         oldest = ucs_queue_is_empty(&ep->tx.window) ? NULL :
                  ucs_queue_head_elem_non_empty(&ep->tx.window,
                                                uct_rm_urma_send_skb_t, queue);
         if ((diff > 3 * iface->tx.tick) && oldest &&
-            (oldest->neth->packet_type & (UCT_RM_URMA_PACKET_FLAG_CTL |
-                                          UCT_RM_URMA_PACKET_FLAG_PUT)) &&
+            (oldest->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_CTL) &&
+            !(oldest->flags & UCT_RM_URMA_SEND_SKB_FLAG_WAIT_CQE) &&
             UCT_RM_URMA_PSN_COMPARE(uct_rm_urma_skb_psn(oldest), ==,
                                      ep->tx.acked_psn + 1)) {
             ucs_trace("Scheduling resend now: %lu last_send: %lu diff: %lu tick: %lu.",

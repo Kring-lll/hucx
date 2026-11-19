@@ -34,6 +34,8 @@ enum {
     UCT_RM_URMA_SEND_SKB_FLAG_COMP       = UCS_BIT(1), /* This skb contains a completion */
     UCT_RM_URMA_SEND_SKB_FLAG_ZCOPY      = UCS_BIT(2), /* This skb contains a zero-copy segment */
     UCT_RM_URMA_SEND_SKB_FLAG_RESENDING  = UCS_BIT(3), /* An active control skb refers to this skb */
+    UCT_RM_URMA_SEND_SKB_FLAG_CHECKPOINT = UCS_BIT(8), /* DATA batch control record */
+    UCT_RM_URMA_SEND_SKB_FLAG_WAIT_CQE   = UCS_BIT(9), /* initial checkpoint completion */
 
 #if UCS_ENABLE_ASSERT
     UCT_RM_URMA_SEND_SKB_FLAG_CTL_ACK    = UCS_BIT(5), /* This is a control-ack skb */
@@ -51,7 +53,8 @@ enum {
 enum {
     UCT_RM_URMA_IFACE_SEND_CTL_FLAG_INLINE          = UCS_BIT(0),
     UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SOLICITED       = UCS_BIT(1),
-    UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SIGNALED        = UCS_BIT(2)
+    UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SIGNALED        = UCS_BIT(2),
+    UCT_RM_URMA_IFACE_SEND_CTL_FLAG_ORDERED         = UCS_BIT(3)
 };
 
 enum {
@@ -73,6 +76,7 @@ typedef struct uct_rm_urma_iface_config {
     double                  timer_backoff;
     double                  event_timer_tick;
     unsigned                max_window;
+    unsigned                data_batch;
     unsigned                rx_async_max_poll;
 } uct_rm_urma_iface_config_t;
 
@@ -87,30 +91,26 @@ typedef struct uct_rm_urma_neth {
     uct_rm_urma_psn_t   ack_psn;
 } UCS_S_PACKED UCS_S_MAY_ALIAS uct_rm_urma_neth_t;
 
-/* Experimental normal-path DATA format. ACK sequence numbers remain for
- * window retirement; DATA packet sequence numbers are local metadata only. */
+/* Sequence numbers belong only to the connection and batch-control protocol. */
 typedef struct uct_rm_urma_data_neth {
     uint32_t            packet_type;
-    uct_rm_urma_psn_t   ack_psn;
 } UCS_S_PACKED UCS_S_MAY_ALIAS uct_rm_urma_data_neth_t;
 
 /* Address-format discriminator, never passed to the URMA API. Both endpoints
  * must use this isolated build; legacy peers must not parse the shorter DATA. */
-#define UCT_RM_URMA_NOPSN_ADDR_MODE ((urma_transport_mode_t)(URMA_TM_RM | UCS_BIT(30)))
+#define UCT_RM_URMA_NOPSN_ADDR_MODE ((urma_transport_mode_t)(URMA_TM_RM | UCS_BIT(30) | UCS_BIT(29)))
 
 typedef struct uct_rm_urma_send_skb {
     ucs_queue_elem_t    queue;      /* in send window */
     urma_target_seg_t   *tseg;
     uint16_t            len;        /* data size */
     uint16_t            flags;
-    uct_rm_urma_psn_t   local_psn;  /* DATA window key; not transmitted */
     uint16_t            cqe_sn;     /* local shared SQ completion key */
-    uint8_t             padding[2]; /* keep the DATA body 8-byte aligned */
+    uint8_t             padding[6]; /* keep the DATA body 8-byte aligned */
     uct_rm_urma_neth_t  neth[0];
 } UCS_S_PACKED UCS_V_ALIGNED(UCT_RM_URMA_SKB_ALIGN) uct_rm_urma_send_skb_t;
 
-/* Completion/control metadata is local, after the variable-length wire data.
- * A six-byte DATA prefix must not leave pointer-bearing trailers unaligned. */
+/* Completion/control metadata remains aligned after the wire data. */
 static UCS_F_ALWAYS_INLINE void *
 uct_rm_urma_skb_trailer(uct_rm_urma_send_skb_t *skb)
 {
@@ -200,6 +200,7 @@ typedef struct uct_rm_urma_iface {
     struct {
         unsigned                    max_inline;
         unsigned                    max_window;
+        unsigned                    data_batch;
         ucs_time_t                  peer_timeout;
         ucs_time_t                  min_poke_time;
     } config;

@@ -83,12 +83,14 @@ struct uct_rm_urma_ep {
     uint64_t                        ka_va_addr;
     urma_target_seg_t               *ka_tseg;
     struct {
-        uct_rm_urma_psn_t           psn;          /* Next PSN to send */
+        uct_rm_urma_psn_t           psn;          /* Next control PSN */
         uct_rm_urma_psn_t           max_psn;      /* Largest PSN that can be sent */
         uct_rm_urma_psn_t           acked_psn;    /* last psn that was acked by remote side */
         uint16_t                    resend_count; /* number of in-flight resends on the ep */
         ucs_queue_head_t            window;       /* sparse ACK window: controls and flush markers */
         uint8_t                    flush_ack_requested; /* explicit probe for latest send */
+        uint16_t                   data_batch;      /* DATA sends since last marker */
+        uint8_t                    checkpoint_inflight;
         ucs_time_t                  send_time;
         ucs_time_t                  resend_time;
         ucs_time_t                  tick;
@@ -148,10 +150,11 @@ enum {
     UCT_RM_URMA_EP_OP_CREP       = UCS_BIT(3),  /* send connection reply */
     UCT_RM_URMA_EP_OP_CREQ       = UCS_BIT(4),  /* send connection request */
     UCT_RM_URMA_EP_OP_NACK       = UCS_BIT(5),  /* send NACK */
+    UCT_RM_URMA_EP_OP_CHECKPOINT = UCS_BIT(6),  /* ordered DATA batch marker */
 };
 
 #define UCT_RM_URMA_EP_OP_CTL_ACK (UCT_RM_URMA_EP_OP_ACK|UCT_RM_URMA_EP_OP_ACK_REQ|UCT_RM_URMA_EP_OP_NACK)
-#define UCT_RM_URMA_EP_OP_CTL_HI_PRIO  (UCT_RM_URMA_EP_OP_CREQ|UCT_RM_URMA_EP_OP_CREP|UCT_RM_URMA_EP_OP_RESEND)
+#define UCT_RM_URMA_EP_OP_CTL_HI_PRIO  (UCT_RM_URMA_EP_OP_CREQ|UCT_RM_URMA_EP_OP_CREP|UCT_RM_URMA_EP_OP_RESEND|UCT_RM_URMA_EP_OP_CHECKPOINT)
 
 /*
  * Auxillary AM ID bits used by FC protocol.
@@ -173,6 +176,7 @@ enum {
                                                           * connection establishment process
                                                           * is driven by remote side. */
     UCT_RM_URMA_EP_FLAG_TX_NACKED         = UCS_BIT(10), /* Last psn was acked with NAK */
+    UCT_RM_URMA_EP_FLAG_CANCELED          = UCS_BIT(12), /* no more DATA sends */
 
     /* Endpoint is currently executing the pending queue */
 #if UCS_ENABLE_ASSERT
@@ -192,7 +196,7 @@ enum {
 enum {
     UCT_RM_URMA_PACKET_FLAG_AM      = UCS_BIT(24),
     UCT_RM_URMA_PACKET_FLAG_ACK_REQ = UCS_BIT(25),
-    UCT_RM_URMA_PACKET_FLAG_ECN     = UCS_BIT(26),
+    UCT_RM_URMA_PACKET_FLAG_CHECKPOINT = UCS_BIT(26), /* non-AM only */
     UCT_RM_URMA_PACKET_FLAG_NAK     = UCS_BIT(27),
     UCT_RM_URMA_PACKET_FLAG_PUT     = UCS_BIT(28),
     UCT_RM_URMA_PACKET_FLAG_CTL     = UCS_BIT(29),
@@ -222,8 +226,7 @@ uct_rm_urma_neth_payload(uct_rm_urma_neth_t *neth)
 static UCS_F_ALWAYS_INLINE uct_rm_urma_psn_t
 uct_rm_urma_skb_psn(const uct_rm_urma_send_skb_t *skb)
 {
-    return (skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM) ?
-           skb->local_psn : skb->neth->psn;
+    return skb->neth->psn;
 }
 
 ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr, const void *buffer, unsigned length);
@@ -270,6 +273,10 @@ void uct_rm_urma_ep_process_ack(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep
                                 uct_rm_urma_psn_t ack_psn, int is_async);
 
 void uct_rm_urma_ep_disconnect(uct_ep_h tl_ep);
+
+void uct_rm_urma_ep_accept_checkpoint(uct_rm_urma_iface_t *iface,
+                                      uct_rm_urma_ep_t *ep,
+                                      uct_rm_urma_psn_t psn);
 
 void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *neth, unsigned byte_len,
                                uct_rm_urma_recv_skb_t* skb, int is_async);
@@ -338,6 +345,16 @@ static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_no_window(uct_rm_urma_ep_t *ep)
 static UCS_F_ALWAYS_INLINE int uct_rm_urma_ep_is_last_ack_received(uct_rm_urma_ep_t *ep)
 {
     return UCT_RM_URMA_PSN_COMPARE(ep->tx.acked_psn, ==, ep->tx.psn - 1);
+}
+
+static UCS_F_ALWAYS_INLINE int
+uct_rm_urma_ep_data_blocked(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep)
+{
+    return (ep->tx.data_batch >= iface->config.data_batch) ||
+           ep->tx.checkpoint_inflight ||
+           (ep->tx.pending.ops & UCT_RM_URMA_EP_OP_CHECKPOINT) ||
+           (ep->flags & (UCT_RM_URMA_EP_FLAG_CANCELED |
+                         UCT_RM_URMA_EP_FLAG_DISCONNECTED));
 }
 
 static UCS_F_ALWAYS_INLINE void uct_rm_urma_neth_set_dest_id(uct_rm_urma_neth_t *neth, uint32_t id)
