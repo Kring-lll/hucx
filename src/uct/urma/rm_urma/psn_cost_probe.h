@@ -78,6 +78,7 @@ static void __attribute__((constructor)) psn_init(void)
     const char *const groups[] = {
         "off", "psn", "tx", "rx", "progress", "total", "window", "control"
     };
+    uint64_t ticks[4096];
     if (g) {
         for (unsigned i = 0; i < sizeof(groups)/sizeof(groups[0]); ++i) {
             if (!strcmp(g, groups[i])) {
@@ -97,7 +98,6 @@ static void __attribute__((constructor)) psn_init(void)
     __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(psn_hz));
     if (!psn_hz) psn_hz = 1000000000ULL;
 #endif
-    uint64_t ticks[4096];
     for (unsigned i = 0; i < 4096; ++i) {
         uint64_t a = psn_now(), b = psn_now();
         ticks[i] = b - a;
@@ -142,14 +142,16 @@ static inline struct psn_stat *psn_stat_for(enum psn_tag tag)
 static inline struct psn_scope psn_start(enum psn_group group, enum psn_tag tag, int enabled)
 {
     struct psn_scope s = {0};
+    struct psn_stat *p;
+    uint32_t r;
     if (!enabled || psn_group != group) return s;
-    struct psn_stat *p = psn_stat_for(tag);
+    p = psn_stat_for(tag);
     if (!p) return s;
     psn_store(&p->calls, psn_load(&p->calls) + 1);
     if (--p->next) return s;
     /* Jitter rather than fixed-period sampling, to avoid aliasing with
      * ACK intervals and completion moderation. */
-    uint32_t r = p->rng;
+    r = p->rng;
     r ^= r << 13; r ^= r >> 17; r ^= r << 5;
     p->rng = r;
     p->next = 1 + r % (2 * psn_stride - 1);
@@ -159,9 +161,11 @@ static inline struct psn_scope psn_start(enum psn_group group, enum psn_tag tag,
 }
 static inline void psn_end(struct psn_scope *s)
 {
+    uint64_t delta;
+    struct psn_stat *p;
     if (!s->stat) return;
-    uint64_t delta = psn_now() - s->start;
-    struct psn_stat *p = s->stat;
+    delta = psn_now() - s->start;
+    p = s->stat;
     psn_store(&p->samples, psn_load(&p->samples) + 1);
     psn_store(&p->sum, psn_load(&p->sum) + delta);
     if (delta < psn_load(&p->min)) psn_store(&p->min, delta);
@@ -169,8 +173,9 @@ static inline void psn_end(struct psn_scope *s)
 }
 static inline void psn_count(enum psn_group group, enum psn_tag tag)
 {
+    struct psn_stat *p;
     if (psn_group != group) return;
-    struct psn_stat *p = psn_stat_for(tag);
+    p = psn_stat_for(tag);
     if (p) psn_store(&p->calls, psn_load(&p->calls) + 1);
 }
 #define PSN_CAT_I(a,b) a##b
@@ -183,13 +188,15 @@ static inline void psn_count(enum psn_group group, enum psn_tag tag)
 
 static void __attribute__((destructor)) psn_report(void)
 {
-    if (psn_group == PG_OFF) return;
-    const char *rank = getenv("OMPI_COMM_WORLD_RANK");
+    const char *rank;
     char host[128] = {0};
+    if (psn_group == PG_OFF) return;
+    rank = getenv("OMPI_COMM_WORLD_RANK");
     gethostname(host, sizeof(host)-1);
     pthread_mutex_lock(&psn_lock);
     for (unsigned i = 0; i < PT_COUNT; ++i) {
         uint64_t calls=0, samples=0, sum=0, min=UINT64_MAX, max=0;
+        double raw, ns;
         for (struct psn_thread *t = psn_threads; t; t = t->next) {
             struct psn_stat *p = &t->stats[i];
             uint64_t v;
@@ -200,8 +207,8 @@ static void __attribute__((destructor)) psn_report(void)
             v = psn_load(&p->max); if (v > max) max = v;
         }
         if (!calls) continue;
-        double raw = samples ? (double)sum / samples : 0.;
-        double ns = 1e9 / (double)psn_hz;
+        raw = samples ? (double)sum / samples : 0.;
+        ns = 1e9 / (double)psn_hz;
         fprintf(stderr, "PSN_PROBE host=%s rank=%s pid=%ld unit=%s group=%s tag=%s calls=%llu samples=%llu sum_ticks=%llu timer_hz=%llu cal_ticks=%llu raw_ns=%.3f net_ns=%.3f min_ticks=%llu max_ticks=%llu\n",
                 host, rank ? rank : "-", (long)getpid(), PSN_PROBE_UNIT,
                 psn_group_name, psn_names[i],
