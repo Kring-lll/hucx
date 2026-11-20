@@ -23,6 +23,8 @@
 #include "rm_urma_ep.h"
 #include "rm_urma_def.h"
 #include "rm_urma_inl.h"
+#define PSN_PROBE_UNIT "um_iface"
+#include "psn_cost_probe.h"
 
 #define UCT_RM_URMA_TX_MODERATION    64
 #define UCT_RM_URMA_MIN_TIMER_TIMER_BACKOFF 1.0
@@ -259,6 +261,7 @@ void uct_rm_urma_iface_send_completion(uct_rm_urma_iface_t *iface, uint16_t sn,
 
 static unsigned uct_rm_urma_iface_poll_tx(uct_rm_urma_iface_t *iface, int is_async)
 {
+    PSN_SCOPE(PROGRESS, POLL_TX);
     uint32_t num_completed;
     urma_cr_t cr = {0};
     int ret;
@@ -327,6 +330,7 @@ static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_post_recv(uct_rm_urma_iface_t 
 
 static unsigned uct_rm_urma_iface_poll_rx(uct_rm_urma_iface_t *iface, int is_async)
 {
+    PSN_SCOPE(PROGRESS, POLL_RX);
     unsigned num_crs = iface->super.config.rx_max_poll;
     uct_urma_iface_recv_desc_t *desc = NULL;
     uct_rm_urma_neth_t *neth = NULL;
@@ -422,7 +426,11 @@ uct_rm_urma_iface_dispatch_pending_rx(uct_rm_urma_iface_t *iface)
 
 static void uct_rm_urma_iface_progress_pending(uct_rm_urma_iface_t *iface, const uintptr_t is_async)
 {
-    uct_rm_urma_iface_twheel_sweep(iface);
+    PSN_SCOPE(PROGRESS, PROGRESS_PENDING);
+    {
+        PSN_SCOPE(CONTROL, TIMER_SWEEP);
+        uct_rm_urma_iface_twheel_sweep(iface);
+    }
 
     if (!is_async) {
         iface->tx.async_before_pending = 0;
@@ -438,6 +446,7 @@ static void uct_rm_urma_iface_progress_pending(uct_rm_urma_iface_t *iface, const
 
 static unsigned uct_rm_urma_iface_progress(uct_iface_h tl_iface)
 {
+    PSN_SCOPE(TOTAL, PROGRESS_TOTAL);
     uct_rm_urma_iface_t *iface = ucs_derived_of(tl_iface, uct_rm_urma_iface_t);
     unsigned count;
 

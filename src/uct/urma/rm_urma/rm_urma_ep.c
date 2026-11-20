@@ -26,6 +26,8 @@
 #include "rm_urma_iface.h"
 #include "rm_urma_def.h"
 #include "rm_urma_inl.h"
+#define PSN_PROBE_UNIT "um_ep"
+#include "psn_cost_probe.h"
 
 #define UCT_RM_URMA_SLOW_TIMER_MAX_TICK(_iface)  ((_iface)->config.peer_timeout / 3)
 static void uct_rm_urma_peer_name(uct_rm_urma_peer_name_t *peer)
@@ -225,9 +227,15 @@ static ucs_status_t uct_rm_urma_am_skb_common(uct_rm_urma_iface_t *iface, uct_rm
                 id, (ep->flags & UCT_RM_URMA_EP_FLAG_IN_PENDING));
 
     neth = skb->neth;
-    uct_rm_urma_neth_init_data(ep, neth);
+    {
+        PSN_SCOPE(PSN, TX_HEADER_FIELDS);
+        uct_rm_urma_neth_init_data(ep, neth);
+    }
     uct_rm_urma_neth_set_type_am(ep, neth, id);
-    uct_rm_urma_neth_ack_req(ep, neth);
+    {
+        PSN_SCOPE(PSN, TX_ACK_REQUEST);
+        uct_rm_urma_neth_ack_req(ep, neth);
+    }
 
     *skb_p = skb;
 
@@ -238,26 +246,43 @@ static void uct_rm_urma_iface_complete_tx(uct_rm_urma_iface_t *iface, uct_rm_urm
                                           uct_rm_urma_send_skb_t *skb, int has_data, void *data,
                                           const void *buffer, unsigned length)
 {
-    ucs_time_t now = uct_rm_urma_iface_get_time(iface);
-    iface->tx.skb = ucs_mpool_get(&iface->tx.mp);
+    ucs_time_t now;
+    int data = !!(skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM);
+    {
+        PSN_SCOPE_IF(PSN, TX_CLOCK, data);
+        now = uct_rm_urma_iface_get_time(iface);
+    }
+    {
+        PSN_SCOPE_IF(WINDOW, TX_SKB_ALLOC, data);
+        iface->tx.skb = ucs_mpool_get(&iface->tx.mp);
+    }
     if (ucs_unlikely(iface->tx.skb == NULL)) {
         ucs_warn("Failed to allocate iface->tx.skb");
     }
-    ep->tx.psn++;
+    {
+        PSN_SCOPE_IF(PSN, TX_PSN_INC, data);
+        ep->tx.psn++;
+    }
 
     if (has_data) {
+        PSN_SCOPE_IF(WINDOW, TX_EXTRA_COPY, data);
         skb->len += length;
         memcpy(data, buffer, length);
     }
 
-    ucs_queue_push(&ep->tx.window, &skb->queue);
-    ep->tx.tick = iface->tx.tick;
-    if (!iface->async.disable) {
-        ucs_wtimer_add(&iface->tx.timer, &ep->timer,
-                       now - ucs_twheel_get_time(&iface->tx.timer) + ep->tx.tick);
+    {
+        PSN_SCOPE_IF(PSN, TX_WINDOW_PUSH, data);
+        ucs_queue_push(&ep->tx.window, &skb->queue);
     }
-
-    ep->tx.send_time = now;
+    {
+        PSN_SCOPE_IF(PSN, TX_TIMER, data);
+        ep->tx.tick = iface->tx.tick;
+        if (!iface->async.disable) {
+            ucs_wtimer_add(&iface->tx.timer, &ep->timer,
+                           now - ucs_twheel_get_time(&iface->tx.timer) + ep->tx.tick);
+        }
+        ep->tx.send_time = now;
+    }
 }
 
 static UCS_F_ALWAYS_INLINE void uct_rm_urma_iface_complete_tx_skb(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
@@ -279,6 +304,8 @@ static void uct_rm_urma_post_send(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *
     urma_jfs_wr_t *bad_wr = NULL;
     urma_status_t ret;
 
+    {
+    PSN_SCOPE_IF(TX, TX_WR_PREP, wr == &iface->tx.wr_inl);
     if ((send_flags & UCT_RM_URMA_IFACE_SEND_CTL_FLAG_SIGNALED) ||
         iface->tx.unsignaled >= iface->super.config.tx_jfc_moderation - 1) {
         wr->flag.bs.complete_enable = URMA_COMPLETE_ENABLE;
@@ -308,17 +335,24 @@ static void uct_rm_urma_post_send(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *
         }
     }
     wr->tjetty = ep->peer_address.tjetty;
+    }
 
-    ret = urma_post_jetty_send_wr(iface->rm_urma_jetty.jetty, wr, &bad_wr);
+    {
+        PSN_SCOPE_IF(TX, TX_POST, wr == &iface->tx.wr_inl);
+        ret = urma_post_jetty_send_wr(iface->rm_urma_jetty.jetty, wr, &bad_wr);
+    }
     if (ret != URMA_SUCCESS) {
         (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
         ucs_fatal("Post send return %d (%m).", ret);
     }
 
+    {
+    PSN_SCOPE_IF(TX, TX_RESOURCE_UPDATE, wr == &iface->tx.wr_inl);
     ++ep->super.status.pi;
     --iface->rm_urma_jetty.available;
     --iface->super.tx.jfc_available;
     ++iface->tx.send_sn;
+    }
 }
 
 static void uct_rm_urma_ep_tx_inlv(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
@@ -342,6 +376,7 @@ static void uct_rm_urma_ep_tx_skb(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *
 
 ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr, const void *buffer, unsigned length)
 {
+    PSN_SCOPE(TOTAL, TX_SHORT_TOTAL);
     uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
     uct_rm_urma_am_short_hdr_t *am_hdr = NULL;
@@ -353,21 +388,35 @@ ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr, c
 
     uct_rm_urma_enter(iface);
 
-    ret = uct_rm_urma_am_skb_common(iface, ep, id, &skb);
+    {
+        PSN_SCOPE(TX, TX_PREP);
+        ret = uct_rm_urma_am_skb_common(iface, ep, id, &skb);
+    }
     if (ret != UCS_OK) {
         uct_rm_urma_leave(iface);
         return UCS_ERR_NO_RESOURCE;
     }
 
+    {
+    PSN_SCOPE(TX, TX_AM_HEADER_SGE);
     am_hdr = (uct_rm_urma_am_short_hdr_t *)(skb->neth + 1);
     am_hdr->hdr = hdr;
     iface->tx.sge[0].len = sizeof(uct_rm_urma_neth_t) + sizeof(*am_hdr);
     iface->tx.sge[0].addr = (uintptr_t)skb->neth;
+    }
 
     uct_rm_urma_ep_tx_inlv(iface, ep, buffer, length);
     skb->len = iface->tx.sge[0].len;
 
-    uct_rm_urma_iface_complete_tx_inl(iface, ep, skb, am_hdr + 1, buffer, length);
+    {
+        PSN_SCOPE(TX, TX_RETIRE);
+        uct_rm_urma_iface_complete_tx_inl(iface, ep, skb, am_hdr + 1, buffer, length);
+    }
+    PSN_COUNT(PSN, TX_SHORT_OK);
+    PSN_COUNT(TOTAL, TX_SHORT_OK);
+    PSN_COUNT(TX, TX_SHORT_OK);
+    PSN_COUNT(WINDOW, TX_SHORT_OK);
+    PSN_COUNT(CONTROL, TX_SHORT_OK);
     UCT_TL_EP_STAT_OP(&ep->super.super, AM, SHORT, sizeof(hdr) + length);
     uct_rm_urma_leave(iface);
 
@@ -376,6 +425,7 @@ ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr, c
 
 ssize_t uct_rm_urma_ep_am_bcopy(uct_ep_h tl_ep, uint8_t id, uct_pack_callback_t pack_cb, void *arg, unsigned flags)
 {
+    PSN_SCOPE(TOTAL, TX_BCOPY_TOTAL);
     uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
     uct_rm_urma_send_skb_t *skb = NULL;
@@ -398,6 +448,11 @@ ssize_t uct_rm_urma_ep_am_bcopy(uct_ep_h tl_ep, uint8_t id, uct_pack_callback_t 
 
     uct_rm_urma_ep_tx_skb(iface, ep, skb, 0);
     uct_rm_urma_iface_complete_tx_skb(iface, ep, skb);
+    PSN_COUNT(PSN, TX_BCOPY_OK);
+    PSN_COUNT(TOTAL, TX_BCOPY_OK);
+    PSN_COUNT(TX, TX_BCOPY_OK);
+    PSN_COUNT(WINDOW, TX_BCOPY_OK);
+    PSN_COUNT(CONTROL, TX_BCOPY_OK);
     UCT_TL_EP_STAT_OP(&ep->super.super, AM, BCOPY, payload_len);
     uct_rm_urma_leave(iface);
 
@@ -976,6 +1031,7 @@ void uct_rm_urma_ep_deal_crep(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep, 
 void uct_rm_urma_ep_deal_am(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *neth,
                             unsigned byte_len, uct_urma_iface_recv_desc_t *desc)
 {
+    PSN_SCOPE(RX, RX_CALLBACK);
     uint32_t am_id = neth->packet_type >> UCT_RM_URMA_PACKET_AM_ID_SHIFT;
     void *udesc = (char*)desc + iface->super.config.rx_headroom_offset;
     ucs_status_t status;
@@ -995,6 +1051,7 @@ void uct_rm_urma_ep_deal_am(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *neth
 
 static void uct_rm_urma_ep_resend(uct_rm_urma_ep_t *ep)
 {
+    PSN_SCOPE(CONTROL, RETRY_SEND);
     uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
     size_t max_len_without_nack = sizeof(uct_rm_urma_neth_t) + sizeof(uct_rm_urma_ctl_hdr_t) +
                                   iface->super.addr_size;
@@ -1098,6 +1155,7 @@ static void uct_rm_urma_ep_resend(uct_rm_urma_ep_t *ep)
 
 static void uct_rm_urma_ep_send_ack(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep)
 {
+    PSN_SCOPE(CONTROL, ACK_SEND);
     uct_rm_urma_ctl_desc_t *cdesc = NULL;
     uct_rm_urma_send_skb_t *skb = NULL;
     int ctl_flags = 0;
@@ -1431,6 +1489,7 @@ static void uct_rm_urma_ep_window_release_inline(uct_rm_urma_iface_t *iface, uct
                                                  uct_rm_urma_psn_t ack_psn, ucs_status_t status,
                                                  int is_async, int invalidate_resend)
 {
+    PSN_SCOPE(WINDOW, ACK_WINDOW_RELEASE);
     uct_rm_urma_send_skb_t *skb = NULL;
 
     ucs_queue_for_each_extract(skb, &ep->tx.window, queue, uct_rm_urma_skb_is_completed(skb, ack_psn)) {
@@ -1453,10 +1512,14 @@ static void uct_rm_urma_ep_window_release_inline(uct_rm_urma_iface_t *iface, uct
 void uct_rm_urma_ep_process_ack(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep,
                                 uct_rm_urma_psn_t ack_psn, int is_async)
 {
+    {
+    PSN_SCOPE(PSN, RX_ACK_CHECK);
     if (ucs_unlikely(UCT_RM_URMA_PSN_COMPARE(ack_psn, <=, ep->tx.acked_psn))) {
         return;
     }
+    }
 
+    PSN_SCOPE(PSN, RX_ACK_ADVANCE);
     ep->tx.acked_psn = ack_psn;
     uct_rm_urma_ep_window_release_inline(iface, ep, ack_psn, UCS_OK, is_async, 0);
     uct_rm_urma_ep_ca_ack(ep);
@@ -1526,6 +1589,7 @@ void uct_rm_urma_ep_disconnect(uct_ep_h tl_ep)
 void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *neth, unsigned byte_len,
                                uct_rm_urma_recv_skb_t* skb, int is_async)
 {
+    PSN_SCOPE(TOTAL, RX_MESSAGE);
     ucs_frag_list_ooo_type_t ooo_type;
     uct_rm_urma_ep_t *ep = NULL;
     uint32_t dest_id;
@@ -1548,6 +1612,8 @@ void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *n
 
     uct_rm_urma_ep_process_ack(iface, ep, neth->ack_psn, is_async);
 
+    {
+    PSN_SCOPE(PSN, RX_ACK_REQ_GAP);
     if (ucs_unlikely(neth->packet_type & UCT_RM_URMA_PACKET_FLAG_ACK_REQ)) {
         uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_ACK);
         ucs_trace_data("ACK_REQ - schedule ack, head_sn=%u sn=%u", ep->rx.ooo_pkts.head_sn, neth->psn);
@@ -1555,6 +1621,7 @@ void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *n
 
     if (ucs_unlikely(UCT_RM_URMA_PSN_COMPARE(neth->psn, >, ep->rx.ooo_pkts.head_sn +1))) {
         uct_rm_urma_ep_ctl_op_add(iface, ep, UCT_RM_URMA_EP_OP_NACK);
+    }
     }
 
     if (ucs_unlikely(!is_am)) {
@@ -1573,7 +1640,10 @@ void uct_rm_urma_ep_process_rx(uct_rm_urma_iface_t *iface, uct_rm_urma_neth_t *n
         }
     }
 
-    ooo_type = ucs_frag_list_insert(&ep->rx.ooo_pkts, &skb->u.ooo.elem, neth->psn);
+    {
+        PSN_SCOPE_IF(PSN, RX_SEQ_INSERT, is_am);
+        ooo_type = ucs_frag_list_insert(&ep->rx.ooo_pkts, &skb->u.ooo.elem, neth->psn);
+    }
     if (ucs_unlikely(ooo_type != UCS_FRAG_LIST_INSERT_FAST)) {
         if ((ooo_type != UCS_FRAG_LIST_INSERT_DUP) &&
             (ooo_type != UCS_FRAG_LIST_INSERT_FAIL)) {
@@ -1744,6 +1814,7 @@ static void uct_rm_urma_ep_timer_backoff(uct_rm_urma_ep_t *ep)
 
 static void uct_rm_urma_ep_timer(ucs_wtimer_t *self)
 {
+    PSN_SCOPE(CONTROL, TIMER_CALLBACK);
     uct_rm_urma_ep_t *ep = ucs_container_of(self, uct_rm_urma_ep_t, timer);
     uct_rm_urma_iface_t *iface = ucs_derived_of(ep->super.super.super.iface, uct_rm_urma_iface_t);
     ucs_time_t last_send;
