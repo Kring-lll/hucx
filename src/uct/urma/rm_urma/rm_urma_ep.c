@@ -247,35 +247,35 @@ static void uct_rm_urma_iface_complete_tx(uct_rm_urma_iface_t *iface, uct_rm_urm
                                           const void *buffer, unsigned length)
 {
     ucs_time_t now;
-    int data = !!(skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM);
+    int is_data = !!(skb->neth->packet_type & UCT_RM_URMA_PACKET_FLAG_AM);
     {
-        PSN_SCOPE_IF(PSN, TX_CLOCK, data);
+        PSN_SCOPE_IF(PSN, TX_CLOCK, is_data);
         now = uct_rm_urma_iface_get_time(iface);
     }
     {
-        PSN_SCOPE_IF(WINDOW, TX_SKB_ALLOC, data);
+        PSN_SCOPE_IF(WINDOW, TX_SKB_ALLOC, is_data);
         iface->tx.skb = ucs_mpool_get(&iface->tx.mp);
     }
     if (ucs_unlikely(iface->tx.skb == NULL)) {
         ucs_warn("Failed to allocate iface->tx.skb");
     }
     {
-        PSN_SCOPE_IF(PSN, TX_PSN_INC, data);
+        PSN_SCOPE_IF(PSN, TX_PSN_INC, is_data);
         ep->tx.psn++;
     }
 
     if (has_data) {
-        PSN_SCOPE_IF(WINDOW, TX_EXTRA_COPY, data);
+        PSN_SCOPE_IF(WINDOW, TX_EXTRA_COPY, is_data);
         skb->len += length;
         memcpy(data, buffer, length);
     }
 
     {
-        PSN_SCOPE_IF(PSN, TX_WINDOW_PUSH, data);
+        PSN_SCOPE_IF(PSN, TX_WINDOW_PUSH, is_data);
         ucs_queue_push(&ep->tx.window, &skb->queue);
     }
     {
-        PSN_SCOPE_IF(PSN, TX_TIMER, data);
+        PSN_SCOPE_IF(PSN, TX_TIMER, is_data);
         ep->tx.tick = iface->tx.tick;
         if (!iface->async.disable) {
             ucs_wtimer_add(&iface->tx.timer, &ep->timer,
@@ -1519,16 +1519,18 @@ void uct_rm_urma_ep_process_ack(uct_rm_urma_iface_t *iface, uct_rm_urma_ep_t *ep
     }
     }
 
-    PSN_SCOPE(PSN, RX_ACK_ADVANCE);
-    ep->tx.acked_psn = ack_psn;
-    uct_rm_urma_ep_window_release_inline(iface, ep, ack_psn, UCS_OK, is_async, 0);
-    uct_rm_urma_ep_ca_ack(ep);
-    uct_rm_urma_ep_resend_ack(iface, ep);
+    {
+        PSN_SCOPE(PSN, RX_ACK_ADVANCE);
+        ep->tx.acked_psn = ack_psn;
+        uct_rm_urma_ep_window_release_inline(iface, ep, ack_psn, UCS_OK, is_async, 0);
+        uct_rm_urma_ep_ca_ack(ep);
+        uct_rm_urma_ep_resend_ack(iface, ep);
 
-    ucs_arbiter_group_schedule(&iface->tx.pending_q, &ep->tx.pending.group);
+        ucs_arbiter_group_schedule(&iface->tx.pending_q, &ep->tx.pending.group);
 
-    ep->tx.tick = iface->tx.tick;
-    ep->tx.send_time = uct_rm_urma_iface_get_time(iface);
+        ep->tx.tick = iface->tx.tick;
+        ep->tx.send_time = uct_rm_urma_iface_get_time(iface);
+    }
 }
 
 void uct_rm_urma_ep_window_release_completed(uct_rm_urma_ep_t *ep, int is_async)
