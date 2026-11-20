@@ -20,6 +20,8 @@
 #include <ucs/type/cpu_set.h>
 #include <ucs/debug/log.h>
 #include <uct/base/uct_iov.inl>
+#define PSN_PROBE_UNIT "rc_ep"
+#include "psn_cost_probe.h"
 
 static void UCS_F_ALWAYS_INLINE uct_rm_urma_init_base_wr(urma_jfs_wr_t *wr, uct_rm_urma_iface_t *iface,
                                                          urma_opcode_t opcode, uct_rm_urma_ep_t *ep,
@@ -70,6 +72,7 @@ bool uct_rm_urma_ep_can_send(uct_rm_urma_ep_t *ep)
 ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr,
                                      const void *buffer, unsigned length)
 {
+    PSN_SCOPE(TOTAL, TX_SHORT_TOTAL);
     uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
     uct_urma_am_short_hdr_t *am = &iface->super.am_inl_hdr;
@@ -79,21 +82,33 @@ ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr,
     ucs_status_t ret = UCS_OK;
     urma_status_t status;
 
-    UCT_URMA_CHECK_AM_SHORT(id, length, uct_urma_am_short_hdr_t, iface->super.config.max_inline);
-    UCT_RM_URMA_CHECK_RES_AND_FC(iface, ep, id);
+    {
+        PSN_SCOPE(TX, TX_PREP);
+        UCT_URMA_CHECK_AM_SHORT(id, length, uct_urma_am_short_hdr_t, iface->super.config.max_inline);
+        UCT_RM_URMA_CHECK_RES_AND_FC(iface, ep, id);
+    }
     UCT_TL_EP_STAT_OP(&ep->super.super, AM, SHORT, sizeof(hdr) + length);
 
+    {
+    PSN_SCOPE(TX, TX_AM_HEADER_SGE);
     am->am_hdr = hdr;
     am->urma_hdr.am_id = id;
     am->urma_hdr.ep_id = ep->super.dep_id;
     uct_urma_iface_fill_inl_sge(&iface->super, am, sizeof(*am), buffer, length);
 
     UCT_URMA_FILL_SRC_SGL_BUF(&wr->send.src, iface->super.inl_sge, iface->super.inline_num_sge);
+    }
 
+    {
+    PSN_SCOPE(TX, TX_WR_PREP);
     uct_rm_urma_init_base_wr(wr, iface, URMA_OPC_SEND, ep, 0, URMA_INLINE_ENABLE, URMA_SOLICITED_ENABLE);
     uct_urma_ep_fm(&iface->super, &ep->super, wr);
+    }
 
-    status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
+    {
+        PSN_SCOPE(TX, TX_POST);
+        status = urma_post_jetty_send_wr(jetty, wr, &bad_wr);
+    }
     if (ucs_unlikely(status != URMA_SUCCESS)) {
         ucs_warn("In function ep_am_short, urma_post_jetty_send_wr() failed, status:0x%x.\n", status);
         ret = (status == URMA_ENOMEM || status == URMA_EAGAIN) ?
@@ -101,8 +116,16 @@ ucs_status_t uct_rm_urma_ep_am_short(uct_ep_h tl_ep, uint8_t id, uint64_t hdr,
         goto out;
     }
 
-    uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
-    UCT_RM_URMA_UPDATE_FC(iface, ep, id);
+    {
+        PSN_SCOPE(TX, TX_RESOURCE_UPDATE);
+        uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
+    }
+    {
+        PSN_SCOPE(TX, TX_RETIRE);
+        UCT_RM_URMA_UPDATE_FC(iface, ep, id);
+    }
+    PSN_COUNT(TOTAL, TX_SHORT_OK);
+    PSN_COUNT(TX, TX_SHORT_OK);
 
 out:
     (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
@@ -113,6 +136,7 @@ ssize_t uct_rm_urma_ep_am_bcopy(uct_ep_h tl_ep, uint8_t id,
                                 uct_pack_callback_t pack_cb, void *arg,
                                 unsigned flags)
 {
+    PSN_SCOPE(TOTAL, TX_BCOPY_TOTAL);
     uct_rm_urma_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_rm_urma_iface_t);
     uct_rm_urma_ep_t *ep = ucs_derived_of(tl_ep, uct_rm_urma_ep_t);
     urma_jetty_t *jetty = ep->rm_urma_jetty->jetty;
@@ -147,6 +171,8 @@ ssize_t uct_rm_urma_ep_am_bcopy(uct_ep_h tl_ep, uint8_t id,
     uct_rm_urma_update_tx_resources_status(ep, iface, wr->flag.bs.complete_enable);
     uct_urma_outstanding_queue_add_send_op_sn(&ep->super.txqp, &desc->super, ep->super.status.pi);
     UCT_RM_URMA_UPDATE_FC(iface, ep, id);
+    PSN_COUNT(TOTAL, TX_BCOPY_OK);
+    PSN_COUNT(TX, TX_BCOPY_OK);
     (void)memset(wr, 0, sizeof(urma_jfs_wr_t));
     return length;
 }

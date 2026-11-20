@@ -10,6 +10,8 @@
 
 #include "urma_iface.h"
 #include "urma_ep.h"
+#define PSN_PROBE_UNIT "rc_base_iface"
+#include "../rm_urma/psn_cost_probe.h"
 
 #include <uct/api/uct.h>
 #include <uct/base/uct_md.h>
@@ -1373,6 +1375,9 @@ static UCS_F_ALWAYS_INLINE ucs_status_t uct_urma_iface_handle_am(uct_urma_iface_
                                                        uct_urma_iface_recv_desc_t *desc, urma_cr_t *cr,
                                                        uint32_t fc_mask)
 {
+    PSN_SCOPE(TOTAL, RX_MESSAGE);
+    PSN_SCOPE_IF(RX, RX_DATA_CALLBACK, !(hdr->am_id & fc_mask));
+    PSN_SCOPE_IF(RX, RX_CONTROL_CALLBACK, hdr->am_id & fc_mask);
     uint32_t length = cr->completion_len;
     ucs_status_t status;
     void *udesc = NULL;
@@ -1444,6 +1449,7 @@ unsigned uct_urma_iface_poll_rx_accounted(uct_urma_iface_t *iface,
                                         uint32_t fc_mask, int force_repost,
                                         uct_urma_iface_rx_result_t *result)
 {
+    PSN_SCOPE(PROGRESS, POLL_RX);
     int cr_cnt = iface->config.rx_max_poll;
     urma_cr_t cr[cr_cnt];
     int count;

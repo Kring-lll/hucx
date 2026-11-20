@@ -21,6 +21,8 @@
 #include <ucs/type/cpu_set.h>
 #include <ucs/debug/log.h>
 #include <ucs/sys/string.h>
+#define PSN_PROBE_UNIT "rc_iface"
+#include "psn_cost_probe.h"
 
 static void UCS_CLASS_DELETE_FUNC_NAME(uct_rm_urma_iface_t)(uct_iface_t*);
 
@@ -810,6 +812,7 @@ static void uct_rm_urma_deal_with_send_cr(uct_rm_urma_iface_t *iface,
 
 static UCS_F_ALWAYS_INLINE unsigned uct_rm_urma_iface_poll_tx(uct_rm_urma_iface_t *iface)
 {
+    PSN_SCOPE(PROGRESS, POLL_TX);
     int cr_cnt = iface->super.config.tx_max_poll;
     urma_cr_t cr[cr_cnt];
     int count;
@@ -834,6 +837,7 @@ static UCS_F_ALWAYS_INLINE unsigned uct_rm_urma_iface_poll_tx(uct_rm_urma_iface_
 
 static unsigned uct_rm_urma_iface_progress(void *arg)
 {
+    PSN_SCOPE(TOTAL, PROGRESS_TOTAL);
     uct_rm_urma_iface_t *iface = arg;
     unsigned count;
 
@@ -861,11 +865,14 @@ static unsigned uct_rm_urma_iface_progress(void *arg)
     }
     /* Always give a busy shared SQ a bounded TX poll, even with continuous RX. */
     count += uct_rm_urma_iface_poll_tx(iface);
-    if (iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) {
-        uct_rm_urma_link_progress(iface);
+    {
+        PSN_SCOPE(PROGRESS, PROGRESS_PENDING);
+        if (iface->link.mode == UCT_RM_URMA_LINK_IFACE_V2) {
+            uct_rm_urma_link_progress(iface);
+        }
+        uct_rm_urma_iface_progress_pending(iface);
+        uct_rm_urma_iface_gc(iface);
     }
-    uct_rm_urma_iface_progress_pending(iface);
-    uct_rm_urma_iface_gc(iface);
     --iface->tx.progress_depth;
     return count;
 }
